@@ -14,10 +14,12 @@ pi, …) sweep your vault via MCP and answer questions like:
 |---|---|
 | `src/db.py` | SQLite + FTS5 full-text search with weighted ranking |
 | `src/ingest.py` | CSV / JSON import (Unity + Fab exports, auto-detected) |
-| `src/server.py` | Local web UI + REST API + image proxy cache |
+| `src/desktop.py` | **Native desktop app** (PySide6): search, detail view, sync, tray + global hotkey |
+| `src/server.py` | Optional browser UI + REST API + image proxy cache |
+| `src/local_scan.py` | Scans Unity/Fab disk caches, tags assets as downloaded vs cloud |
 | `src/store_client.py` | Interactive store login, library refresh, metadata enrichment |
 | `src/mcp_server.py` | MCP server (stdio) exposing the vault to AI agents |
-| `web/` | Dark-mode search UI with filters, gallery, "copy context for AI" |
+| `web/` | Browser-mode UI (same features as the desktop app) |
 
 ## Quick start
 
@@ -27,9 +29,17 @@ pip install -r requirements.txt
 # 1. Ingest your CSV exports (drop them in data/seed/ first)
 python -m src.ingest
 
-# 2. Launch the UI
+# 2a. Launch the native desktop app (recommended)
+python -m src.desktop
+
+# 2b. …or the browser UI
 python -m src.server          # -> http://localhost:7890
 ```
+
+The desktop app runs a disk-cache scan on startup, tags everything already
+downloaded as **⚡ Local**, and registers a global hotkey **Win+Alt+V** to
+show/hide the window (Spotlight-style). Closing the window minimizes to the
+system tray; quit from the tray menu or Ctrl+Q.
 
 ### Syncing your store libraries (per-user login)
 
