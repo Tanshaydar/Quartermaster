@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 try:
     from .db import search_assets, get_asset_by_id, get_stats, get_categories
     from .config import load_config
-    from . import store_client, local_scan, unpacker, stack_rules, stack_rules
+    from . import store_client, local_scan, unpacker, stack_rules
 except ImportError:
     from db import search_assets, get_asset_by_id, get_stats, get_categories
     from config import load_config
@@ -49,10 +49,11 @@ def index():
 
 @app.get("/api/assets")
 def api_assets(query: str = "", category: str = "all", pipeline: str = "all",
-               source: str = "all", limit: int = 60, offset: int = 0):
+               source: str = "all", local: str = "all", limit: int = 60, offset: int = 0):
     return {
         "items": search_assets(query=query or None, category=category, pipeline=pipeline,
-                               source=source, limit=min(limit, 500), offset=offset),
+                               source=source, local=None if local == "all" else local,
+                               limit=min(limit, 2000), offset=offset),
         "stats": get_stats(),
     }
 

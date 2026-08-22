@@ -84,12 +84,15 @@ function createAssetCard(item) {
 
 // Fetch & Render Main Library
 async function loadAssets() {
+  const localFilter = (state.selectedFilter === 'local' || state.selectedFilter === 'cloud')
+    ? state.selectedFilter : 'all';
   const params = new URLSearchParams({
     query: state.searchQuery,
     category: state.selectedCategory,
     pipeline: state.selectedPipeline,
     source: state.selectedEngine,
-    limit: '200'
+    local: localFilter,
+    limit: '2000'
   });
 
   try {
@@ -97,13 +100,7 @@ async function loadAssets() {
     state.assets = data.items || [];
     state.stats = data.stats || {};
 
-    // Filter by local/cloud quick filter
     let filtered = [...state.assets];
-    if (state.selectedFilter === 'local') {
-      filtered = filtered.filter(a => Boolean(a.local_path));
-    } else if (state.selectedFilter === 'cloud') {
-      filtered = filtered.filter(a => !a.local_path);
-    }
 
     // Sort
     if (state.sortBy === 'title_asc') {
@@ -190,15 +187,16 @@ async function renderRecipes() {
 function updateMetrics(count) {
   $('#results-count').textContent = `Showing ${count} of ${state.stats.total || 0} assets`;
   $('#count-all').textContent = state.stats.total || 0;
-  
-  const localCount = state.stats.downloaded_locally ? (state.stats.downloaded_locally.unity || 0) + (state.stats.downloaded_locally.fab || 0) : 78;
+
+  const localCount = state.stats.downloaded_locally ?? 0;
   $('#count-local').textContent = localCount;
   $('#count-cloud').textContent = Math.max(0, (state.stats.total || 0) - localCount);
 
-  // Search mode badge
+  // Search mode badge — the web API runs FTS5 keyword search;
+  // hybrid semantic fusion currently lives in the MCP tools.
   const modeBadge = $('#search-mode-badge');
   if (state.searchQuery) {
-    modeBadge.textContent = state.searchQuery.split(' ').length > 2 ? 'Hybrid: Semantic + BM25' : 'FTS5 Exact Match';
+    modeBadge.textContent = 'FTS5 Keyword Search';
     modeBadge.classList.remove('hidden');
   } else {
     modeBadge.classList.add('hidden');
@@ -583,6 +581,11 @@ async function init() {
   setupEvents();
   await initCategories();
   await loadAssets();
+
+  // set the recipes sidebar count from real data
+  api('/api/recipes').then(r => {
+    $('#count-recipes').textContent = (r.recipes || []).length;
+  }).catch(() => {});
 }
 
 document.addEventListener('DOMContentLoaded', init);

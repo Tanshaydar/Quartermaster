@@ -160,6 +160,7 @@ def search_assets(
     category: Optional[str] = None,
     pipeline: Optional[str] = None,
     source: Optional[str] = None,
+    local: Optional[str] = None,   # 'local' | 'cloud' | None
     limit: int = 100,
     offset: int = 0,
     db_path: str = DB_PATH
@@ -193,6 +194,11 @@ def search_assets(
     if source and source.lower() != "all":
         sql += " AND a.source = ?"
         params.append(source)
+
+    if local == "local":
+        sql += " AND a.local_path != ''"
+    elif local == "cloud":
+        sql += " AND a.local_path = ''"
 
     if query and query.strip():
         sql += " ORDER BY fts.rank ASC LIMIT ? OFFSET ?"
@@ -289,5 +295,9 @@ def get_stats(db_path: str = DB_PATH) -> Dict[str, Any]:
     cur.execute("SELECT source, COUNT(*) as count FROM assets GROUP BY source")
     sources = {r["source"]: r["count"] for r in cur.fetchall()}
 
+    cur.execute("SELECT COUNT(*) as c FROM assets WHERE local_path != ''")
+    downloaded = cur.fetchone()["c"]
+
     conn.close()
-    return {"total": total, "categories": categories, "sources": sources}
+    return {"total": total, "categories": categories,
+            "sources": sources, "downloaded_locally": downloaded}
