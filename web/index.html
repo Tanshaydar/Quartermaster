@@ -1,62 +1,314 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VaultMCP — Asset Vault</title>
-<link rel="stylesheet" href="/static/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VaultMCP — Game Asset Vault & MCP Agent Bridge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header>
-  <div class="brand">
-    <h1>Vault<span>MCP</span></h1>
-    <span id="stats" class="stats"></span>
-  </div>
-  <div class="controls">
-    <input id="search" type="search" placeholder="Search your vault…  (title, publisher, tag, notes)" autofocus>
-    <select id="engine">
-      <option value="all">All Engines</option>
-      <option value="unity">Unity</option>
-      <option value="fab">Fab / Unreal</option>
-    </select>
-    <select id="pipeline">
-      <option value="all">All Pipelines</option>
-      <option value="HDRP">HDRP</option>
-      <option value="URP">URP</option>
-      <option value="Built-in">Built-in</option>
-    </select>
-    <select id="category"><option value="all">All Categories</option></select>
-    <button id="btn-sync" title="Login to stores & refresh library">⚙ Sync</button>
-  </div>
-</header>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <div class="logo-icon">⚡</div>
+          <div class="logo-text">
+            <h2>Vault<span>MCP</span></h2>
+            <span class="version-badge">v1.3 · Hybrid</span>
+          </div>
+        </div>
+      </div>
 
-<div id="sync-panel" class="sync-panel hidden">
-  <h3>Store sync</h3>
-  <p>Log in with your own accounts. A browser window opens; sign in once — the session is saved locally for headless refreshes.</p>
-  <div class="sync-row">
-    <button data-provider="unity" class="btn-login">🔐 Login with Unity</button>
-    <button data-provider="unity" class="btn-fetch">⟳ Fetch Unity library</button>
-  </div>
-  <div class="sync-row">
-    <button data-provider="fab" class="btn-login">🔐 Login with Epic / Fab</button>
-    <button data-provider="fab" class="btn-fetch">⟳ Fetch Fab library</button>
-  </div>
-  <div class="sync-row">
-    <button id="btn-enrich" class="btn-fetch">🖼 Enrich next batch (images & video links)</button>
-    <button id="btn-scan" class="btn-fetch">⚡ Scan local disk caches</button>
-    <span id="sync-status"></span>
-  </div>
-</div>
+      <div class="sidebar-scroll">
+        <!-- Quick Views -->
+        <div class="nav-section">
+          <div class="nav-section-title">LIBRARY VIEWS</div>
+          <button class="nav-item active" data-filter="all" id="nav-all">
+            <span class="nav-icon">📦</span>
+            <span class="nav-label">All Assets</span>
+            <span class="count-pill" id="count-all">0</span>
+          </button>
+          <button class="nav-item" data-filter="local" id="nav-local">
+            <span class="nav-icon">⚡</span>
+            <span class="nav-label">Downloaded (Local)</span>
+            <span class="count-pill local-pill" id="count-local">0</span>
+          </button>
+          <button class="nav-item" data-filter="cloud" id="nav-cloud">
+            <span class="nav-icon">☁</span>
+            <span class="nav-label">Cloud Library</span>
+            <span class="count-pill" id="count-cloud">0</span>
+          </button>
+          <button class="nav-item" data-filter="recipes" id="nav-recipes">
+            <span class="nav-icon">⭐</span>
+            <span class="nav-label">Curated Stacks</span>
+            <span class="count-pill recipe-pill" id="count-recipes">3</span>
+          </button>
+        </div>
 
-<main><div id="grid" class="grid"></div><div id="empty" class="empty hidden">No assets match.</div></main>
+        <!-- Engine Filter -->
+        <div class="nav-section">
+          <div class="nav-section-title">ENGINE / STORE</div>
+          <div class="segmented-control">
+            <button class="seg-btn active" data-engine="all">All</button>
+            <button class="seg-btn" data-engine="unity">Unity</button>
+            <button class="seg-btn" data-engine="fab">Fab/UE</button>
+          </div>
+        </div>
 
-<div id="modal" class="modal hidden">
-  <div class="modal-card">
-    <button id="modal-close" class="close">×</button>
-    <div id="modal-body"></div>
+        <!-- Pipeline Filter -->
+        <div class="nav-section">
+          <div class="nav-section-title">RENDER PIPELINE</div>
+          <div class="pipeline-chips">
+            <button class="pipe-chip active" data-pipeline="all">All</button>
+            <button class="pipe-chip" data-pipeline="HDRP">HDRP</button>
+            <button class="pipe-chip" data-pipeline="URP">URP</button>
+            <button class="pipe-chip" data-pipeline="Built-in">Built-in</button>
+          </div>
+        </div>
+
+        <!-- Categories List -->
+        <div class="nav-section">
+          <div class="nav-section-title">CATEGORIES</div>
+          <div id="category-list" class="category-list">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button id="btn-open-sync" class="btn-sync-trigger">
+          <span class="sync-dot"></span>
+          <span>Sync & Ingestion</span>
+          <span class="shortcut-key">⚙</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Command Bar -->
+      <header class="command-bar">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="search" id="search-input" placeholder="Search 1,400+ assets (FTS5 keyword or natural language intent)..." autocomplete="off" autofocus>
+          <span class="kbd-badge" id="search-shortcut">/</span>
+          <button id="btn-clear-search" class="clear-search-btn hidden">✕</button>
+        </div>
+
+        <div class="bar-actions">
+          <div class="sort-selector">
+            <select id="sort-select">
+              <option value="relevance">Relevance / Newest</option>
+              <option value="title_asc">Title (A-Z)</option>
+              <option value="size_desc">Size (Largest)</option>
+              <option value="claimed_desc">Recently Claimed</option>
+            </select>
+          </div>
+
+          <div class="view-toggles">
+            <button id="view-grid" class="view-btn active" title="Grid View">▦</button>
+            <button id="view-compact" class="view-btn" title="Compact List">≡</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Active Filters Breadcrumb & Stats Strip -->
+      <div class="status-strip">
+        <div class="active-filter-tags" id="filter-tags">
+          <!-- Active filter pills -->
+        </div>
+        <div class="search-metrics">
+          <span id="results-count" class="metrics-count">Loading vault...</span>
+          <span id="search-mode-badge" class="mode-badge hidden">Hybrid Search</span>
+        </div>
+      </div>
+
+      <!-- Main Asset Grid Container -->
+      <section class="content-scroll">
+        <!-- Recipes View (Initially Hidden) -->
+        <div id="recipes-view" class="recipes-container hidden">
+          <div class="recipe-header">
+            <h2>⭐ Curated Production Stacks</h2>
+            <p>Battle-tested asset recipes resolved directly against your owned library.</p>
+          </div>
+          <div id="recipes-grid" class="recipes-grid"></div>
+        </div>
+
+        <!-- Standard Assets Grid -->
+        <div id="asset-grid" class="asset-grid">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Empty State -->
+        <div id="empty-state" class="empty-state hidden">
+          <div class="empty-icon">📂</div>
+          <h3>No matching assets found</h3>
+          <p>Try searching for broader keywords, clearing pipeline filters, or switching engine modes.</p>
+          <button id="btn-reset-filters" class="btn-primary">Reset All Filters</button>
+        </div>
+      </section>
+    </main>
   </div>
-</div>
 
-<script src="/static/app.js"></script>
+  <!-- Detailed Asset Inspector Modal -->
+  <div id="detail-modal" class="modal-backdrop hidden">
+    <div class="modal-container">
+      <button id="modal-close-btn" class="modal-close">✕</button>
+
+      <div class="modal-layout">
+        <!-- Left: Gallery & Visuals -->
+        <div class="modal-media-col">
+          <div class="hero-image-wrapper">
+            <img id="modal-hero-img" class="modal-hero-img" src="" alt="Asset Hero">
+            <div id="modal-hero-badge" class="modal-status-badge">⚡ Ready on Disk</div>
+          </div>
+
+          <div id="modal-gallery" class="modal-gallery">
+            <!-- Thumbnails -->
+          </div>
+
+          <div id="modal-videos" class="modal-videos hidden">
+            <h4>TRAILERS & DEMOS</h4>
+            <div id="modal-video-links" class="video-link-chips"></div>
+          </div>
+
+          <!-- Unpack Direct Section -->
+          <div class="unpack-box" id="unpack-box">
+            <div class="unpack-title">
+              <span>⚡ 1-Click Unity Importer</span>
+              <span class="sub-label">Direct .unitypackage extraction</span>
+            </div>
+            <div class="unpack-input-group">
+              <input type="text" id="project-path-input" placeholder="D:\Projects\MyUnityProject (containing Assets/)">
+            </div>
+            <div class="unpack-options">
+              <label class="checkbox-label">
+                <input type="checkbox" id="strip-demos-check" checked>
+                <span>Strip Demo Scenes & PDF Bloat (Saves ~70% disk)</span>
+              </label>
+            </div>
+            <button id="btn-execute-unpack" class="btn-unpack-action">Extract Directly to Assets/</button>
+            <div id="unpack-feedback" class="unpack-feedback"></div>
+          </div>
+        </div>
+
+        <!-- Right: Specs & Stack Rules -->
+        <div class="modal-info-col">
+          <div class="modal-title-row">
+            <h2 id="modal-title">Asset Title</h2>
+            <div class="modal-badges" id="modal-badges"></div>
+          </div>
+
+          <div class="modal-meta-bar" id="modal-meta-bar">
+            <!-- Publisher, Size, Version -->
+          </div>
+
+          <!-- Tabs -->
+          <div class="modal-tabs">
+            <button class="modal-tab active" data-tab="overview">Overview & Usage</button>
+            <button class="modal-tab" data-tab="stack">Stack & Gotchas</button>
+            <button class="modal-tab" data-tab="ai-prompt">AI Context</button>
+          </div>
+
+          <div class="tab-content" id="tab-overview">
+            <div class="info-group">
+              <h4>ABOUT THIS ASSET</h4>
+              <p id="modal-summary" class="prose-text"></p>
+            </div>
+
+            <div class="info-group">
+              <h4>PRODUCTION USAGE NOTES</h4>
+              <p id="modal-usage" class="prose-text"></p>
+            </div>
+
+            <div class="info-group">
+              <h4>METADATA & TAGS</h4>
+              <div id="modal-tags" class="tag-cloud"></div>
+            </div>
+          </div>
+
+          <div class="tab-content hidden" id="tab-stack">
+            <div class="stack-box-warning" id="modal-stack-warnings">
+              <!-- Render pipeline / cross-engine advice -->
+            </div>
+            <div class="info-group">
+              <h4>ENGINE COMPATIBILITY</h4>
+              <div id="modal-specs-grid" class="specs-grid"></div>
+            </div>
+          </div>
+
+          <div class="tab-content hidden" id="tab-ai-prompt">
+            <p class="helper-text">Copy formatted markdown to paste into Claude, Antigravity, or Cursor chat:</p>
+            <pre class="code-preview" id="modal-ai-preview"></pre>
+            <button id="btn-copy-ai-ctx" class="btn-copy-ai">📋 Copy Markdown Context</button>
+          </div>
+
+          <div class="modal-footer-actions">
+            <a id="modal-store-link" class="btn-secondary" href="#" target="_blank" rel="noopener">Open Store Listing ↗</a>
+            <button id="btn-modal-copy-id" class="btn-ghost">Copy Asset ID</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sync & Ingestion Modal -->
+  <div id="sync-modal" class="modal-backdrop hidden">
+    <div class="modal-container sync-modal-container">
+      <button id="sync-close-btn" class="modal-close">✕</button>
+      <h2>⚙ Store Sync & Disk Ingestion</h2>
+      <p class="modal-desc">Connect official store sessions to refresh your library or scan local caches for downloaded assets.</p>
+
+      <div class="sync-grid">
+        <!-- Unity Card -->
+        <div class="sync-card">
+          <div class="sync-card-header">
+            <div class="sync-card-title">
+              <span class="engine-badge unity">Unity</span>
+              <h3>Unity Asset Store</h3>
+            </div>
+            <span id="unity-sync-status" class="sync-pill">Ready</span>
+          </div>
+          <p>Opens official ID login in a browser session; harvests purchased packages.</p>
+          <div class="sync-actions">
+            <button data-provider="unity" class="btn-login-store">🔐 Login</button>
+            <button data-provider="unity" class="btn-fetch-store">⟳ Fetch Library</button>
+          </div>
+        </div>
+
+        <!-- Fab Card -->
+        <div class="sync-card">
+          <div class="sync-card-header">
+            <div class="sync-card-title">
+              <span class="engine-badge fab">Fab / UE</span>
+              <h3>Epic Games / Fab</h3>
+            </div>
+            <span id="fab-sync-status" class="sync-pill">Ready</span>
+          </div>
+          <p>Opens official Epic session; captures purchased Unreal Engine & Fab assets.</p>
+          <div class="sync-actions">
+            <button data-provider="fab" class="btn-login-store">🔐 Login</button>
+            <button data-provider="fab" class="btn-fetch-store">⟳ Fetch Library</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sync-utility-bar">
+        <button id="btn-run-scan" class="btn-utility">⚡ Scan Local Disk Caches</button>
+        <button id="btn-run-enrich" class="btn-utility">🖼 Enrich Metadata & Imagery</button>
+      </div>
+
+      <div id="sync-log-box" class="sync-log-box">
+        <div class="log-title">ACTIVITY LOG</div>
+        <div id="sync-log-text" class="log-content">Ready. Click an action above.</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>

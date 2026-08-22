@@ -26,11 +26,11 @@ from fastapi.staticfiles import StaticFiles
 try:
     from .db import search_assets, get_asset_by_id, get_stats, get_categories
     from .config import load_config
-    from . import store_client, local_scan, unpacker
+    from . import store_client, local_scan, unpacker, stack_rules, stack_rules
 except ImportError:
     from db import search_assets, get_asset_by_id, get_stats, get_categories
     from config import load_config
-    import store_client, local_scan, unpacker
+    import store_client, local_scan, unpacker, stack_rules
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.join(ROOT_DIR, "web")
@@ -69,6 +69,11 @@ def api_asset(asset_id: str):
 def api_stats():
     return get_stats()
 
+
+
+@app.get("/api/recipes")
+def api_recipes():
+    return {"recipes": stack_rules.list_recipes()}
 
 @app.get("/api/categories")
 def api_categories():
