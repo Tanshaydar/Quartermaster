@@ -363,11 +363,34 @@ class DetailPanel(QScrollArea):
             link.setOpenExternalLinks(True)
             self.lay.addWidget(link)
 
+        if (item.get("local_path") or "").lower().endswith(".unitypackage"):
+            unpack_btn = QPushButton("📥 Unpack into Unity project…")
+            unpack_btn.clicked.connect(self._unpack_to_project)
+            self.lay.addWidget(unpack_btn)
+
         copy_btn = QPushButton("📋 Copy context for AI")
         copy_btn.clicked.connect(self._copy_context)
         self.lay.addWidget(copy_btn)
 
         self.lay.addStretch()
+
+    def _unpack_to_project(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from .unpacker import import_asset_to_project
+        a = self.current
+        proj = QFileDialog.getExistingDirectory(
+            self, "Choose Unity project root", "",
+            QFileDialog.Option.ShowDirsOnly)
+        if not proj:
+            return
+        try:
+            r = import_asset_to_project(a["id"], proj)
+            QMessageBox.information(
+                self, "Imported",
+                f"Unpacked '{r['title']}' into:\n{r['project']}\n\n"
+                f"Files written: {r['written']}  ·  skipped: {r['skipped']}")
+        except Exception as e:
+            QMessageBox.critical(self, "Import failed", str(e))
 
     @staticmethod
     def _set_cover(label: QLabel, pm: QPixmap):

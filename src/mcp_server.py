@@ -22,13 +22,14 @@ except ImportError:
 
 from .db import search_assets, get_asset_by_id, get_stats, DB_PATH
 from .ingest import classify_asset
+from . import semantic, unpacker
 
 mcp = FastMCP("vaultmcp")
 
 
 def _slim(item: dict) -> dict:
     """Compact representation for LLM context efficiency."""
-    return {
+    out = {
         "id": item["id"],
         "engine": item.get("source"),
         "title": item["title"],
@@ -44,24 +45,41 @@ def _slim(item: dict) -> dict:
         "usage_notes": (item.get("usage_notes") or "")[:180],
         "store_url": item.get("store_url"),
     }
+    # hybrid-search provenance (why this item matched)
+    if item.get("match"):
+        out["match"] = item["match"]
+        out["relevance"] = item.get("relevance")
+    return out
 
 
 @mcp.tool()
 def search_owned_assets(query: str, engine: str = "all", pipeline: str = "all",
                         category: str = "all", limit: int = 25,
                         local_only: bool = False) -> str:
-    """Full-text search across the user's owned Unity/Fab asset library.
-    Use for questions like 'what do I own that could serve as X?'.
+    """Search the user's owned Unity/Fab asset library. Hybrid: keyword (BM25)
+    fused with local semantic embeddings, so natural-language descriptions work
+    even without exact keyword overlap. Results include a 'match' field showing
+    why each item hit (keyword / semantic / both).
     engine: all|unity|fab. pipeline: all|HDRP|URP|Built-in.
-    local_only: only assets already downloaded to disk (zero-delay import)."""
-    results = search_assets(query=query, source=engine if engine != "all" else None,
-                            pipeline=pipeline, category=category,
-                            limit=min(max(limit, 1), 100))
+    local_only: only assets already downloaded to disk."""
+    if query.strip():
+        merged = semantic.hybrid_search(query, limit=max(limit * 2, 50))
+        results = merged["results"]
+        mode = merged["mode"]
+    else:
+        results, mode = search_assets(limit=min(max(limit, 1), 100)), "keyword"
+    if engine != "all":
+        results = [r for r in results if r.get("source") == engine]
+    if pipeline != "all":
+        results = [r for r in results if pipeline in (r.get("render_pipelines") or [])]
+    if category != "all":
+        results = [r for r in results if r.get("category") == category]
     if local_only:
         results = [r for r in results if r.get("local_path")]
     return json.dumps({
         "count": len(results),
-        "results": [_slim(r) for r in results],
+        "search_mode": mode,
+        "results": [_slim(r) for r in results[:limit]],
     }, ensure_ascii=False)
 
 
@@ -135,6 +153,19 @@ def get_stack_recommendations(problem_description: str, limit_per_category: int 
         "recommendations": recommendations,
         "note": "All recommended items are already owned by the user.",
     }, ensure_ascii=False)
+
+
+@mcp.tool()
+def import_asset_to_project(asset_id: str, project_dir: str) -> str:
+    """Unpack a locally-downloaded Unity Asset Store package (.unitypackage)
+    directly into a Unity project's Assets/ folder. Only works for assets
+    tagged local=true (check with search first). project_dir must be the Unity
+    project root (the folder containing Assets/)."""
+    try:
+        result = unpacker.import_asset_to_project(asset_id, project_dir)
+        return json.dumps({"status": "ok", **result}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
 @mcp.tool()

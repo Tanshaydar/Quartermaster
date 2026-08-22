@@ -1,5 +1,7 @@
 # User data & caches
 data/*.db
+data/*.db-wal
+data/*.db-shm
 data/seed/*.csv
 cache/
 profiles/

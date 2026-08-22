@@ -7,7 +7,11 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "asse
 
 def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10)
+    # WAL mode: concurrent readers (MCP agent) never block the writer (GUI)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
     return conn
 
