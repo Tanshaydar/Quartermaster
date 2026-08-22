@@ -38,6 +38,8 @@ def _slim(item: dict) -> dict:
         "pipelines": item.get("render_pipelines") or item.get("formats"),
         "tags": item.get("tags"),
         "size": item.get("size_str") or None,
+        "local": bool(item.get("local_path")),
+        "local_path": item.get("local_path") or None,
         "summary": (item.get("summary") or "")[:220],
         "usage_notes": (item.get("usage_notes") or "")[:180],
         "store_url": item.get("store_url"),
@@ -46,13 +48,17 @@ def _slim(item: dict) -> dict:
 
 @mcp.tool()
 def search_owned_assets(query: str, engine: str = "all", pipeline: str = "all",
-                        category: str = "all", limit: int = 25) -> str:
+                        category: str = "all", limit: int = 25,
+                        local_only: bool = False) -> str:
     """Full-text search across the user's owned Unity/Fab asset library.
     Use for questions like 'what do I own that could serve as X?'.
-    engine: all|unity|fab. pipeline: all|HDRP|URP|Built-in."""
+    engine: all|unity|fab. pipeline: all|HDRP|URP|Built-in.
+    local_only: only assets already downloaded to disk (zero-delay import)."""
     results = search_assets(query=query, source=engine if engine != "all" else None,
                             pipeline=pipeline, category=category,
                             limit=min(max(limit, 1), 100))
+    if local_only:
+        results = [r for r in results if r.get("local_path")]
     return json.dumps({
         "count": len(results),
         "results": [_slim(r) for r in results],
@@ -133,8 +139,18 @@ def get_stack_recommendations(problem_description: str, limit_per_category: int 
 
 @mcp.tool()
 def get_vault_stats() -> str:
-    """Overall vault stats: total assets per engine, per category."""
-    return json.dumps(get_stats(), ensure_ascii=False)
+    """Overall vault stats: total assets per engine, per category, and how many
+    are already downloaded locally vs cloud-only."""
+    import sqlite3
+    stats = get_stats()
+    from .db import get_connection
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT source, COUNT(*) FROM assets WHERE local_path != '' GROUP BY source")
+    local = {r[0]: r[1] for r in cur.fetchall()}
+    conn.close()
+    stats["downloaded_locally"] = local
+    return json.dumps(stats, ensure_ascii=False)
 
 
 if __name__ == "__main__":

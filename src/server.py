@@ -27,10 +27,12 @@ try:
     from .db import search_assets, get_asset_by_id, get_stats, get_categories
     from .config import load_config
     from . import store_client
+    from . import local_scan
 except ImportError:
     from db import search_assets, get_asset_by_id, get_stats, get_categories
     from config import load_config
     import store_client
+    import local_scan
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.join(ROOT_DIR, "web")
@@ -144,6 +146,12 @@ def api_fetch(provider: str):
 def api_enrich(limit: Optional[int] = None):
     count = store_client.enrich_assets(limit)
     return {"status": "ok", "enriched": count}
+
+
+@app.post("/api/scan-local")
+def api_scan_local():
+    """Scan Unity/Fab disk caches and tag assets as locally downloaded."""
+    return local_scan.scan_all()
 
 
 # serve web assets (css/js)

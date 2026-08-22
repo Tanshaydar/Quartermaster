@@ -31,6 +31,7 @@ function card(item) {
         <span class="badge ${item.source}">${item.source === "unity" ? "Unity" : "Fab"}</span>
       </div>
       <div><span class="badge cat">${esc(item.category)}</span>
+        ${item.local_path ? ` <span class="badge" style="color:#3fb950;border-color:#3fb950" title="${esc(item.local_path)}">⚡ Local</span>` : ""}
         ${item.size_str ? ` <span style="color:var(--muted);font-size:11px">${item.size_str}</span>` : ""}</div>
       <div class="tags">${(item.tags || []).slice(0, 6).map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>
     </div>`;
@@ -136,6 +137,15 @@ document.querySelectorAll(".btn-fetch").forEach(b => b.onclick = async () => {
     $("#sync-status").textContent = "Enriching batch…";
     try { const r = await api("/api/enrich", { method: "POST" }); $("#sync-status").textContent = `Enriched ${r.enriched} assets.`; load(); }
     catch (e) { $("#sync-status").textContent = "⚠ " + e.message; }
+    return;
+  }
+  if (b.id === "btn-scan") {
+    $("#sync-status").textContent = "Scanning disk caches…";
+    try {
+      const r = await api("/api/scan-local", { method: "POST" });
+      $("#sync-status").textContent = `⚡ ${r.matched_to_library} assets found on disk (Unity files: ${r.files_scanned.unity}, Fab dirs: ${r.files_scanned.fab}).`;
+      load();
+    } catch (e) { $("#sync-status").textContent = "⚠ " + e.message; }
     return;
   }
   $("#sync-status").textContent = `Fetching ${b.dataset.provider} library…`;
