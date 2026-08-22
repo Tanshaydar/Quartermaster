@@ -587,15 +587,20 @@ class MainWindow(QMainWindow):
     # ---------------- long operations ----------------
 
     def _long_op(self, fn, label, refresh_after=False, pre_status=None):
-        if pre_status:
-            self.sync_status.setText(pre_status)
-        else:
-            self.sync_status.setText(f"{label}…")
+        # single-flight: two ops would fight over the same browser profile
+        if getattr(self, "_op_running", False):
+            self.sync_status.setText("⚠ Another operation is already running — wait for it to finish.")
+            return
+        self._op_running = True
+        self.sync_panel.setEnabled(False)
+        self.sync_status.setText(pre_status or f"{label}…")
         self.op = LongOp(fn, label)
 
         def finished(msg, ok):
+            self._op_running = False
+            self.sync_panel.setEnabled(True)
             self.sync_status.setText(msg)
-            if refresh_after or True:
+            if ok:
                 self.do_search()
                 self.refresh_stats()
 
