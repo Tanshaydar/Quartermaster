@@ -19,7 +19,19 @@ pi, …) sweep your vault via MCP and answer questions like:
 | `src/local_scan.py` | Scans Unity/Fab disk caches, tags assets as downloaded vs cloud |
 | `src/store_client.py` | Interactive store login, library refresh, metadata enrichment |
 | `src/mcp_server.py` | MCP server (stdio) exposing the vault to AI agents |
+| `src/register.py` | One-click registration into Claude Desktop / Cursor / Windsurf / Antigravity |
+| `src/project_audit.py` | Sniffs target projects (engine, version, render pipeline) for compatibility warnings |
 | `web/` | Browser-mode UI (same features as the desktop app) |
+
+## One-click agent registration
+
+```bash
+python -m src.register --all        # register into every detected client
+python -m src.register cursor       # just one
+dry-run:  python -m src.register --all --dry-run
+undo:     python -m src.register --all --remove
+```
+Merges safely into existing configs (backup written next to the file).
 
 ## Quick start
 

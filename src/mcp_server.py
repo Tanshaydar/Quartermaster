@@ -23,6 +23,7 @@ except ImportError:
 from .db import search_assets, get_asset_by_id, get_stats, DB_PATH
 from .ingest import classify_asset
 from . import semantic, unpacker
+from . import project_audit
 
 mcp = FastMCP("vaultmcp")
 
@@ -156,6 +157,20 @@ def get_stack_recommendations(problem_description: str, limit_per_category: int 
 
 
 @mcp.tool()
+def audit_project(project_dir: str) -> str:
+    """Detect the engine, version and render pipeline of a game project
+    (Unity: from ProjectVersion.txt / manifest.json; Unreal: .uproject /
+    DefaultEngine.ini). Call this BEFORE recommending or importing assets so
+    pipeline mismatches (e.g. URP-only shader into an HDRP project) are caught."""
+    try:
+        info = project_audit.audit_project(project_dir)
+        info.pop("packages", None)   # too noisy for agent context
+        return json.dumps({"status": "ok", **info}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
 def import_asset_to_project(asset_id: str, project_dir: str) -> str:
     """Unpack a locally-downloaded Unity Asset Store package (.unitypackage)
     directly into a Unity project's Assets/ folder. Only works for assets
@@ -163,6 +178,18 @@ def import_asset_to_project(asset_id: str, project_dir: str) -> str:
     project root (the folder containing Assets/)."""
     try:
         result = unpacker.import_asset_to_project(asset_id, project_dir)
+        # compatibility check against the target project
+        warnings = []
+        try:
+            asset = get_asset_by_id(asset_id)
+            info = project_audit.audit_project(project_dir)
+            warnings = project_audit.compatibility_warning(asset, info)
+            result["target"] = {"engine": info.get("engine"),
+                                "version": info.get("version"),
+                                "pipeline": info.get("pipeline")}
+        except Exception:
+            pass
+        result["warnings"] = warnings
         return json.dumps({"status": "ok", **result}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
