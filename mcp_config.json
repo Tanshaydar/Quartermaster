@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "vaultmcp": {
+      "command": "python",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "D:\\Projects\\PERSONAL\\VaultMCP"
+    }
+  }
+}

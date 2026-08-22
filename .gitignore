@@ -1,0 +1,15 @@
+# User data & caches
+data/*.db
+data/seed/*.csv
+cache/
+profiles/
+config.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+Thumbs.db
+.DS_Store

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VaultMCP — Asset Vault</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>Vault<span>MCP</span></h1>
+    <span id="stats" class="stats"></span>
+  </div>
+  <div class="controls">
+    <input id="search" type="search" placeholder="Search your vault…  (title, publisher, tag, notes)" autofocus>
+    <select id="engine">
+      <option value="all">All Engines</option>
+      <option value="unity">Unity</option>
+      <option value="fab">Fab / Unreal</option>
+    </select>
+    <select id="pipeline">
+      <option value="all">All Pipelines</option>
+      <option value="HDRP">HDRP</option>
+      <option value="URP">URP</option>
+      <option value="Built-in">Built-in</option>
+    </select>
+    <select id="category"><option value="all">All Categories</option></select>
+    <button id="btn-sync" title="Login to stores & refresh library">⚙ Sync</button>
+  </div>
+</header>
+
+<div id="sync-panel" class="sync-panel hidden">
+  <h3>Store sync</h3>
+  <p>Log in with your own accounts. A browser window opens; sign in once — the session is saved locally for headless refreshes.</p>
+  <div class="sync-row">
+    <button data-provider="unity" class="btn-login">🔐 Login with Unity</button>
+    <button data-provider="unity" class="btn-fetch">⟳ Fetch Unity library</button>
+  </div>
+  <div class="sync-row">
+    <button data-provider="fab" class="btn-login">🔐 Login with Epic / Fab</button>
+    <button data-provider="fab" class="btn-fetch">⟳ Fetch Fab library</button>
+  </div>
+  <div class="sync-row">
+    <button id="btn-enrich" class="btn-fetch">🖼 Enrich next batch (images & video links)</button>
+    <span id="sync-status"></span>
+  </div>
+</div>
+
+<main><div id="grid" class="grid"></div><div id="empty" class="empty hidden">No assets match.</div></main>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <button id="modal-close" class="close">×</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
