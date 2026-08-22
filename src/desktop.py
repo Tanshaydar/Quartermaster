@@ -488,10 +488,12 @@ class MainWindow(QMainWindow):
             return b
 
         add_sync_btn("🔐 Login Unity", lambda: self._long_op(
-            lambda: store_client.interactive_login("unity"), "Unity login"))
+            lambda: store_client.interactive_login("unity"), "Unity login",
+            pre_status="Browser opening… sign in with your Unity account, then CLOSE the window when done."))
         add_sync_btn("⟳ Fetch Unity", lambda: self._fetch_op("unity"))
         add_sync_btn("🔐 Login Fab", lambda: self._long_op(
-            lambda: store_client.interactive_login("fab"), "Fab login"))
+            lambda: store_client.interactive_login("fab"), "Fab login",
+            pre_status="Browser opening… sign in with your Epic account (complete the captcha), then CLOSE the window."))
         add_sync_btn("⟳ Fetch Fab", lambda: self._fetch_op("fab"))
         add_sync_btn("🖼 Enrich batch", lambda: self._long_op(
             lambda: store_client.enrich_assets(None), "Enrichment"))
@@ -583,8 +585,11 @@ class MainWindow(QMainWindow):
 
     # ---------------- long operations ----------------
 
-    def _long_op(self, fn, label, refresh_after=False):
-        self.sync_status.setText(f"{label}…")
+    def _long_op(self, fn, label, refresh_after=False, pre_status=None):
+        if pre_status:
+            self.sync_status.setText(pre_status)
+        else:
+            self.sync_status.setText(f"{label}…")
         self.op = LongOp(fn, label)
 
         def finished(msg, ok):

@@ -48,7 +48,7 @@ except ImportError:
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 LOGIN_URLS = {
-    "unity": "https://id.unity.com/en/sign-in",
+    "unity": "https://id.unity.com/",          # redirects to /en/login
     "fab": "https://www.epicgames.com/id/login",
 }
 LIBRARY_URLS = {
@@ -59,9 +59,28 @@ LIBRARY_URLS = {
 }
 
 SUCCESS_HINTS = {
-    "unity": [r"assetstore\.unity\.com", r"id\.unity\.com/[a-z-]*$"],
-    "fab": [r"fab\.com", r"epicgames\.com/id/home"],
+    "unity": [r"^https://assetstore\.unity\.com", r"id\.unity\.com/(home|dashboard)"],
+    "fab": [r"^https://www\.fab\.com"],
 }
+
+# Anti-bot detection: Epic/Unity challenge automation-chromium. Real browsers pass.
+LAUNCH_CHANNELS = ["chrome", "msedge", None]     # prefer system Chrome, then Edge
+EXTRA_ARGS = ["--disable-blink-features=AutomationControlled"]
+
+
+def _launch_ctx(p, profile_dir: str, headless: bool):
+    """Persistent context preferring a real installed browser (better anti-bot
+    behavior than Playwright's bundled chromium). Falls back gracefully."""
+    last_err = None
+    for channel in LAUNCH_CHANNELS:
+        try:
+            kwargs = dict(headless=headless, args=EXTRA_ARGS)
+            if channel:
+                kwargs["channel"] = channel
+            return p.chromium.launch_persistent_context(profile_dir, **kwargs)
+        except Exception as e:
+            last_err = e
+    raise RuntimeError(f"Could not launch any browser (chrome/msedge/chromium): {last_err}")
 
 
 def _playwright():
@@ -87,11 +106,12 @@ def interactive_login(provider: str, timeout_minutes: int = 10) -> bool:
     os.makedirs(profile_dir, exist_ok=True)
 
     print(f"\n=== {provider.upper()} LOGIN ===")
-    print(f"A browser window will open. Please sign in with your {provider} account.")
+    print(f"A browser window will open. Sign in with your {provider} account.")
+    print("When the page shows you as logged in, simply CLOSE the browser window.")
     print(f"You have {timeout_minutes} minutes.\n")
 
     with pw() as p:
-        ctx = p.chromium.launch_persistent_context(profile_dir, headless=False)
+        ctx = _launch_ctx(p, profile_dir, headless=False)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(LOGIN_URLS[provider], wait_until="domcontentloaded")
 
@@ -99,19 +119,20 @@ def interactive_login(provider: str, timeout_minutes: int = 10) -> bool:
         deadline = time.time() + timeout_minutes * 60
         ok = False
         while time.time() < deadline:
-            url = page.url or ""
-            if any(re.search(pat, url) for pat in SUCCESS_HINTS[provider]) and "sign" not in url.lower():
-                ok = True
-                break
-            # closed the browser early?
             try:
-                _ = page.title()
+                url = page.url or ""
+                if any(re.search(pat, url) for pat in SUCCESS_HINTS[provider]):
+                    ok = True   # redirected past the login page -> authenticated
+                    break
             except Exception:
-                ok = True  # user closed window after logging in
+                ok = True       # browser/window closed by user -> session persisted
                 break
             time.sleep(2)
 
-        ctx.close()
+        try:
+            ctx.close()
+        except Exception:
+            pass
     print(f"[{'ok' if ok else 'timeout'}] Login {'saved' if ok else 'not completed'} for {provider}.")
     return ok
 
@@ -185,10 +206,7 @@ def fetch_library(provider: str) -> int:
             pass
 
     with pw() as p:
-        ctx = p.chromium.launch_persistent_context(
-            profile_dir,
-            headless=cfg["headless_refresh"],
-        )
+        ctx = _launch_ctx(p, profile_dir, headless=cfg["headless_refresh"])
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.on("response", on_response)
 
