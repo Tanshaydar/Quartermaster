@@ -14,12 +14,20 @@ Assets/_VaultMCP_Imported/ ; nothing can escape the target project.
 """
 import os
 import tarfile
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
 try:
     from .db import get_asset_by_id
+    from .config import load_config
 except ImportError:
     from db import get_asset_by_id
+    from config import load_config
+
+# Default demo-content filters: any path segment matching these (case-insensitive)
+# is skipped, plus documentation files.
+DEFAULT_STRIP_DIRS = {"demo", "demos", "samples", "samplescene", "samplescenes",
+                      "example", "examples", "documentation"}
+DEFAULT_STRIP_EXTS = {".pdf", ".chm"}
 
 
 def _safe_target(project_dir: str, rel_path: str) -> str:
@@ -31,7 +39,20 @@ def _safe_target(project_dir: str, rel_path: str) -> str:
     return target
 
 
-def unpack_unitypackage(pkg_path: str, project_dir: str) -> Dict[str, Any]:
+def _strip_reason(rel_path: str, strip_dirs: set, strip_exts: set) -> Optional[str]:
+    """Return a reason string if this relative path is demo/doc bloat."""
+    parts = [p.lower() for p in rel_path.split("/")]
+    for seg in parts[:-1]:
+        if seg in strip_dirs:
+            return f"dir:{seg}"
+    ext = os.path.splitext(parts[-1])[1]
+    if ext in strip_exts:
+        return f"ext:{ext}"
+    return None
+
+
+def unpack_unitypackage(pkg_path: str, project_dir: str,
+                        strip_demos: bool = True) -> Dict[str, Any]:
     project_dir = os.path.abspath(project_dir)
     if not os.path.isdir(project_dir):
         raise ValueError(f"Project dir does not exist: {project_dir}")
@@ -41,6 +62,12 @@ def unpack_unitypackage(pkg_path: str, project_dir: str) -> Dict[str, Any]:
 
     written = 0
     skipped = 0
+    stripped_files = 0
+    stripped_bytes = 0
+
+    cfg = load_config()
+    strip_dirs = set(cfg.get("strip_dirs", DEFAULT_STRIP_DIRS))
+    strip_exts = set(cfg.get("strip_exts", DEFAULT_STRIP_EXTS))
 
     with tarfile.open(pkg_path, "r:gz") as tf:
         members = tf.getmembers()
@@ -75,6 +102,19 @@ def unpack_unitypackage(pkg_path: str, project_dir: str) -> Dict[str, Any]:
                 continue
             if not rel.startswith("Assets/"):
                 rel = f"Assets/_VaultMCP_Imported/{rel}"
+
+            am = asset_member.get(guid)
+            if not am or not am.isfile():
+                skipped += 1
+                continue
+
+            if strip_demos:
+                reason = _strip_reason(rel, strip_dirs, strip_exts)
+                if reason:
+                    stripped_files += 1
+                    stripped_bytes += am.size
+                    continue
+
             target = _safe_target(project_dir, rel)
 
             am = asset_member.get(guid)
@@ -96,10 +136,13 @@ def unpack_unitypackage(pkg_path: str, project_dir: str) -> Dict[str, Any]:
                     out.write(msrc.read())
 
     return {"written": written, "skipped": skipped,
+            "stripped": stripped_files,
+            "stripped_mb": round(stripped_bytes / 1024 / 1024, 1),
             "project": project_dir, "package": os.path.basename(pkg_path)}
 
 
-def import_asset_to_project(asset_id: str, project_dir: str) -> Dict[str, Any]:
+def import_asset_to_project(asset_id: str, project_dir: str,
+                            strip_demos: bool = True) -> Dict[str, Any]:
     """MCP-facing wrapper: unpack a vault asset's cached .unitypackage."""
     asset = get_asset_by_id(asset_id)
     if not asset:
@@ -109,7 +152,7 @@ def import_asset_to_project(asset_id: str, project_dir: str) -> Dict[str, Any]:
         raise ValueError(
             f"'{asset['title']}' is not downloaded locally (no .unitypackage on disk). "
             "Download it via Unity Hub / the Asset Store first, then re-run the disk scan.")
-    result = unpack_unitypackage(pkg, project_dir)
+    result = unpack_unitypackage(pkg, project_dir, strip_demos=strip_demos)
     result["title"] = asset["title"]
     return result
 

@@ -19,20 +19,18 @@ import os
 import threading
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 try:
     from .db import search_assets, get_asset_by_id, get_stats, get_categories
     from .config import load_config
-    from . import store_client
-    from . import local_scan
+    from . import store_client, local_scan, unpacker
 except ImportError:
     from db import search_assets, get_asset_by_id, get_stats, get_categories
     from config import load_config
-    import store_client
-    import local_scan
+    import store_client, local_scan, unpacker
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.join(ROOT_DIR, "web")
@@ -152,6 +150,40 @@ def api_enrich(limit: Optional[int] = None):
 def api_scan_local():
     """Scan Unity/Fab disk caches and tag assets as locally downloaded."""
     return local_scan.scan_all()
+
+
+@app.post("/api/import")
+async def api_import(request: Request):
+    """Unpack a locally-downloaded .unitypackage into a Unity project root.
+    Used by the in-editor VaultMCP window (project_dir = the Unity project).
+    Accepts application/x-www-form-urlencoded or query params."""
+    form = dict(await request.form())
+    if not form:
+        form = dict(request.query_params)
+    asset_id = form.get("asset_id", "")
+    project_dir = form.get("project_dir", "")
+    strip_demos = str(form.get("strip_demos", "true")).lower() != "false"
+    if not asset_id or not project_dir:
+        raise HTTPException(400, "asset_id and project_dir are required")
+    try:
+        result = unpacker.import_asset_to_project(asset_id, project_dir,
+                                                  strip_demos=strip_demos)
+        # list prefabs so the editor can offer 'add to scene'
+        prefab_hits = []
+        title_words = [w for w in __import__("re").findall(
+            r"[a-zA-Z]+", result.get("title", "")) if len(w) > 3][:4]
+        for root, _dirs, files in os.walk(os.path.join(project_dir, "Assets")):
+            for f in files:
+                if f.endswith(".prefab") and any(w.lower() in f.lower() for w in title_words):
+                    prefab_hits.append(os.path.join(root, f))
+                if len(prefab_hits) >= 10:
+                    break
+            if len(prefab_hits) >= 10:
+                break
+        result["prefabs"] = prefab_hits
+        return result
+    except Exception as e:
+        raise HTTPException(400, str(e))
 
 
 # serve web assets (css/js)

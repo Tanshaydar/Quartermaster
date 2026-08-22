@@ -1,0 +1,78 @@
+{
+  "_comment": "VaultMCP stack knowledge base. Edit freely — roles map asset titles (lowercase substring match) to production roles; 'exclusive' roles conflict when two assets fill them; 'requires' declares prerequisites; 'recipes' are curated stacks resolved against your own library.",
+
+  "roles": {
+    "weather_sky": {
+      "label": "Weather / sky system",
+      "exclusive": true,
+      "match": ["enviro", "unistorm", "weather", "hdri sky", "sky system", "atmospheric"]
+    },
+    "water_system": {
+      "label": "Water system",
+      "exclusive": true,
+      "match": ["kws", "crest", "dynamic water", "water system", "river editor", "riverise", "flowing waters"]
+    },
+    "vegetation_renderer": {
+      "label": "Vegetation detail renderer",
+      "exclusive": true,
+      "match": ["nature renderer", "vegetation studio", "foliage renderer", "microverse vegetation"]
+    },
+    "terrain_generator": {
+      "label": "Terrain generator",
+      "exclusive": true,
+      "match": ["microverse", "gaia", "digger", "infinitelands", "infinite lands"]
+    },
+    "terrain_shader": {
+      "label": "Terrain shading system",
+      "exclusive": false,
+      "match": ["microsplat", "terrain shader"]
+    },
+    "gi_ao": {
+      "label": "GI / AO enhancement",
+      "exclusive": true,
+      "match": ["htrace"]
+    },
+    "unified_lit_shader": {
+      "label": "Unified lit shader framework",
+      "exclusive": true,
+      "match": ["better lit", "better shaders"]
+    }
+  },
+
+  "requires": [
+    { "if_match": "microsplat trax", "requires": "microsplat", "reason": "Trax is a MicroSplat module and needs the core MicroSplat terrain shader." },
+    { "if_match": "microsplat - hdrp", "requires": "microsplat", "reason": "HDRP pathway is a MicroSplat module and needs the core shader." },
+    { "if_match": "microsplat - urp", "requires": "microsplat", "reason": "URP pathway is a MicroSplat module and needs the core shader." },
+    { "if_match": "stampit", "requires": "microverse|microsplat", "reason": "StampIT stamps are consumed by MicroVerse or applied via MicroSplat." },
+    { "if_match": "enviro - additional", "requires": "enviro", "reason": "Additional weather packs extend the core Enviro system." }
+  ],
+
+  "recipes": [
+    {
+      "name": "Photorealistic outdoor biome (Unity HDRP)",
+      "engine": "unity",
+      "pipeline": "HDRP",
+      "stack_patterns": [
+        "microverse",
+        "microsplat",
+        "better shaders|better lit",
+        "htrace",
+        "enviro|weather",
+        "kws|dynamic water"
+      ],
+      "notes": "Non-destructive terrain authoring (MicroVerse) -> procedural texturing (MicroSplat) -> unified material BRDF across kitbashed vendors (Better Lit/Shaders) -> ray-traced GI (HTrace) -> dynamic sky/weather -> physics water."
+    },
+    {
+      "name": "Stylized open world (Unity URP)",
+      "engine": "unity",
+      "pipeline": "URP",
+      "stack_patterns": [
+        "gaia|microverse",
+        "microsplat",
+        "nature renderer|vegetation",
+        "unistorm|enviro|weather"
+      ],
+      "notes": "Performance-first stack: GPU-instanced vegetation and lighter post-processing for URP targets."
+    }
+  ]
+}

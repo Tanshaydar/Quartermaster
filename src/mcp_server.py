@@ -24,6 +24,7 @@ from .db import search_assets, get_asset_by_id, get_stats, DB_PATH
 from .ingest import classify_asset
 from . import semantic, unpacker
 from . import project_audit
+from . import stack_rules
 
 mcp = FastMCP("vaultmcp")
 
@@ -193,6 +194,28 @@ def import_asset_to_project(asset_id: str, project_dir: str) -> str:
         return json.dumps({"status": "ok", **result}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def validate_stack(asset_ids: list) -> str:
+    """Lint a set of owned assets that are planned for one project/stack.
+    Detects role conflicts (two weather systems, two vegetation renderers, …),
+    same-product family notes, and missing prerequisites (e.g. MicroSplat module
+    without core MicroSplat). Call before importing multiple assets together."""
+    try:
+        return json.dumps(stack_rules.validate_stack(asset_ids), ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def list_stack_recipes() -> str:
+    """Curated production stacks ('asset recipes') resolved against the user's
+    OWN library. Each recipe lists which owned assets fill each slot."""
+    try:
+        return json.dumps(stack_rules.list_recipes(), ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
 @mcp.tool()

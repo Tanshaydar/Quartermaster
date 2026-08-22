@@ -44,7 +44,13 @@ VaultMCP fixes the *remembering* part:
 - **Local disk scanner** — tags every asset as ⚡ downloaded or ☁ cloud-only by
   scanning the Unity Asset Store cache and Fab vault automatically
 - **Direct project import** — unpacks `.unitypackage` files straight into a
-  project's `Assets/`, with path-safety guarantees
+  project's `Assets/`, stripping demo scenes/docs (configurable), with
+  path-safety guarantees
+- **Stack intelligence** — role-based conflict linting ("two weather systems",
+  "MicroSplat module without core"), plus curated *asset recipes* resolved
+  against your own library (`data/recipes.json` is user-editable)
+- **In-editor Unity window** — drop `editor_bridge/VaultMCP-Bridge.unitypackage`
+  into any project to search/import from inside Unity (`Window > VaultMCP`)
 - **Project auditor** — reads a target project's engine, version, and render
   pipeline; warns before incompatible imports (*"asset supports HDRP but
   project uses URP"*)
@@ -100,7 +106,9 @@ to each file. Undo anytime with `--remove`.
 | `list_asset_categories()` | Category breakdown of what you own |
 | `get_stack_recommendations(problem_description)` | *"I'm building X"* → matched owned packages per aspect |
 | `audit_project(project_dir)` | Detects engine/version/pipeline of a game project |
-| `import_asset_to_project(asset_id, project_dir)` | Unpack a downloaded `.unitypackage` into a Unity project, with compatibility warnings |
+| `validate_stack(asset_ids)` | Lints a planned stack: role conflicts, missing prerequisites |
+| `list_stack_recipes()` | Curated production stacks resolved to assets **you own** |
+| `import_asset_to_project(asset_id, project_dir)` | Unpack a downloaded `.unitypackage` into a Unity project, demo content stripped, compatibility warnings included |
 
 Example agent flow: audit project → search vault (`local_only=true`) → warn on
 pipeline mismatch → unpack into `Assets/`. No manual step anywhere.
