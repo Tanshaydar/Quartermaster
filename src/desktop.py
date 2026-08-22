@@ -14,6 +14,7 @@ Backend modules are shared with the MCP server; nothing else changes.
 import json
 import os
 import sys
+import threading
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
@@ -652,7 +653,33 @@ class MainWindow(QMainWindow):
         ev.accept()
 
 
+def _install_crash_logger():
+    """All uncaught exceptions (main + threads) go to data/crash.log."""
+    log_path = os.path.join(ROOT_DIR, "data", "crash.log")
+
+    def _write(header, exc):
+        import traceback
+        import datetime
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"\n=== {datetime.datetime.now().isoformat()} — {header} ===\n")
+                traceback.print_exception(type(exc), exc, exc.__traceback__, file=f)
+        except Exception:
+            pass
+
+    def sys_hook(t, v, tb):
+        _write("uncaught exception", v)
+        sys.__stderr__.write(f"VaultMCP crashed — see {log_path}\n")
+
+    def thread_hook(args):
+        _write(f"exception in thread {args.thread.name}", args.exc)
+
+    sys.excepthook = sys_hook
+    threading.excepthook = thread_hook
+
+
 def main():
+    _install_crash_logger()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)

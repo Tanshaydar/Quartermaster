@@ -16,7 +16,7 @@ DEFAULTS = {
     "video_mode": "link",             # "link" = store YouTube/trailer links only, never download
     "enrich_batch_size": 20,
     "profiles_dir": "profiles",       # browser profiles for saved logins
-    "headless_refresh": True          # refresh library without showing a browser window
+    "headless_refresh": False         # headless fetches trigger Unity MFA/bot flags — keep headed
 }
 
 
