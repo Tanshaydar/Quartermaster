@@ -314,6 +314,7 @@ def fetch_library(provider: str) -> int:
     seen_sigs: set = set()
     captured_bodies: List[str] = []
     landed_on_login = False
+    owned_ids: set = set()
 
     def on_request(req):
         try:
@@ -321,7 +322,8 @@ def fetch_library(provider: str) -> int:
                 if len(captured_bodies) < 5:
                     captured_bodies.append(req.post_data)
                     _log(f"  captured graphql request ({len(req.post_data)} bytes)")
-                    _log(f"  body[:1500]: {req.post_data[:1500]}")
+                    _log(f"  body[:1200]: {req.post_data[:1200]}")
+                    _log(f"  body[-800:]: {req.post_data[-800:]}")   # variables live at the tail
         except Exception:
             pass
 
@@ -344,6 +346,20 @@ def fetch_library(provider: str) -> int:
             if body is None:
                 _log(f"  [diag] JSON parse failed @ {url[:90]}: {parse_err}")
                 return
+
+            # CurrentUser carries the AUTHORITATIVE owned-package id list
+            try:
+                if isinstance(body, list):
+                    for part in body:
+                        user = (part.get("data") or {}).get("user") or {}
+                        raw = user.get("myAssets")
+                        if raw:
+                            ids = json.loads(raw) if isinstance(raw, str) else raw
+                            if isinstance(ids, list):
+                                owned_ids.update(str(i) for i in ids)
+                                _log(f"  myAssets: {len(owned_ids)} owned package ids seen")
+            except Exception:
+                pass
 
             lists = _looks_like_asset_lists(body)
             if not lists and "graphql" in url:
@@ -509,7 +525,9 @@ def fetch_library(provider: str) -> int:
                 container, key, kind, step = found
                 _log(f"  replay: paging var '{key}' ({kind}), original={container[key]}")
                 empty_streak = 0
-                for pnum in range(2, 202):
+                start = int(container[key]) + 1          # Unity pages FROM 0
+                empty_streak = 0
+                for pnum in range(start, start + 200):
                     try:
                         trial = json.loads(body_raw)
                         done = False
@@ -533,10 +551,11 @@ def fetch_library(provider: str) -> int:
                         mutate(trial)
                         text = page.evaluate(js_fetch, json.dumps(trial))
                         n = harvest_text(text)
-                        total = len(harvested)
-                        _log(f"  replay page {pnum}: +{n} new (total {total})")
+                        _log(f"  replay page {pnum}: +{n} new (total {len(harvested)})")
                         if n == 0:
                             empty_streak += 1
+                            if n == 0 and empty_streak == 1:
+                                _log(f"  [diag] empty page response head: {text[:200]}")
                             if empty_streak >= 2:
                                 break
                         else:
