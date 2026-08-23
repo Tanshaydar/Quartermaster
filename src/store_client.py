@@ -312,7 +312,18 @@ def fetch_library(provider: str) -> int:
     seen_urls = set()
     all_json_urls: List[str] = []
     seen_sigs: set = set()
+    captured_bodies: List[str] = []
     landed_on_login = False
+
+    def on_request(req):
+        try:
+            if "graphql/batch" in req.url and req.post_data:
+                if len(captured_bodies) < 5:
+                    captured_bodies.append(req.post_data)
+                    _log(f"  captured graphql request ({len(req.post_data)} bytes)")
+                    _log(f"  body[:1500]: {req.post_data[:1500]}")
+        except Exception:
+            pass
 
     def on_response(resp):
         try:
@@ -373,6 +384,7 @@ def fetch_library(provider: str) -> int:
         pw, browser = _connect_cdp(port)
         ctx = browser.contexts[0] if browser.contexts else browser.new_context()
         ctx.on("response", on_response)
+        ctx.on("request", on_request)
 
         pages = ctx.pages
         page = pages[0] if pages else ctx.new_page()
@@ -426,6 +438,114 @@ def fetch_library(provider: str) -> int:
                 _log(f"warn: {extra_url}: {e}")
 
         check_urls_for_login_redirect()
+        # ---- paginated replay: reuse the store's OWN graphql request with
+        # the page number incremented, pulling every page without UI clicks.
+        new_titles = {str(i.get("name") or i.get("title") or "") for i in harvested}
+
+        def harvest_text(text):
+            n = 0
+            try:
+                for lst in _looks_like_asset_lists(json.loads(text)):
+                    for item in lst:
+                        t = str(item.get("name") or item.get("title") or "")
+                        if not t or t in new_titles:
+                            continue
+                        if set(item.keys()) <= {"__typename", "count", "name", "id"}:
+                            continue
+                        new_titles.add(t)
+                        harvested.append(item)
+                        n += 1
+            except Exception:
+                pass
+            return n
+
+        def find_paging(o):
+            """Locate (dict, key, kind) for pagination variables."""
+            if isinstance(o, dict):
+                for k, v in o.items():
+                    lk = k.lower()
+                    if isinstance(v, int) and lk in ("page", "currentpage", "pagenumber"):
+                        return o, k, "page", None
+                    if isinstance(v, int) and lk in ("skip", "offset"):
+                        step = None
+                        for k2, v2 in o.items():
+                            if k2.lower() in ("rowsperpage", "limit", "first", "take", "count") \
+                                    and isinstance(v2, int):
+                                step = v2
+                        return o, k, "skip", step
+                for v in o.values():
+                    r = find_paging(v)
+                    if r:
+                        return r
+            elif isinstance(o, list):
+                for x in o[:10]:
+                    r = find_paging(x)
+                    if r:
+                        return r
+            return None
+
+        js_fetch = """
+        async (bodyStr) => {
+            const r = await fetch('/api/graphql/batch', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                credentials: 'include',
+                body: bodyStr
+            });
+            return await r.text();
+        }
+        """
+
+        if captured_bodies and not landed_on_login:
+            _log("attempting paginated graphql replay…")
+            for body_raw in captured_bodies:
+                try:
+                    probe = json.loads(body_raw)
+                except Exception:
+                    continue
+                found = find_paging(probe)
+                if not found:
+                    continue
+                container, key, kind, step = found
+                _log(f"  replay: paging var '{key}' ({kind}), original={container[key]}")
+                empty_streak = 0
+                for pnum in range(2, 202):
+                    try:
+                        trial = json.loads(body_raw)
+                        done = False
+
+                        def mutate(o):
+                            nonlocal done
+                            if done:
+                                return
+                            if isinstance(o, dict):
+                                for k, v in list(o.items()):
+                                    if k == key and isinstance(v, int):
+                                        o[k] = pnum if kind == "page" else (
+                                            (step or 12) * (pnum - 1))
+                                        done = True
+                                        return
+                                    mutate(v)
+                            elif isinstance(o, list):
+                                for x in o:
+                                    mutate(x)
+
+                        mutate(trial)
+                        text = page.evaluate(js_fetch, json.dumps(trial))
+                        n = harvest_text(text)
+                        total = len(harvested)
+                        _log(f"  replay page {pnum}: +{n} new (total {total})")
+                        if n == 0:
+                            empty_streak += 1
+                            if empty_streak >= 2:
+                                break
+                        else:
+                            empty_streak = 0
+                    except Exception as e:
+                        _log(f"  replay stopped: {e}")
+                        break
+                break   # one usable body is enough
+
         time.sleep(2)   # let final cookie writes flush before closing
     finally:
         _close_browser_gracefully(proc)
