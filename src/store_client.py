@@ -268,6 +268,28 @@ def _looks_like_asset_lists(payload: Any) -> List[list]:
     return out
 
 
+_SCROLL_JS = """
+() => {
+    // find the largest scrollable element (SPA pages often use an inner
+    // overflow container; window.scrollTo does nothing there)
+    let best = null;
+    for (const el of document.querySelectorAll('div, main, section')) {
+        if (el.scrollHeight > el.clientHeight + 100) {
+            const oy = getComputedStyle(el).overflowY;
+            if ((oy === 'auto' || oy === 'scroll') &&
+                (!best || el.scrollHeight > best.scrollHeight)) best = el;
+        }
+    }
+    if (best) {
+        best.scrollTop = best.scrollHeight;
+        return 'container:' + (best.className || best.id || 'div').toString().slice(0, 40);
+    }
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    return 'window';
+}
+"""
+
+
 def fetch_library(provider: str) -> int:
     """Open the store library page with the saved session (headed), intercept
     JSON responses, upsert discovered assets. Raises visible errors instead of
@@ -301,8 +323,25 @@ def fetch_library(provider: str) -> int:
             if url not in seen_urls:
                 seen_urls.add(url)
                 all_json_urls.append(url)
-            body = resp.json()
-            for lst in _looks_like_asset_lists(body):
+            body = None
+            parse_err = None
+            try:
+                body = resp.json()
+            except Exception as e:
+                parse_err = str(e)
+
+            if body is None:
+                _log(f"  [diag] JSON parse failed @ {url[:90]}: {parse_err}")
+                return
+
+            lists = _looks_like_asset_lists(body)
+            if not lists and "graphql" in url:
+                # keep evidence of unrecognized batch payloads for matching
+                snippet = json.dumps(body)[:400] if not isinstance(body, str) else body[:400]
+                _log(f"  [diag] graphql batch w/o recognizable lists "
+                     f"({len(json.dumps(body))} bytes): {snippet}")
+
+            for lst in lists:
                 # reject UI-facet payloads (platform/tag filters): tiny dicts
                 # with only name/count/__typename keys
                 items = [x for x in lst
@@ -353,18 +392,20 @@ def fetch_library(provider: str) -> int:
             if landed_on_login:
                 break
             try:
-                page.evaluate(
-                    "window.scrollTo(0, document.documentElement.scrollHeight)")
+                where = page.evaluate(_SCROLL_JS)
                 page.wait_for_timeout(1500)
                 sig = f"{len(harvested)}|{page.evaluate('document.documentElement.scrollHeight')}"
+                if i % 10 == 0:
+                    _log(f"  scroll round {i}: via={where} harvested={len(harvested)} sig={sig}")
                 if sig == last_sig:
                     stable_rounds += 1
-                    if stable_rounds >= 6:
+                    if stable_rounds >= 10:
                         break
                 else:
                     stable_rounds = 0
                 last_sig = sig
-            except Exception:
+            except Exception as e:
+                _log(f"  scroll stopped: {e}")
                 break
 
         # remaining library URLs (if any) as extra tabs
