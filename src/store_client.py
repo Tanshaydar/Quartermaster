@@ -57,9 +57,19 @@ except ImportError:
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 LOGIN_URLS = {
-    "unity": "https://id.unity.com/",
+    # Login THROUGH the Asset Store's own redirect flow so that
+    # assetstore.unity.com receives its OWN session cookie. Logging into
+    # id.unity.com alone leaves the store "not logged in" (separate session
+    # cookie, severed further by Edge's default third-party cookie blocking).
+    "unity": "https://id.unity.com/en/login?redirect_url=https%3A%2F%2Fassetstore.unity.com%2F",
     "fab": "https://www.epicgames.com/id/login",
 }
+
+# Our dedicated browser profile needs third-party cookies for the
+# assetstore <-> id.unity.com SSO handoff.
+_COOKIE_ARGS = [
+    "--disable-features=ThirdPartyStoragePartitioning,PartitionedCookies",
+]
 LIBRARY_URLS = {
     "unity": ["https://assetstore.unity.com/purchases",
               "https://assetstore.unity.com/account/purchases"],
@@ -165,7 +175,7 @@ def _launch_browser(cfg, provider: str, start_url: Optional[str] = None,
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-sync",
-        "--disable-features=msImplicitSignin,msSignIn",
+        *_COOKIE_ARGS,
         url,
     ]
     port = 0
