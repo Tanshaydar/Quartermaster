@@ -65,11 +65,6 @@ LOGIN_URLS = {
     "fab": "https://www.epicgames.com/id/login",
 }
 
-# Our dedicated browser profile needs third-party cookies for the
-# assetstore <-> id.unity.com SSO handoff.
-_COOKIE_ARGS = [
-    "--disable-features=ThirdPartyStoragePartitioning,PartitionedCookies",
-]
 LIBRARY_URLS = {
     # NOTE: /purchases and /account/purchases are dead (404) as of 2026-08.
     # /account/downloads is the owned-packages page (redirects to login when
@@ -177,7 +172,10 @@ def _launch_browser(cfg, provider: str, start_url: Optional[str] = None,
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-sync",
-        *_COOKIE_ARGS,
+        # cookie partitioning off (SSO handoff); background mode off (closing
+        # the last window must terminate the process, or login-wait hangs)
+        "--disable-features=ThirdPartyStoragePartitioning,PartitionedCookies,"
+        "BackgroundMode,msEdgeBackgroundMode",
         url,
     ]
     port = 0
@@ -304,13 +302,19 @@ def fetch_library(provider: str) -> int:
                 all_json_urls.append(url)
             body = resp.json()
             for lst in _looks_like_asset_lists(body):
-                sig = f"{url}|{len(lst)}"
+                # reject UI-facet payloads (platform/tag filters): tiny dicts
+                # with only name/count/__typename keys
+                items = [x for x in lst
+                         if not (set(x.keys()) <= {"__typename", "count", "name", "id"})]
+                if not items:
+                    continue
+                sig = f"{url}|{len(lst)}|{items[0].get('name', '')[:30]}"
                 if sig in seen_sigs:
                     continue
                 seen_sigs.add(sig)
                 _log(f"  candidate list @ {url[:110]} "
                      f"({len(lst)} items, keys={sorted(list(lst[0].keys()))[:8]})")
-                harvested.extend(lst)
+                harvested.extend(items)
         except Exception:
             pass
 
@@ -339,14 +343,27 @@ def fetch_library(provider: str) -> int:
             pass
         page.wait_for_timeout(5000)
 
-        # scroll to trigger lazy loading / pagination on the first URL
-        for _ in range(18):
+        # Scroll to bottom repeatedly until content stops growing: the page
+        # lazy-loads more GraphQL batches as you reach the end. JS scrolling
+        # works where synthetic wheel events rubber-band without scrolling.
+        stable_rounds = 0
+        last_sig = None
+        for i in range(60):
             check_urls_for_login_redirect()
             if landed_on_login:
                 break
             try:
-                page.mouse.wheel(0, 2500)
-                page.wait_for_timeout(700)
+                page.evaluate(
+                    "window.scrollTo(0, document.documentElement.scrollHeight)")
+                page.wait_for_timeout(1500)
+                sig = f"{len(harvested)}|{page.evaluate('document.documentElement.scrollHeight')}"
+                if sig == last_sig:
+                    stable_rounds += 1
+                    if stable_rounds >= 4:
+                        break
+                else:
+                    stable_rounds = 0
+                last_sig = sig
             except Exception:
                 break
 
