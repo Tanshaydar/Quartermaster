@@ -421,10 +421,20 @@ def fetch_library(provider: str) -> int:
         # works where synthetic wheel events rubber-band without scrolling.
         stable_rounds = 0
         last_sig = None
+        login_streak = 0
+        started = time.time()
         for i in range(120):
             check_urls_for_login_redirect()
             if landed_on_login:
-                break
+                login_streak += 1
+                # SSO chains pass auth-looking URLs transiently; only trust
+                # the verdict after several consecutive polls, and never
+                # abort within the first 15s of the redirect dance
+                if login_streak >= 4 and time.time() - started > 15:
+                    _log("  looks like we landed on a login page; stopping.")
+                    break
+            else:
+                login_streak = 0
             try:
                 where = page.evaluate(_SCROLL_JS)
                 page.wait_for_timeout(1500)
