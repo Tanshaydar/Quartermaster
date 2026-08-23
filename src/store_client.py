@@ -71,8 +71,10 @@ _COOKIE_ARGS = [
     "--disable-features=ThirdPartyStoragePartitioning,PartitionedCookies",
 ]
 LIBRARY_URLS = {
-    "unity": ["https://assetstore.unity.com/purchases",
-              "https://assetstore.unity.com/account/purchases"],
+    # NOTE: /purchases and /account/purchases are dead (404) as of 2026-08.
+    # /account/downloads is the owned-packages page (redirects to login when
+    # signed out — verified).
+    "unity": ["https://assetstore.unity.com/account/downloads"],
     "fab": ["https://www.fab.com/library"],
 }
 
