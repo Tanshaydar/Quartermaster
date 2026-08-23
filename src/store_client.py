@@ -2,39 +2,38 @@
 VaultMCP store client: interactive login, library fetching, and metadata
 enrichment for Unity Asset Store and Epic Games Fab.
 
-Login model
------------
-No public OAuth exists for either store's purchase library, so we drive the
-user's REAL browser (Chrome/Edge found on disk) launched as a normal
-subprocess with a remote-debugging port, attached over CDP.
+Login model (v3 — zero automation at login)
+-------------------------------------------
+Every previous approach failed because automation touched the login flow:
+  - Playwright-bundled chromium: Epic captcha rejects it ("enable javascript").
+  - Playwright driving a real browser: injects detectable hooks; Epic throws a
+    second "security check" wall after the password.
+  - CDP-attached real browser during login: same risk-signal problem.
 
-Why this design (learned the hard way):
-  - Playwright-bundled chromium fails Epic's captcha ("enable javascript").
-  - Even Playwright driving a real browser injects detectable hooks.
-  - A plain subprocess launch of the user's own browser is indistinguishable
-    from manual browsing -> captcha/MFA behave exactly like normal usage.
-  - Headless refreshes trigger Unity MFA challenges, so library fetches run
-    HEADED (config: headless_refresh=false default).
-  - One browser per provider at a time: a second launch with the same profile
-    dir merely opens a tab in the existing window and breaks CDP attachment.
-  - Browsers must be closed GRACEFULLY (taskkill without /F): an abrupt kill
-    loses Unity's device-trust cookie -> MFA demanded on every session.
+Final design:
+  LOGIN  = the user's own browser opened as a completely plain subprocess
+           (no debug port, no attachment, nothing). Signing in is literally
+           identical to normal browsing. The user closes the window when
+           done; cookies persist in profiles/<provider>-browser/.
+  FETCH  = the browser reopens (headed) with the saved session and ONLY THEN
+           is a debugger attached to intercept network traffic. Loading
+           already-authenticated library pages does not trigger security
+           gates; login flows are never automated.
 
-Session persistence: the browser profile lives in
-profiles/<provider>-browser/ and retains cookies between runs.
+Additional hard rules (learned the hard way):
+  - One browser per provider at a time (same-profile relaunch just opens a
+    tab in the existing window and breaks everything).
+  - Browsers close GRACEFULLY (taskkill without /F); abrupt kills lose
+    Unity's device-trust cookie -> MFA on every session.
+  - Library fetches never run headless (headless triggers Unity MFA).
 
 Library fetching strategy
 -------------------------
-We open the store's "my assets / library" page and INTERCEPT all JSON network
-responses, recursively harvesting any payload that contains an asset-like
-list. Every JSON URL seen gets logged to data/store_harvest.log so failures
-are diagnosable instead of silent.
-
-Media policy
-------------
-- Images: cached to disk via server/desktop proxy (media_cache_enabled).
-- Videos: links only, never downloaded (video_mode = "link").
+Open the store's library page with the saved session, INTERCEPT all JSON
+network responses, recursively harvest any asset-like list. Every JSON URL
+seen is logged to data/store_harvest.log so failures are diagnosable.
 """
+
 import json
 import os
 import re
@@ -67,26 +66,7 @@ LIBRARY_URLS = {
     "fab": ["https://www.fab.com/library"],
 }
 
-SUCCESS_HINTS = {
-    "unity": [r"^https://assetstore\.unity\.com", r"id\.unity\.com/(home|dashboard|settings)"],
-    "fab": [r"^https://www\.fab\.com", r"epicgames\.com/id/home"],
-}
-
-
-def _is_logged_in(provider: str, urls: List[str]) -> bool:
-    """URL-based auth detection, tolerant of unknown post-login landing pages."""
-    for u in urls:
-        u = (u or "").strip()
-        if not u:
-            continue
-        if any(re.search(pat, u) for pat in SUCCESS_HINTS[provider]):
-            return True
-        if provider == "unity" and u.startswith("https://id.unity.com/"):
-            # left the login page itself -> authenticated (org picker, account, …)
-            if "login" not in u and "sign" not in u:
-                return True
-    return False
-
+_LOGIN_MARKERS = ("login", "sign-in", "signin", "id/")
 
 # ---------------------------------------------------------------------------
 # Browser lifecycle (one instance per provider, graceful shutdown)
@@ -150,7 +130,7 @@ def _close_browser_gracefully(proc: subprocess.Popen):
     if sys.platform == "win32":
         subprocess.run(["taskkill", "/PID", str(proc.pid)], capture_output=True)
         try:
-            proc.wait(timeout=6)
+            proc.wait(timeout=8)
             return
         except Exception:
             pass
@@ -170,22 +150,28 @@ def kill_leftover(provider: str):
     _active_procs[provider] = None
 
 
-def _launch_browser(cfg, provider: str) -> tuple:
+def _launch_browser(cfg, provider: str, start_url: Optional[str] = None,
+                    cdp: bool = False) -> tuple:
+    """Launch the user's real browser. cdp=False => ZERO automation (login).
+    Returns (proc, port) — port is only meaningful when cdp=True."""
     kill_leftover(provider)
     exe = _find_browser()
     if not exe:
-        raise RuntimeError("No Chrome/Edge installation found for store login.")
-    port = _free_port()
+        raise RuntimeError("No Chrome/Edge installation found.")
+    url = start_url or LOGIN_URLS[provider]
     args = [
         exe,
-        f"--remote-debugging-port={port}",
         f"--user-data-dir={_profile_dir(cfg, provider)}",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-sync",
         "--disable-features=msImplicitSignin,msSignIn",
-        LOGIN_URLS[provider],
+        url,
     ]
+    port = 0
+    if cdp:
+        port = _free_port()
+        args.insert(1, f"--remote-debugging-port={port}")
     proc = subprocess.Popen(args)
     _active_procs[provider] = proc
     return proc, port
@@ -206,80 +192,43 @@ def _connect_cdp(port: int, attempts: int = 30):
     raise RuntimeError(f"Could not attach to browser CDP: {last_err}")
 
 
-def _single_fresh_tab(ctx, provider: str, target_url: Optional[str] = None,
-                      settle_ms: int = 3000):
-    """Close ALL pages (stale tabs poison detection & launches), open one page
-    on target_url (defaults to the provider login page)."""
-    url_to_open = target_url or LOGIN_URLS[provider]
-    for pg in list(ctx.pages):
-        try:
-            pg.close()
-        except Exception:
-            pass
-    page = ctx.new_page()
-    try:
-        page.goto(url_to_open, wait_until="domcontentloaded", timeout=45000)
-        if settle_ms:
-            page.wait_for_timeout(settle_ms)
-    except Exception as e:
-        _log(f"warn: navigation to {url_to_open}: {e}")
-    return page
-
-
 # ---------------------------------------------------------------------------
-# Interactive login
+# Interactive login — plain browser, wait for the user to close it
 # ---------------------------------------------------------------------------
 
-def interactive_login(provider: str, timeout_minutes: int = 10) -> bool:
-    """Open the user's real browser for manual sign-in (MFA/captcha all work).
-    Session persists in the provider's browser profile for later fetches.
-    Returns True when authenticated; the window closes itself on success."""
+def interactive_login(provider: str, timeout_minutes: int = 15) -> bool:
+    """
+    Opens the store sign-in page in a completely NORMAL browser window (no
+    automation whatsoever). The user signs in — captcha/MFA behave exactly
+    like everyday browsing — then closes the window themselves. Closing is
+    the completion signal; cookies persist in the provider profile.
+    """
     cfg = load_config()
 
-    proc, port = _launch_browser(cfg, provider)
-    _log(f"{provider} login: browser pid={proc.pid} cdp={port}")
+    # launch with NO debug port: nothing for any risk system to see
+    proc, _ = _launch_browser(cfg, provider, cdp=False)
+    _log(f"{provider} login: plain browser pid={proc.pid} (no automation)")
 
-    pw = None
-    browser = None
-    ok = False
-    try:
-        pw, browser = _connect_cdp(port)
-        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
-        _single_fresh_tab(ctx, provider)
+    deadline = time.time() + timeout_minutes * 60
+    closed_by_user = False
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            closed_by_user = True
+            break
+        time.sleep(2)
 
-        deadline = time.time() + timeout_minutes * 60
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                ok = True   # user closed the browser -> session persisted
-                break
-            try:
-                urls = [p.url for ctx2 in browser.contexts for p in ctx2.pages]
-                if _is_logged_in(provider, urls):
-                    ok = True
-                    break
-            except Exception:
-                pass
-            time.sleep(2)
-
-        if ok and proc.poll() is None:
-            time.sleep(2)   # let cookies flush before closing
-            _log(f"{provider}: login detected, closing browser.")
-    finally:
+    if not closed_by_user:
+        _log(f"{provider} login timed out; closing window.")
         _close_browser_gracefully(proc)
-        if browser:
-            try:
-                browser.close()
-            except Exception:
-                pass
-        if pw:
-            pw.stop()
 
-    _log(f"{provider} login {'saved' if ok else 'timed out/not completed'}.")
+    ok = closed_by_user
+    _log(f"{provider} login window {'closed by user' if ok else 'timed out'}. "
+         f"If sign-in completed, the session is stored in the profile.")
     return ok
 
 
 # ---------------------------------------------------------------------------
-# Library fetch via network interception (headed — headless triggers MFA)
+# Library fetch via network interception (headed, session already established)
 # ---------------------------------------------------------------------------
 
 _NAME_KEYS = ("name", "assetName", "title", "asset_name", "productName")
@@ -311,13 +260,17 @@ def _looks_like_asset_lists(payload: Any) -> List[list]:
 
 
 def fetch_library(provider: str) -> int:
-    """Open the store library page in the user's real browser (headed), intercept
-    JSON responses, and upsert every discovered asset. Returns items seen."""
+    """Open the store library page with the saved session (headed), intercept
+    JSON responses, upsert discovered assets. Raises visible errors instead of
+    failing silently."""
     cfg = load_config()
     if not has_saved_session(provider):
-        raise RuntimeError(f"No saved {provider} session. Run Login first.")
+        raise RuntimeError(
+            f"No {provider} browser profile found. Press Login first.")
 
-    proc, port = _launch_browser(cfg, provider)
+    first_url = LIBRARY_URLS[provider][0]
+    # headed + CDP attached on an already-authenticated profile
+    proc, port = _launch_browser(cfg, provider, start_url=first_url, cdp=True)
     _log(f"{provider} fetch: browser pid={proc.pid} cdp={port}")
 
     pw = None
@@ -326,6 +279,7 @@ def fetch_library(provider: str) -> int:
     seen_urls = set()
     all_json_urls: List[str] = []
     seen_sigs: set = set()
+    landed_on_login = False
 
     def on_response(resp):
         try:
@@ -348,22 +302,61 @@ def fetch_library(provider: str) -> int:
         except Exception:
             pass
 
+    def check_urls_for_login_redirect():
+        nonlocal landed_on_login
+        try:
+            urls = [p.url or "" for c in browser.contexts for p in c.pages]
+            low = [u.lower() for u in urls]
+            if urls and all(any(m in u for m in _LOGIN_MARKERS) or u.startswith(("edge://", "chrome://"))
+                            for u in low):
+                landed_on_login = True
+        except Exception:
+            pass
+
     try:
         pw, browser = _connect_cdp(port)
         ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        ctx.on("response", on_response)
 
-        for url in LIBRARY_URLS[provider]:
-            page = _single_fresh_tab(ctx, provider, target_url=url, settle_ms=4000)
-            for _ in range(15):
-                try:
-                    page.mouse.wheel(0, 2500)
-                    page.wait_for_timeout(700)
-                except Exception:
-                    break
+        pages = ctx.pages
+        page = pages[0] if pages else ctx.new_page()
+        try:
+            page.bring_to_front()
+            page.wait_for_load_state("domcontentloaded", timeout=45000)
+        except Exception:
+            pass
+        page.wait_for_timeout(5000)
+
+        # scroll to trigger lazy loading / pagination on the first URL
+        for _ in range(18):
+            check_urls_for_login_redirect()
+            if landed_on_login:
+                break
             try:
-                page.close()
+                page.mouse.wheel(0, 2500)
+                page.wait_for_timeout(700)
             except Exception:
-                pass
+                break
+
+        # remaining library URLs (if any) as extra tabs
+        for extra_url in LIBRARY_URLS[provider][1:]:
+            if landed_on_login:
+                break
+            try:
+                p2 = ctx.new_page()
+                p2.goto(extra_url, wait_until="domcontentloaded", timeout=45000)
+                p2.wait_for_timeout(4000)
+                for _ in range(10):
+                    check_urls_for_login_redirect()
+                    if landed_on_login:
+                        break
+                    p2.mouse.wheel(0, 2500)
+                    p2.wait_for_timeout(700)
+            except Exception as e:
+                _log(f"warn: {extra_url}: {e}")
+
+        check_urls_for_login_redirect()
+        time.sleep(2)   # let final cookie writes flush before closing
     finally:
         _close_browser_gracefully(proc)
         if browser:
@@ -373,6 +366,12 @@ def fetch_library(provider: str) -> int:
                 pass
         if pw:
             pw.stop()
+
+    if landed_on_login:
+        raise RuntimeError(
+            f"The {provider} library page redirected to a login screen — "
+            f"the saved session is missing or expired. Press Login, sign in, "
+            f"close the window, then Fetch again.")
 
     count = 0
     unknown = 0
@@ -413,11 +412,9 @@ def fetch_library(provider: str) -> int:
         _log(f"HARVEST DIAGNOSTIC for {provider}: {len(all_json_urls)} JSON responses seen:")
         for u in all_json_urls[:40]:
             _log(f"  json: {u[:150]}")
-
-    if count == 0 and unknown == 0 and len(all_json_urls) > 0:
         raise RuntimeError(
-            f"Opened {provider} library but recognized no asset payloads. "
-            f"See data/store_harvest.log ({len(all_json_urls)} JSON responses were examined).")
+            f"Loaded the {provider} library but recognized no asset payloads. "
+            f"See data/store_harvest.log ({len(all_json_urls)} JSON responses examined).")
     return count
 
 

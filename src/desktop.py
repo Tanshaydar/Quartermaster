@@ -490,11 +490,11 @@ class MainWindow(QMainWindow):
 
         add_sync_btn("🔐 Login Unity", lambda: self._long_op(
             lambda: store_client.interactive_login("unity"), "Unity login",
-            pre_status="Browser opening… sign in with your Unity account, then CLOSE the window when done."))
+            pre_status="A NORMAL browser window opens (zero automation). Sign in with MFA, then CLOSE that window yourself — that's the signal."))
         add_sync_btn("⟳ Fetch Unity", lambda: self._fetch_op("unity"))
         add_sync_btn("🔐 Login Fab", lambda: self._long_op(
             lambda: store_client.interactive_login("fab"), "Fab login",
-            pre_status="Browser opening… sign in with your Epic account (complete the captcha), then CLOSE the window."))
+            pre_status="A NORMAL browser window opens (zero automation). Complete captcha + Epic sign-in, then CLOSE that window yourself."))
         add_sync_btn("⟳ Fetch Fab", lambda: self._fetch_op("fab"))
         add_sync_btn("🖼 Enrich batch", lambda: self._long_op(
             lambda: store_client.enrich_assets(None), "Enrichment"))
