@@ -67,9 +67,8 @@ LOGIN_URLS = {
 
 LIBRARY_URLS = {
     # NOTE: /purchases and /account/purchases are dead (404) as of 2026-08.
-    # /account/downloads is the owned-packages page (redirects to login when
-    # signed out — verified).
-    "unity": ["https://assetstore.unity.com/account/downloads"],
+    # /account/downloads redirects here; this is the owned-packages page.
+    "unity": ["https://assetstore.unity.com/account/assets"],
     "fab": ["https://www.fab.com/library"],
 }
 
@@ -279,8 +278,10 @@ def fetch_library(provider: str) -> int:
             f"No {provider} browser profile found. Press Login first.")
 
     first_url = LIBRARY_URLS[provider][0]
-    # headed + CDP attached on an already-authenticated profile
-    proc, port = _launch_browser(cfg, provider, start_url=first_url, cdp=True)
+    # CRITICAL: launch on about:blank and attach the interceptor BEFORE any
+    # navigation — the store fires its asset GraphQL batches within the first
+    # seconds of page load, and attaching afterwards misses them entirely.
+    proc, port = _launch_browser(cfg, provider, start_url="about:blank", cdp=True)
     _log(f"{provider} fetch: browser pid={proc.pid} cdp={port}")
 
     pw = None
@@ -337,10 +338,9 @@ def fetch_library(provider: str) -> int:
         pages = ctx.pages
         page = pages[0] if pages else ctx.new_page()
         try:
-            page.bring_to_front()
-            page.wait_for_load_state("domcontentloaded", timeout=45000)
-        except Exception:
-            pass
+            page.goto(first_url, wait_until="domcontentloaded", timeout=45000)
+        except Exception as e:
+            _log(f"warn: goto {first_url}: {e}")
         page.wait_for_timeout(5000)
 
         # Scroll to bottom repeatedly until content stops growing: the page
@@ -348,7 +348,7 @@ def fetch_library(provider: str) -> int:
         # works where synthetic wheel events rubber-band without scrolling.
         stable_rounds = 0
         last_sig = None
-        for i in range(60):
+        for i in range(120):
             check_urls_for_login_redirect()
             if landed_on_login:
                 break
@@ -359,7 +359,7 @@ def fetch_library(provider: str) -> int:
                 sig = f"{len(harvested)}|{page.evaluate('document.documentElement.scrollHeight')}"
                 if sig == last_sig:
                     stable_rounds += 1
-                    if stable_rounds >= 4:
+                    if stable_rounds >= 6:
                         break
                 else:
                     stable_rounds = 0
