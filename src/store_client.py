@@ -624,6 +624,12 @@ def fetch_library(provider: str) -> int:
             "gallery_images": [],
             "video_links": [],
         }
+        # prefer the store's real description over the heuristic one
+        rich = re.sub(r"<[^>]+>", " ", str(item.get("description")
+                                          or item.get("aiDescription") or ""))
+        rich = re.sub(r"\s+", " ", rich).strip()
+        if len(rich) > 60:
+            asset["summary"] = rich[:800]
         upsert_asset(asset)
         count += 1
 
