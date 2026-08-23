@@ -540,7 +540,8 @@ def fetch_library(provider: str) -> int:
                                     v = op["variables"]
                                     v["q"] = [q_val] + [
                                         e for e in v.get("q", [])
-                                        if not str(e).startswith("limitedIds:")]
+                                        if not str(e).startswith("limitedIds:")
+                                        and str(e) != "on_sale:true"]
                                     v["page"] = pagenum
                                     v["rows"] = rows
                             try:
