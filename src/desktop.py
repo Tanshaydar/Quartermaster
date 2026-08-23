@@ -78,13 +78,19 @@ class LongOp(QThread):
     """Runs a blocking backend call off the UI thread."""
     done = Signal(str, bool)
 
-    def __init__(self, fn, label, parent=None):
+    def __init__(self, fn, label, success_text=None, parent=None):
         super().__init__(parent)
-        self.fn, self.label = fn, label
+        self.fn, self.label, self.success_text = fn, label, success_text
 
     def run(self):
         try:
             result = self.fn()
+            if result is False:
+                self.done.emit(f"{self.label}: not completed.", False)
+                return
+            if self.success_text:
+                self.done.emit(self.success_text, True)
+                return
             msg = self.label
             if isinstance(result, dict) and "matched_to_library" in result:
                 msg += f" — {result['matched_to_library']} on disk"
@@ -490,10 +496,12 @@ class MainWindow(QMainWindow):
 
         add_sync_btn("🔐 Login Unity", lambda: self._long_op(
             lambda: store_client.interactive_login("unity"), "Unity login",
+            success_text="✅ Session saved. Now press ⟳ Fetch Unity.",
             pre_status="A NORMAL browser window opens (zero automation). Sign in with MFA, then CLOSE that window yourself — that's the signal."))
         add_sync_btn("⟳ Fetch Unity", lambda: self._fetch_op("unity"))
         add_sync_btn("🔐 Login Fab", lambda: self._long_op(
             lambda: store_client.interactive_login("fab"), "Fab login",
+            success_text="✅ Session saved. Now press ⟳ Fetch Fab.",
             pre_status="A NORMAL browser window opens (zero automation). Complete captcha + Epic sign-in, then CLOSE that window yourself."))
         add_sync_btn("⟳ Fetch Fab", lambda: self._fetch_op("fab"))
         add_sync_btn("🖼 Enrich batch", lambda: self._long_op(
@@ -586,7 +594,7 @@ class MainWindow(QMainWindow):
 
     # ---------------- long operations ----------------
 
-    def _long_op(self, fn, label, refresh_after=False, pre_status=None):
+    def _long_op(self, fn, label, refresh_after=False, pre_status=None, success_text=None):
         # single-flight: two ops would fight over the same browser profile
         if getattr(self, "_op_running", False):
             self.sync_status.setText("⚠ Another operation is already running — wait for it to finish.")
@@ -594,7 +602,7 @@ class MainWindow(QMainWindow):
         self._op_running = True
         self.sync_panel.setEnabled(False)
         self.sync_status.setText(pre_status or f"{label}…")
-        self.op = LongOp(fn, label)
+        self.op = LongOp(fn, label, success_text=success_text)
 
         def finished(msg, ok):
             self._op_running = False
