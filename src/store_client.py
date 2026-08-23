@@ -313,6 +313,7 @@ def fetch_library(provider: str) -> int:
     all_json_urls: List[str] = []
     seen_sigs: set = set()
     captured_bodies: List[str] = []
+    captured_headers: Dict[str, str] = {}
     landed_on_login = False
     owned_ids: set = set()
 
@@ -324,6 +325,11 @@ def fetch_library(provider: str) -> int:
                     _log(f"  captured graphql request ({len(req.post_data)} bytes)")
                     _log(f"  body[:1200]: {req.post_data[:1200]}")
                     _log(f"  body[-800:]: {req.post_data[-800:]}")   # variables live at the tail
+                    # keep auth/CSRF headers so replays pass server checks
+                    for hk, hv in (req.headers or {}).items():
+                        lk = hk.lower()
+                        if lk.startswith("x-") or lk in ("accept", "accept-language"):
+                            captured_headers[hk] = hv
         except Exception:
             pass
 
@@ -454,8 +460,9 @@ def fetch_library(provider: str) -> int:
                 _log(f"warn: {extra_url}: {e}")
 
         check_urls_for_login_redirect()
-        # ---- paginated replay: reuse the store's OWN graphql request with
-        # the page number incremented, pulling every page without UI clicks.
+        # ---- chunked GraphQL harvest: build our OWN SearchResults queries
+        # from the authoritative myAssets id list, mimicking the page's exact
+        # request shape (limitedIds chunks + csrf header from the capture).
         new_titles = {str(i.get("name") or i.get("title") or "") for i in harvested}
 
         def harvest_text(text):
@@ -475,95 +482,100 @@ def fetch_library(provider: str) -> int:
                 pass
             return n
 
-        def find_paging(o):
-            """Locate (dict, key, kind) for pagination variables."""
-            if isinstance(o, dict):
-                for k, v in o.items():
-                    lk = k.lower()
-                    if isinstance(v, int) and lk in ("page", "currentpage", "pagenumber"):
-                        return o, k, "page", None
-                    if isinstance(v, int) and lk in ("skip", "offset"):
-                        step = None
-                        for k2, v2 in o.items():
-                            if k2.lower() in ("rowsperpage", "limit", "first", "take", "count") \
-                                    and isinstance(v2, int):
-                                step = v2
-                        return o, k, "skip", step
-                for v in o.values():
-                    r = find_paging(v)
-                    if r:
-                        return r
-            elif isinstance(o, list):
-                for x in o[:10]:
-                    r = find_paging(x)
-                    if r:
-                        return r
-            return None
-
         js_fetch = """
-        async (bodyStr) => {
+        async (args) => {
             const r = await fetch('/api/graphql/batch', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: args.headers,
                 credentials: 'include',
-                body: bodyStr
+                body: args.body
             });
             return await r.text();
         }
         """
 
-        if captured_bodies and not landed_on_login:
-            _log("attempting paginated graphql replay…")
-            for body_raw in captured_bodies:
+        if owned_ids and captured_bodies and not landed_on_login:
+            # find the SearchResults template body
+            template = None
+            for b in captured_bodies:
+                if "searchPackageFromSolr" in b:
+                    template = b
+                    break
+            if not template:
+                _log("[diag] no SearchResults request captured; cannot build chunk queries")
+            else:
                 try:
-                    probe = json.loads(body_raw)
-                except Exception:
-                    continue
-                found = find_paging(probe)
-                if not found:
-                    continue
-                container, key, kind, step = found
-                _log(f"  replay: paging var '{key}' ({kind}), original={container[key]}")
-                empty_streak = 0
-                start = int(container[key]) + 1          # Unity pages FROM 0
-                empty_streak = 0
-                for pnum in range(start, start + 200):
-                    try:
-                        trial = json.loads(body_raw)
-                        done = False
+                    ops = json.loads(template)
+                    # locate variables dict
+                    variables = None
+                    for op in ops:
+                        if isinstance(op, dict) and isinstance(op.get("variables"), dict):
+                            variables = op["variables"]
+                            break
+                    if variables is None:
+                        raise ValueError("no variables found in captured request body")
 
-                        def mutate(o):
-                            nonlocal done
-                            if done:
-                                return
-                            if isinstance(o, dict):
-                                for k, v in list(o.items()):
-                                    if k == key and isinstance(v, int):
-                                        o[k] = pnum if kind == "page" else (
-                                            (step or 12) * (pnum - 1))
-                                        done = True
-                                        return
-                                    mutate(v)
-                            elif isinstance(o, list):
-                                for x in o:
-                                    mutate(x)
+                    # reuse csrf-ish headers observed on the page's own requests
+                    hdrs = {k: v for k, v in (captured_headers or {}).items()
+                            if k.lower().startswith("x-")
+                            or k.lower() in ("accept", "accept-language")}
+                    _log(f"  chunk harvest: replay headers {sorted(hdrs.keys())}")
 
-                        mutate(trial)
-                        text = page.evaluate(js_fetch, json.dumps(trial))
-                        n = harvest_text(text)
-                        _log(f"  replay page {pnum}: +{n} new (total {len(harvested)})")
-                        if n == 0:
-                            empty_streak += 1
-                            if n == 0 and empty_streak == 1:
-                                _log(f"  [diag] empty page response head: {text[:200]}")
-                            if empty_streak >= 2:
+                    ids_sorted = sorted(owned_ids)
+                    chunk_size = 42          # matches Unity's own chunking
+                    rows = 48                # ask for more per page; server may cap
+                    total_chunks = (len(ids_sorted) + chunk_size - 1) // chunk_size
+                    _log(f"  chunk harvest: {len(ids_sorted)} ids -> {total_chunks} chunks")
+
+                    detailed_ids = set()
+                    for ci in range(0, len(ids_sorted), chunk_size):
+                        chunk = ids_sorted[ci:ci + chunk_size]
+                        q_val = "limitedIds:" + "\\".join(chunk)
+                        stale = 0
+                        pagenum = 0
+                        while stale < 2 and pagenum < 10:
+                            trial = json.loads(template)
+                            for op in trial:
+                                if isinstance(op, dict) and isinstance(op.get("variables"), dict):
+                                    v = op["variables"]
+                                    v["q"] = [q_val] + [
+                                        e for e in v.get("q", [])
+                                        if not str(e).startswith("limitedIds:")]
+                                    v["page"] = pagenum
+                                    v["rows"] = rows
+                            try:
+                                text = page.evaluate(js_fetch, {
+                                    "body": json.dumps(trial),
+                                    "headers": hdrs,
+                                })
+                            except Exception as e:
+                                _log(f"  chunk harvest stopped (page eval): {e}")
+                                stale = 99
                                 break
-                        else:
-                            empty_streak = 0
-                    except Exception as e:
-                        _log(f"  replay stopped: {e}")
-                        break
-                break   # one usable body is enough
+                            n = harvest_text(text)
+                            _log(f"  chunk {ci // chunk_size + 1}/{total_chunks} "
+                                 f"page {pagenum}: +{n} new (total {len(harvested)})")
+                            if n == 0:
+                                stale += 1
+                            else:
+                                stale = 0
+                            pagenum += 1
+                        detailed_ids.update(chunk)
+
+                    # reconciliation: owned ids we hold no details for
+                    import sqlite3
+                    conn = sqlite3.connect(DB_PATH)
+                    known = {str(r[0]) for r in conn.execute(
+                        "SELECT package_id FROM assets WHERE source='unity' AND package_id != ''")}
+                    missing = sorted(owned_ids - known)
+                    _log(f"  ownership reconciliation: {len(owned_ids)} owned, "
+                         f"{len(missing)} not present in vault details")
+                    if missing:
+                        _log(f"  missing sample: {missing[:25]}")
+                    conn.close()
+                except Exception as e:
+                    _log(f"  chunk harvest failed: {e}")
+
 
         time.sleep(2)   # let final cookie writes flush before closing
     finally:
