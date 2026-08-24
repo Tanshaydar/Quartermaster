@@ -363,8 +363,9 @@ async function openDetailModal(assetId) {
   }
 
   // Links & Buttons
-  $('#modal-store-link').href = full.store_url || '#';
-  $('#modal-store-link').style.display = full.store_url ? 'inline-flex' : 'none';
+  const safeStoreUrl = safeUrl(full.store_url);
+  $('#modal-store-link').href = safeStoreUrl;
+  $('#modal-store-link').style.display = (safeStoreUrl && safeStoreUrl !== '#') ? 'inline-flex' : 'none';
 
   $('#detail-modal').classList.remove('hidden');
 }
