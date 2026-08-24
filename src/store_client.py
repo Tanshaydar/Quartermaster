@@ -385,10 +385,24 @@ def fetch_library(provider: str, cancel_event=None) -> int:
                 _log(f"  [diag] graphql batch w/o recognizable lists ({keys_summary})")
 
             for lst in lists:
-                # reject UI-facet payloads (platform/tag filters): tiny dicts
-                # with only name/count/__typename keys
-                items = [x for x in lst
-                         if not (set(x.keys()) <= {"__typename", "count", "name", "id"})]
+                # reject UI-facet payloads (platform/tag/license filters): dicts with count,
+                # displayCount, or missing real product fields (url, seller, thumbnail, description)
+                items = []
+                for x in lst:
+                    if not isinstance(x, dict):
+                        continue
+                    # Facet marker keys
+                    if any(k in x for k in ("count", "displayCount", "doc_count", "selected", "facetCount")):
+                        continue
+                    # Must have at least a listing URL, store URL, publisher, keyImage, or substantial description
+                    has_asset_markers = any(bool(x.get(k)) for k in (
+                        "url", "listingUrl", "sellerName", "publisher", "keyImage",
+                        "thumbnail", "images", "description", "aiDescription", "assetType"
+                    ))
+                    if not has_asset_markers:
+                        continue
+                    items.append(x)
+
                 if not items:
                     continue
                 sig = f"{url}|{len(lst)}|{items[0].get('name', '')[:30]}"
@@ -629,6 +643,15 @@ def fetch_library(provider: str, cancel_event=None) -> int:
         if not title:
             unknown += 1
             continue
+
+        store_url = str(item.get("url") or item.get("listingUrl") or "")
+        publisher = str(item.get("sellerName") or item.get("publisher") or "")[:120]
+
+        # Reject UI facets or empty stub entries that have neither store_url nor publisher
+        if not store_url and not publisher:
+            unknown += 1
+            continue
+
         cls = classify_asset(title)
         image = item.get("image") or item.get("thumbnail") or ""
         if isinstance(item.get("keyImage"), dict):
