@@ -37,17 +37,50 @@ Quartermaster gets it by opening your real browser, letting *you* sign in with z
 
 That plumbing is most of this project. It is also why you can't just write this in an afternoon.
 
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  1. Real Browser Sign-In (0% automation — passes SSO, MFA, & Cloudflare) │
+│  2. CDP Debug Attachment (replays authenticated GraphQL queries)         │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    Quartermaster Local Core (Offline)                    │
+│   • SQLite FTS5 (BM25)             • FastEmbed ONNX Vectors (CPU)        │
+│   • Disk Cache Sniffer             • Cross-Engine Stack Linter Engine    │
+└──────────────┬─────────────────────┬─────────────────────┬───────────────┘
+               │                     │                     │
+               ▼                     ▼                     ▼
+ ┌─────────────────────────┐ ┌───────────────┐ ┌─────────────────────────┐
+ │ MCP Server (JSON-RPC)   │ │ Desktop & Web │ │ Unity Editor (Bridge)   │
+ │ Claude / Cursor / AGY   │ │ (Win+Alt+V)   │ │ Window > Quartermaster  │
+ └─────────────────────────┘ └───────────────┘ └─────────────────────────┘
+```
+
 ---
 
 ## What you get
 
 **Search that understands intent.** SQLite FTS5 keyword ranking fused with local ONNX embeddings via Reciprocal Rank Fusion. An exact product name hits exactly; a phrase like *"spooky abandoned industrial site"* surfaces the right warehouse pack even when it shares no keyword with the title. No cloud API, no vectors leaving the machine.
 
-**Ground truth about your disk.** Scans `%APPDATA%/Unity/Asset Store-5.x/` and Epic's VaultCache, so every result is tagged *already downloaded* or *cloud only*. Agents prefer what's local — a zero-download import beats a 4 GB one.
+**Ground truth about your disk.** Scans `%APPDATA%/Unity/Asset Store-5.x/` and Epic's VaultCache (`FabLibrary/`), so every result is tagged *already downloaded* or *cloud only*. Agents prefer what's local — a zero-download import beats a 4 GB one.
 
 **A linter for stacks, not just files.** Two weather systems will fight. Two vegetation renderers will fight. A modular shader's add-on installed without its core package silently does nothing. A URP shader in an HDRP project renders pink. Quartermaster knows these before you spend an afternoon on them.
 
 **Direct unpacking.** Extracts a cached `.unitypackage` straight into `Assets/`, skipping Package Manager entirely, and drops `/Demo/`, `/SampleScenes/`, `/Documentation/` and PDFs on the way in — typically 60–80% less disk and compile time per package.
+
+---
+
+## Capabilities by Engine
+
+| Capability | Unity Asset Store | Fab / Unreal Engine |
+| :--- | :---: | :---: |
+| **Ownership Harvest** | ✅ CDP Session Replay & CSV | ✅ CDP Session Replay & CSV |
+| **Hybrid & Semantic Search** | ✅ SQLite FTS5 + ONNX | ✅ SQLite FTS5 + ONNX |
+| **Local Cache Detection** | ✅ `%APPDATA%/Unity/Asset Store-5.x` | ✅ Epic `VaultCache` (`FabLibrary/`) |
+| **Stack Conflict Linting** | ✅ Cross-Engine Role Matching | ✅ Cross-Engine Role Matching |
+| **Pipeline Compatibility Linting** | ✅ HDRP / URP / Built-in | ❌ *N/A (Uniform format)* |
+| **Direct Unpacking (`.unitypackage`)** | ✅ Direct to `Assets/` (demos stripped) | ❌ *Manual via Epic Launcher* |
+| **In-Editor Native Window** | ✅ `Window > Quartermaster` | ℹ️ *Desktop / Web / MCP only* |
 
 ---
 
@@ -94,13 +127,47 @@ python -m src.register --all --dry-run   # preview first
 | `import_asset_to_project` | Unpack a local package into `Assets/`, demos stripped |
 | `list_asset_categories` / `get_vault_stats` | Library shape and counts |
 
+### What your agent actually sees
+
+When an agent invokes `search_owned_assets("abandoned warehouse", limit=1)`:
+
+```json
+{
+  "count": 1,
+  "search_mode": "hybrid",
+  "results": [
+    {
+      "id": "unity_000000",
+      "engine": "unity",
+      "title": "Modular Industrial Warehouse",
+      "publisher": "Acme Assets",
+      "category": "3D Environments & Props",
+      "version": "1.2.0",
+      "pipelines": ["HDRP", "URP"],
+      "tags": ["industrial", "modular", "warehouse", "pbr"],
+      "size": "450 MB",
+      "local": true,
+      "local_path": "C:/Users/.../Asset Store-5.x/Acme/ModularWarehouse.unitypackage",
+      "summary": "Modular industrial structure kit with 4k PBR textures and interior props.",
+      "usage_notes": "Check render pipeline setup before placing prefabs.",
+      "store_url": "https://assetstore.unity.com/packages/...",
+      "match": "both",
+      "relevance": 0.032
+    }
+  ]
+}
+```
+
 ---
 
 ## Other ways in
 
-- **Desktop app** (`run_desktop.bat`) — PySide6, system tray, `Win+Alt+V` spotlight hotkey.
+- **Desktop app** (`run_desktop.bat`) — PySide6 native spotlight & tray manager.
 - **Web UI** (`run_ui.bat`) — `http://localhost:7890`, press `/` to search.
 - **Unity Editor** — import `editor_bridge/Quartermaster-Bridge.unitypackage`, then `Window > Quartermaster`. Search and import without leaving the editor.
+
+> [!TIP]
+> **Desktop Spotlight (`run_desktop.bat`):** Press `Win + Alt + V` anywhere in Windows to summon the system-wide quick search HUD.
 
 ---
 
