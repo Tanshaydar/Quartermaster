@@ -75,15 +75,14 @@ namespace VaultMCP
                     return _authToken;
                 }
             }
-            catch {}
-
-            // Check D:/Projects/PERSONAL/VaultMCP/data/.auth_token
+            // Check %LOCALAPPDATA%/VaultMCP/token
             try
             {
-                string devPath = @"D:\Projects\PERSONAL\VaultMCP\data\.auth_token";
-                if (System.IO.File.Exists(devPath))
+                string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                string path = System.IO.Path.Combine(localApp, "VaultMCP", "token");
+                if (System.IO.File.Exists(path))
                 {
-                    _authToken = System.IO.File.ReadAllText(devPath).Trim();
+                    _authToken = System.IO.File.ReadAllText(path).Trim();
                     return _authToken;
                 }
             }
