@@ -495,18 +495,22 @@ class MainWindow(QMainWindow):
             return b
 
         add_sync_btn("🔐 Login Unity", lambda: self._long_op(
-            lambda: store_client.interactive_login("unity"), "Unity login",
+            lambda ev: store_client.interactive_login("unity", cancel_event=ev),
+            "Unity login",
             success_text="✅ Session saved. Now press ⟳ Fetch Unity.",
-            pre_status="A NORMAL browser window opens (zero automation). Sign in with MFA, then CLOSE that window yourself — that's the signal."))
+            pre_status="A NORMAL browser window opens (zero automation). Sign in with MFA, then CLOSE that window yourself — that's the signal.",
+            cancellable=False))
         add_sync_btn("⟳ Fetch Unity", lambda: self._fetch_op("unity"))
         add_sync_btn("🔐 Login Fab", lambda: self._long_op(
-            lambda: store_client.interactive_login("fab"), "Fab login",
+            lambda ev: store_client.interactive_login("fab", cancel_event=ev),
+            "Fab login",
             success_text="✅ Session saved. Now press ⟳ Fetch Fab.",
-            pre_status="A NORMAL browser window opens (zero automation). Complete captcha + Epic sign-in, then CLOSE that window yourself."))
+            pre_status="A NORMAL browser window opens (zero automation). Complete captcha + Epic sign-in, then CLOSE that window yourself.",
+            cancellable=False))
         add_sync_btn("⟳ Fetch Fab", lambda: self._fetch_op("fab"))
-        add_sync_btn("🖼 Enrich batch", lambda: self._long_op(
-            lambda: store_client.enrich_assets(None), "Enrichment"))
-        add_sync_btn("⚡ Scan local", lambda: self._long_op(local_scan.scan_all, "Disk scan"))
+        add_sync_btn("🖼 Enrich library", lambda: self._start_enrich_sweep())
+        add_sync_btn("⚡ Scan local", lambda: self._long_op(
+            lambda ev: local_scan.scan_all(), "Disk scan"))
         sp.addWidget(self.sync_status, 1)
         tl.addWidget(self.sync_panel)
 
@@ -529,6 +533,9 @@ class MainWindow(QMainWindow):
 
         self.statusBar().setStyleSheet(f"color:{MUTED}; background:{BG};")
 
+        # ---- overlay (must exist before any long op can start) ----
+        self._build_overlay()
+
         # ---- wiring ----
         self.search.textChanged.connect(self._debounce_search)
         for cb in (self.engine, self.pipeline, self.category):
@@ -546,7 +553,7 @@ class MainWindow(QMainWindow):
         self.do_search()
 
         # auto disk-scan at startup (background), then refresh
-        self._long_op(local_scan.scan_all, "Startup disk scan", refresh_after=True)
+        self._long_op(lambda ev: local_scan.scan_all(), "Startup disk scan")
 
     # ---------------- search & display ----------------
 
@@ -594,33 +601,135 @@ class MainWindow(QMainWindow):
 
     # ---------------- long operations ----------------
 
-    def _long_op(self, fn, label, refresh_after=False, pre_status=None, success_text=None):
+    # ---------------- overlay (greyed-out loading screen) ----------------
+
+    def _build_overlay(self):
+        self.overlay = QFrame(self.centralWidget())
+        self.overlay.setStyleSheet(
+            f"background: rgba(13,17,23,215); border: none;")
+        lay = QVBoxLayout(self.overlay)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.setSpacing(14)
+        self.overlay_icon = QLabel("⏳")
+        self.overlay_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.overlay_icon.setStyleSheet("font-size: 40px; background: transparent;")
+        self.overlay_title = QLabel("")
+        self.overlay_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.overlay_title.setStyleSheet(f"font-size:18px; font-weight:600; color:{TEXT}; background:transparent;")
+        self.overlay_status = QLabel("")
+        self.overlay_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.overlay_status.setWordWrap(True)
+        self.overlay_status.setStyleSheet(f"color:{MUTED}; font-size:13px; background:transparent;")
+        self.overlay_cancel = QPushButton("Cancel")
+        self.overlay_cancel.setFixedWidth(120)
+        self.overlay_cancel.clicked.connect(self._cancel_op)
+        for w in (self.overlay_icon, self.overlay_title, self.overlay_status):
+            lay.addWidget(w)
+        h = QHBoxLayout()
+        h.addStretch(); h.addWidget(self.overlay_cancel); h.addStretch()
+        lay.addLayout(h)
+        self.overlay.hide()
+
+    def _show_overlay(self, title: str, cancellable: bool = True):
+        self.overlay_title.setText(title)
+        self.overlay_status.setText("")
+        self.overlay_cancel.setVisible(cancellable)
+        self.overlay.setGeometry(self.centralWidget().rect())
+        self.overlay.raise_()
+        self.overlay.show()
+
+    def _overlay_progress(self, text: str):
+        if not self.overlay.isHidden():
+            self.overlay_status.setText(text)
+        self.sync_status.setText(text)
+
+    def _hide_overlay(self):
+        self.overlay.hide()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if hasattr(self, "overlay"):
+            self.overlay.setGeometry(self.centralWidget().rect())
+
+    def _cancel_op(self):
+        if getattr(self, "_cancel_event", None):
+            self._cancel_event.set()
+            self.overlay_status.setText("Cancelling — finishing current item…")
+
+    def _long_op(self, fn_builder, label, pre_status=None, success_text=None,
+                 with_progress=False, cancellable=True, refresh_after=True,
+                 auto_follow=None):
+        """Run a blocking operation off-thread with the greyed-out overlay.
+          fn_builder(cancel_event) -> result   (built here so ops get the event)
+          auto_follow(msg, ok)     -> optionally chain another op on success
+        """
+        import threading as _threading
         # single-flight: two ops would fight over the same browser profile
         if getattr(self, "_op_running", False):
             self.sync_status.setText("⚠ Another operation is already running — wait for it to finish.")
             return
         self._op_running = True
         self.sync_panel.setEnabled(False)
-        self.sync_status.setText(pre_status or f"{label}…")
-        self.op = LongOp(fn, label, success_text=success_text)
+        self._cancel_event = _threading.Event()
+
+        title = pre_status or f"{label}…"
+        self.sync_status.setText(title)
+        self._show_overlay(title, cancellable=cancellable and label != "Disk scan")
+
+        self.op = LongOp(lambda: fn_builder(self._cancel_event), label,
+                         success_text=success_text)
+        if with_progress:
+            self.op.progress.connect(lambda s: self._overlay_progress(s))
 
         def finished(msg, ok):
             self._op_running = False
             self.sync_panel.setEnabled(True)
+            self._hide_overlay()
             self.sync_status.setText(msg)
-            if ok:
-                self.do_search()
-                self.refresh_stats()
+            cancelled = msg.startswith("Operation cancelled") or "cancelled" in msg.lower()
+            if ok and not cancelled:
+                if refresh_after:
+                    self.do_search()
+                    self.refresh_stats()
+                if auto_follow:
+                    auto_follow(msg, ok)
 
         self.op.done.connect(finished)
         self.op.start()
+
+    def _start_enrich_sweep(self):
+        pending = store_client.count_unenriched()
+        if pending == 0:
+            self.sync_status.setText("Vault already fully enriched.")
+            return
+        self._long_op(
+            lambda ev: store_client.enrich_assets(progress=lambda s: self._overlay_progress(s),
+                                                  cancel_event=ev),
+            "Enrichment",
+            pre_status=f"Enriching {pending} assets in batches (pause between batches)…",
+            with_progress=True)
 
     def _fetch_op(self, provider):
         if not store_client.has_saved_session(provider):
             QMessageBox.information(self, "No saved login",
                                     f"No saved session for {provider}.\n"
                                     f"A login window will open — sign in once.")
-        self._long_op(lambda: store_client.fetch_library(provider), f"Fetch {provider}")
+
+        def auto_enrich(msg, ok):
+            pending = store_client.count_unenriched()
+            if ok and pending > 0:
+                self._long_op(
+                    lambda ev: store_client.enrich_assets(
+                        progress=lambda s: self._overlay_progress(s), cancel_event=ev),
+                    "Auto-enrichment",
+                    pre_status=f"Fetch done — enriching {pending} new/updated assets in batches…",
+                    with_progress=True)
+
+        self._long_op(
+            lambda ev: store_client.fetch_library(provider, cancel_event=ev),
+            f"Fetch {provider}",
+            pre_status=f"Fetching {provider} library — a browser window will open; leave it alone until it closes itself.",
+            auto_follow=auto_enrich)
 
     # ---------------- tray & hotkey ----------------
 

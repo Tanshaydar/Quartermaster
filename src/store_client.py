@@ -205,7 +205,8 @@ def _connect_cdp(port: int, attempts: int = 30):
 # Interactive login — plain browser, wait for the user to close it
 # ---------------------------------------------------------------------------
 
-def interactive_login(provider: str, timeout_minutes: int = 15) -> bool:
+def interactive_login(provider: str, timeout_minutes: int = 15,
+                      cancel_event=None) -> bool:
     """
     Opens the store sign-in page in a completely NORMAL browser window (no
     automation whatsoever). The user signs in — captcha/MFA behave exactly
@@ -221,13 +222,17 @@ def interactive_login(provider: str, timeout_minutes: int = 15) -> bool:
     deadline = time.time() + timeout_minutes * 60
     closed_by_user = False
     while time.time() < deadline:
+        if cancel_event is not None and cancel_event.is_set():
+            _log(f"{provider} login cancelled.")
+            break
         if proc.poll() is not None:
             closed_by_user = True
             break
         time.sleep(2)
 
     if not closed_by_user:
-        _log(f"{provider} login timed out; closing window.")
+        reason = "cancelled" if (cancel_event and cancel_event.is_set()) else "timed out"
+        _log(f"{provider} login {reason}; closing window.")
         _close_browser_gracefully(proc)
 
     ok = closed_by_user
@@ -290,7 +295,7 @@ _SCROLL_JS = """
 """
 
 
-def fetch_library(provider: str) -> int:
+def fetch_library(provider: str, cancel_event=None) -> int:
     """Open the store library page with the saved session (headed), intercept
     JSON responses, upsert discovered assets. Raises visible errors instead of
     failing silently."""
@@ -424,6 +429,9 @@ def fetch_library(provider: str) -> int:
         login_streak = 0
         started = time.time()
         for i in range(120):
+            if cancel_event is not None and cancel_event.is_set():
+                _log(f"{provider} fetch cancelled.")
+                break
             check_urls_for_login_redirect()
             if landed_on_login:
                 login_streak += 1
@@ -665,67 +673,118 @@ _YT_RE = re.compile(r'(?:youtube\.com/(?:watch\?v=|embed/)|youtu\.be/)([\w-]{11}
 _VIDEO_HINTS = re.compile(r'"(https?://[^"]+\.(?:mp4|webm)[^"]*)"', re.I)
 
 
-def enrich_assets(limit: Optional[int] = None) -> int:
+def count_unenriched(db_path: str = DB_PATH) -> int:
+    conn = get_connection(db_path)
+    n = conn.execute("SELECT COUNT(*) FROM assets WHERE enriched = 0").fetchone()[0]
+    conn.close()
+    return n
+
+
+def enrich_assets(limit: Optional[int] = None, progress=None,
+                  cancel_event=None) -> int:
     """
-    Fetch store pages for un-enriched assets and extract cover art, gallery
-    images, video LINKS, and description. Returns number enriched.
+    Fetch store pages for un-enriched assets in BATCHES with pauses between
+    them (polite to remote servers), extracting cover art, gallery images,
+    video LINKS, and description.
+      limit=None -> sweep the ENTIRE backlog
+      progress   -> optional callable(str) for live status updates
+      cancel_event -> optional threading.Event; set to stop gracefully
+    Returns number enriched.
     """
+    import time as _time
     cfg = load_config()
-    batch = limit or cfg["enrich_batch_size"]
-    assets = get_unenriched(batch)
+    batch_size = int(cfg["enrich_batch_size"])
+    pause = int(cfg.get("enrich_batch_pause", 3))
+    total_backlog = count_unenriched()
+    if total_backlog == 0:
+        _log("enrichment: nothing to do.")
+        if progress:
+            progress("Enrichment: nothing to do — vault is fully enriched.")
+        return 0
+
     done = 0
+    target = min(limit or total_backlog, total_backlog)
+    cancelled = False
+
+    def is_cancelled():
+        return cancel_event is not None and cancel_event.is_set()
 
     with httpx.Client(follow_redirects=True, timeout=20,
                       headers={"User-Agent": "Mozilla/5.0 (VaultMCP enrichment)"}) as client:
-        for asset in assets:
-            url = asset.get("store_url") or ""
-            if not url.startswith("http"):
-                continue
-            try:
-                r = client.get(url)
-                html = r.text
-            except Exception as e:
-                _log(f"warn: {asset['title']}: {e}")
-                continue
-
-            image_url = ""
-            m = _OG_IMAGE_RE.search(html)
-            if m:
-                image_url = m.group(1).replace("&amp;", "&")
-
-            gallery = []
-            for g in re.findall(r'https://assetstorev1-prd-cdn\.unity3d\.com/package-screenshot/[^"\' )]+', html)[:8]:
-                if g not in gallery:
-                    gallery.append(g)
-
-            videos = []
-            for vid in _YT_RE.findall(html):
-                link = f"https://www.youtube.com/watch?v={vid}"
-                if link not in videos:
-                    videos.append(link)
-                if len(videos) >= 3:
+        while done < target and not is_cancelled():
+            assets = get_unenriched(batch_size)
+            if not assets:
+                break
+            for asset in assets:
+                if done >= target or is_cancelled():
                     break
-            for v in _VIDEO_HINTS.findall(html)[:3]:
-                if v not in videos:
-                    videos.append(v)
-            videos = videos[:5]
+                url = asset.get("store_url") or ""
+                if not url.startswith("http"):
+                    mark_enriched(asset["id"])   # nothing to fetch; don't retry forever
+                    done += 1
+                    continue
+                try:
+                    r = client.get(url)
+                    html = r.text
+                except Exception as e:
+                    _log(f"warn: {asset['title']}: {e}")
+                    continue
 
-            desc = ""
-            md = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']{30,400})["\']', html, re.I)
-            if md:
-                desc = md.group(1)
+                image_url = ""
+                m = _OG_IMAGE_RE.search(html)
+                if m:
+                    image_url = m.group(1).replace("&amp;", "&")
 
-            mark_enriched(
-                asset["id"],
-                image_url=image_url,
-                gallery_images=gallery,
-                video_links=videos,
-                summary=(desc or "")[:400],
-            )
-            done += 1
-            _log(f"enriched: {asset['title']} (img={'Y' if image_url else '-'} vid={len(videos)})")
+                gallery = []
+                for g in re.findall(r'https://assetstorev1-prd-cdn\.unity3d\.com/package-screenshot/[^"\' )]+', html)[:8]:
+                    if g not in gallery:
+                        gallery.append(g)
 
-    _log(f"enrichment done: {done} assets.")
+                videos = []
+                for vid in _YT_RE.findall(html):
+                    link = f"https://www.youtube.com/watch?v={vid}"
+                    if link not in videos:
+                        videos.append(link)
+                    if len(videos) >= 3:
+                        break
+                for v in _VIDEO_HINTS.findall(html)[:3]:
+                    if v not in videos:
+                        videos.append(v)
+                videos = videos[:5]
+
+                desc = ""
+                md = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']{30,400})["\']', html, re.I)
+                if md:
+                    desc = md.group(1)
+
+                mark_enriched(
+                    asset["id"],
+                    image_url=image_url,
+                    gallery_images=gallery,
+                    video_links=videos,
+                    summary=(desc or "")[:400],
+                )
+                done += 1
+                if progress and done % 5 == 0:
+                    remaining = count_unenriched()
+                    progress(f"Batch {done // max(batch_size,1)} — "
+                             f"{done}/{target} this run · {remaining} left in backlog")
+
+            # pause between batches so remote servers see a human-ish cadence
+            if done < target and count_unenriched() > 0 and pause > 0:
+                if progress:
+                    progress(f"Pausing {pause}s between batches (politeness mode)…")
+                steps = int(pause * 10)
+                for _ in range(steps):
+                    if is_cancelled():
+                        break
+                    _time.sleep(0.1)
+
+    status = "cancelled" if is_cancelled() else "finished"
+    _log(f"enrichment {status}: {done} assets processed.")
+    if progress:
+        progress(f"Enrichment {status}: {done} processed · "
+                 f"{count_unenriched()} left in backlog (run again anytime).")
     return done
 
 

@@ -15,6 +15,7 @@ DEFAULTS = {
     "media_cache_dir": "cache/images",
     "video_mode": "link",             # "link" = store YouTube/trailer links only, never download
     "enrich_batch_size": 20,
+    "enrich_batch_pause": 3,          # seconds between batches (be polite)
     "profiles_dir": "profiles",       # browser profiles for saved logins
     "headless_refresh": False         # headless fetches trigger Unity MFA/bot flags — keep headed
 }
