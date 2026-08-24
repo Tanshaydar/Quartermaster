@@ -1,4 +1,14 @@
-# Quartermaster
+# ⚡ Quartermaster
+
+<div align="center">
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![MCP Ready](https://img.shields.io/badge/MCP-Protocol%20Ready-success.svg)](https://modelcontextprotocol.io)
+[![Platform: Windows 11 / Native](https://img.shields.io/badge/Platform-Windows%20%7C%20Cross--Platform-lightgrey.svg)]()
+[![FastEmbed CPU](https://img.shields.io/badge/FastEmbed-Offline%20Vectors%20(CPU)-purple.svg)](https://github.com/qdrant/fastembed)
+
+</div>
 
 **You own more game assets than you can remember. Your AI assistant knows about none of them.**
 
