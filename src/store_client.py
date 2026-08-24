@@ -46,11 +46,13 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 try:
-    from .db import get_unenriched, mark_enriched, upsert_asset, DB_PATH
+    from .db import (get_unenriched, mark_enriched, upsert_asset, DB_PATH,
+                     get_connection)
     from .config import load_config
     from .ingest import classify_asset
 except ImportError:
-    from db import get_unenriched, mark_enriched, upsert_asset, DB_PATH
+    from db import (get_unenriched, mark_enriched, upsert_asset, DB_PATH,
+                    get_connection)
     from config import load_config
     from ingest import classify_asset
 
