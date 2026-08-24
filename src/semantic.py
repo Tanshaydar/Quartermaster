@@ -113,44 +113,63 @@ def build_index(batch_size: int = 64, db_path: str = DB_PATH) -> int:
     return done
 
 
-# In-memory vector matrix cache keyed on index_size to eliminate per-query SQLite blob re-reads
+# In-memory vector matrix cache keyed on (PRAGMA data_version, COUNT(*))
+# Automatically detects cross-process vector/summary updates via SQLite WAL change counter
 _MATRIX_CACHE: Dict[str, Any] = {
     "db_path": None,
+    "data_version": -1,
     "size": -1,
     "ids": None,
     "mat": None,
     "np": None,
+    "conn": None,
 }
 
 
 def invalidate_vector_cache():
+    _MATRIX_CACHE["data_version"] = -1
     _MATRIX_CACHE["size"] = -1
     _MATRIX_CACHE["ids"] = None
     _MATRIX_CACHE["mat"] = None
 
 
 def _load_matrix(db_path: str = DB_PATH):
-    current_size = index_size(db_path)
+    import sqlite3
+    if _MATRIX_CACHE.get("conn") is None or _MATRIX_CACHE.get("db_path") != db_path:
+        conn = sqlite3.connect(db_path, isolation_level=None)
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        _MATRIX_CACHE["conn"] = conn
+        _MATRIX_CACHE["db_path"] = db_path
+
+    conn = _MATRIX_CACHE["conn"]
+    try:
+        data_ver = conn.execute("PRAGMA data_version").fetchone()[0]
+        cur_size = conn.execute("SELECT COUNT(*) FROM asset_vectors").fetchone()[0]
+    except Exception:
+        _ensure_table(conn)
+        data_ver = conn.execute("PRAGMA data_version").fetchone()[0]
+        cur_size = conn.execute("SELECT COUNT(*) FROM asset_vectors").fetchone()[0]
+
     if (_MATRIX_CACHE["ids"] is not None and
-        _MATRIX_CACHE["db_path"] == db_path and
-        _MATRIX_CACHE["size"] == current_size):
+        _MATRIX_CACHE["data_version"] == data_ver and
+        _MATRIX_CACHE["size"] == cur_size):
         return _MATRIX_CACHE["ids"], _MATRIX_CACHE["mat"], _MATRIX_CACHE["np"]
 
-    conn = get_connection(db_path)
-    _ensure_table(conn)
     ids, dims, blobs = [], [], []
     for aid, dim, vec in conn.execute("SELECT asset_id, dim, vec FROM asset_vectors ORDER BY asset_id"):
         ids.append(aid)
         dims.append(dim)
         blobs.append(vec)
-    conn.close()
+
     if not ids:
         return None, None, None
+
     import numpy as np
     mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(ids), dims[0]).copy()
     mat /= (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-9)
 
-    _MATRIX_CACHE["db_path"] = db_path
+    _MATRIX_CACHE["data_version"] = data_ver
     _MATRIX_CACHE["size"] = len(ids)
     _MATRIX_CACHE["ids"] = ids
     _MATRIX_CACHE["mat"] = mat
