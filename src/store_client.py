@@ -247,7 +247,45 @@ def interactive_login(provider: str, timeout_minutes: int = 15,
 # Library fetch via network interception (headed, session already established)
 # ---------------------------------------------------------------------------
 
-_NAME_KEYS = ("name", "assetName", "title", "asset_name", "productName")
+_NAME_KEYS = ("name", "assetName", "title", "asset_name", "productName", "displayName")
+
+def _extract_string(val: Any, *subkeys: str) -> str:
+    if isinstance(val, str):
+        return val.strip()
+    if isinstance(val, dict):
+        for sk in subkeys or ("name", "label", "title", "url", "value", "href", "slug"):
+            if val.get(sk) and isinstance(val[sk], str):
+                return val[sk].strip()
+    return ""
+
+
+def _extract_store_url(item: dict, provider: str) -> str:
+    for k in ("url", "listingUrl", "packageUrl", "link", "webUrl", "canonicalUrl"):
+        u = _extract_string(item.get(k), "url", "href", "slug")
+        if u:
+            if u.startswith("http"):
+                return u
+            if u.startswith("/"):
+                return f"https://assetstore.unity.com{u}" if provider == "unity" else f"https://www.fab.com{u}"
+            return u
+    slug = item.get("slug") or item.get("packageSlug")
+    if slug and isinstance(slug, str):
+        if provider == "unity":
+            return f"https://assetstore.unity.com/packages/{slug.strip('/')}"
+        return f"https://www.fab.com/listings/{slug.strip('/')}"
+    pkg_id = item.get("id") or item.get("listingId") or item.get("packageId")
+    if pkg_id and str(pkg_id).isdigit() and provider == "unity":
+        return f"https://assetstore.unity.com/packages/slug-{pkg_id}"
+    return ""
+
+
+def _extract_publisher(item: dict) -> str:
+    for k in ("sellerName", "publisher", "publisherLabel", "publisherName", "developer", "author", "user"):
+        p = _extract_string(item.get(k), "name", "label", "sellerName", "username", "displayName")
+        if p:
+            return p[:120]
+    return ""
+
 
 
 def _walk_for_asset_lists(node: Any, out: List[list], depth: int = 0):
@@ -642,11 +680,12 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             unknown += 1
             continue
 
-        store_url = str(item.get("url") or item.get("listingUrl") or "")
-        publisher = str(item.get("sellerName") or item.get("publisher") or "")[:120]
+        pkg_id = str(item.get("id") or item.get("listingId") or item.get("packageId") or "").strip()
+        store_url = _extract_store_url(item, provider)
+        publisher = _extract_publisher(item)
 
-        # Reject UI facets or empty stub entries that have neither store_url nor publisher
-        if not store_url and not publisher:
+        # Reject pure UI filter facet stubs (no package_id, no store_url, and no publisher)
+        if not pkg_id and not store_url and not publisher:
             unknown += 1
             continue
 
@@ -654,15 +693,16 @@ def fetch_library(provider: str, cancel_event=None) -> int:
         image = item.get("image") or item.get("thumbnail") or ""
         if isinstance(item.get("keyImage"), dict):
             image = item["keyImage"].get("url") or image
+        stable_id = f"{provider}_{pkg_id if pkg_id else hashlib.sha1(title.lower().strip().encode('utf-8')).hexdigest()[:16]}"
         asset = {
-            "id": f"{provider}_{item.get('id') or item.get('listingId') or hashlib.sha1(title.lower().strip().encode('utf-8')).hexdigest()[:16]}",
+            "id": stable_id,
             "source": provider,
-            "package_id": str(item.get("id") or item.get("listingId") or ""),
+            "package_id": pkg_id,
             "title": title,
-            "publisher": str(item.get("sellerName") or item.get("publisher") or "")[:120],
-            "version": str(item.get("versionName") or item.get("version") or ""),
+            "publisher": publisher,
+            "version": str(item.get("versionName") or item.get("version") or item.get("packageVersion") or ""),
             "claimed_date": (item.get("createdAt") or item.get("acquiredAt") or "")[:10],
-            "store_url": item.get("url") or item.get("listingUrl") or "",
+            "store_url": store_url,
             "image_url": image if isinstance(image, str) else "",
             **cls,
             "gallery_images": [],
