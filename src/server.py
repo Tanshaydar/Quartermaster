@@ -4,32 +4,36 @@ VaultMCP local web server & REST API.
   python -m src.server            # serves on http://localhost:7890
 
 Endpoints:
-  GET  /                          -> dark-mode search UI
+  GET  /                          -> dark-mode search UI (sets SameSite session cookie)
   GET  /api/assets                -> search/filter (query, category, pipeline, source, limit, offset)
   GET  /api/asset/{id}            -> full details
   GET  /api/stats                 -> counts by category/source
+  GET  /api/recipes               -> curated stack recipes
   GET  /api/categories            -> distinct categories
   GET  /api/image?url=...         -> proxied & disk-cached remote image (toggleable)
-  POST /api/login/{provider}      -> open browser window for interactive store login
-  POST /api/fetch/{provider}      -> refresh owned library using saved session
-  POST /api/enrich                -> enrich N un-enriched assets (images/video links)
+  POST /api/login/{provider}      -> (AUTH) open browser window for interactive store login
+  POST /api/fetch/{provider}      -> (AUTH) refresh owned library using saved session
+  POST /api/enrich                -> (AUTH) enrich N un-enriched assets (images/video links)
+  POST /api/scan-local            -> (AUTH) rescan disk caches
+  POST /api/import                -> (AUTH) unpack .unitypackage directly into project
 """
 import hashlib
 import os
 import threading
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends, Header, Cookie
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 try:
     from .db import search_assets, get_asset_by_id, get_stats, get_categories
-    from .config import load_config
+    from .config import load_config, get_or_create_auth_token
     from . import store_client, local_scan, unpacker, stack_rules
 except ImportError:
     from db import search_assets, get_asset_by_id, get_stats, get_categories
-    from config import load_config
+    from config import load_config, get_or_create_auth_token
     import store_client, local_scan, unpacker, stack_rules
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -37,15 +41,71 @@ WEB_DIR = os.path.join(ROOT_DIR, "web")
 
 app = FastAPI(title="VaultMCP", docs_url="/api/docs")
 
+# ----------------------------- CORS & Security -----------------------------
+ALLOWED_ORIGINS = [
+    "http://localhost:7890",
+    "http://127.0.0.1:7890",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+def verify_auth(
+    request: Request,
+    x_vault_token: Optional[str] = Header(None, alias="X-VaultMCP-Token"),
+    authorization: Optional[str] = Header(None),
+    vault_cookie: Optional[str] = Cookie(None, alias="vault_token")
+):
+    """
+    Validates API authentication and enforces strict CSRF protections.
+    Blocks simple-request form submissions and unauthorized cross-origin requests.
+    """
+    expected = get_or_create_auth_token()
+
+    # 1. CSRF Defense: check Origin / Referer if present
+    origin = request.headers.get("origin")
+    if origin and not any(origin.startswith(a) for a in ALLOWED_ORIGINS):
+        raise HTTPException(403, "Forbidden: Cross-Origin request blocked (CSRF protection)")
+
+    referer = request.headers.get("referer")
+    if referer and not any(referer.startswith(a) for a in ALLOWED_ORIGINS):
+        raise HTTPException(403, "Forbidden: Invalid Referer origin (CSRF protection)")
+
+    # 2. Token Check: X-VaultMCP-Token header OR Authorization: Bearer OR SameSite Cookie
+    token = x_vault_token
+    if not token and authorization and authorization.startswith("Bearer "):
+        token = authorization[7:].strip()
+    if not token and vault_cookie:
+        token = vault_cookie
+
+    if not token or token != expected:
+        raise HTTPException(401, "Unauthorized: Valid X-VaultMCP-Token header or local session required.")
+
 
 # ------------------------------- static UI ---------------------------------
 
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(WEB_DIR, "index.html"))
+    token = get_or_create_auth_token()
+    response = FileResponse(os.path.join(WEB_DIR, "index.html"))
+    # Set SameSite=Strict cookie for the web UI on localhost
+    response.set_cookie(
+        key="vault_token",
+        value=token,
+        httponly=False,
+        samesite="strict",
+        path="/"
+    )
+    return response
 
 
-# --------------------------------- API -------------------------------------
+# --------------------------------- Read API --------------------------------
 
 @app.get("/api/assets")
 def api_assets(query: str = "", category: str = "all", pipeline: str = "all",
@@ -71,10 +131,10 @@ def api_stats():
     return get_stats()
 
 
-
 @app.get("/api/recipes")
 def api_recipes():
     return {"recipes": stack_rules.list_recipes()}
+
 
 @app.get("/api/categories")
 def api_categories():
@@ -120,9 +180,9 @@ def api_image(url: str):
     return Response(r.content, media_type=ctype)
 
 
-# ------------------------ login / fetch / enrich ---------------------------
+# -------------------- Protected State-Mutating APIs ------------------------
 
-@app.post("/api/login/{provider}")
+@app.post("/api/login/{provider}", dependencies=[Depends(verify_auth)])
 def api_login(provider: str):
     if provider not in ("unity", "fab"):
         raise HTTPException(400, "provider must be 'unity' or 'fab'")
@@ -136,7 +196,7 @@ def api_login(provider: str):
             "message": f"A browser window is opening. Sign in to {provider}; the session is saved automatically when done."}
 
 
-@app.post("/api/fetch/{provider}")
+@app.post("/api/fetch/{provider}", dependencies=[Depends(verify_auth)])
 def api_fetch(provider: str):
     if provider not in ("unity", "fab"):
         raise HTTPException(400, "provider must be 'unity' or 'fab'")
@@ -146,23 +206,22 @@ def api_fetch(provider: str):
     return {"status": "ok", "provider": provider, "assets_seen": count}
 
 
-@app.post("/api/enrich")
+@app.post("/api/enrich", dependencies=[Depends(verify_auth)])
 def api_enrich(limit: Optional[int] = None):
     count = store_client.enrich_assets(limit)
     return {"status": "ok", "enriched": count}
 
 
-@app.post("/api/scan-local")
+@app.post("/api/scan-local", dependencies=[Depends(verify_auth)])
 def api_scan_local():
     """Scan Unity/Fab disk caches and tag assets as locally downloaded."""
     return local_scan.scan_all()
 
 
-@app.post("/api/import")
+@app.post("/api/import", dependencies=[Depends(verify_auth)])
 async def api_import(request: Request):
     """Unpack a locally-downloaded .unitypackage into a Unity project root.
-    Used by the in-editor VaultMCP window (project_dir = the Unity project).
-    Accepts application/x-www-form-urlencoded or query params."""
+    Protected against CSRF via X-VaultMCP-Token auth header."""
     form = dict(await request.form())
     if not form:
         form = dict(request.query_params)
@@ -199,5 +258,7 @@ app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 if __name__ == "__main__":
     import uvicorn
     cfg = load_config()
+    tok = get_or_create_auth_token()
     print(f"VaultMCP UI -> http://localhost:{cfg['server_port']}")
+    print(f"API Auth Token active ({len(tok)} chars)")
     uvicorn.run(app, host="127.0.0.1", port=cfg["server_port"], log_level="warning")

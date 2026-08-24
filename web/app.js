@@ -18,7 +18,17 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
 // API Helper
+function getAuthToken() {
+  const match = document.cookie.match(/(?:^|; )vault_token=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : (localStorage.getItem("vault_token") || "");
+}
+
 async function api(path, opts = {}) {
+  opts.headers = opts.headers || {};
+  const token = getAuthToken();
+  if (token && !opts.headers["X-VaultMCP-Token"]) {
+    opts.headers["X-VaultMCP-Token"] = token;
+  }
   const res = await fetch(path, opts);
   if (!res.ok) {
     let msg = res.statusText;

@@ -48,3 +48,48 @@ def save_config_partial(updates: dict):
     cfg.update(updates)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
+
+AUTH_TOKEN_PATH = os.path.join(ROOT_DIR, "data", ".auth_token")
+USER_TOKEN_PATH = os.path.join(os.path.expanduser("~"), ".vaultmcp", "auth_token")
+
+def get_or_create_auth_token() -> str:
+    cfg = load_config()
+    if cfg.get("auth_token"):
+        return str(cfg["auth_token"]).strip()
+    
+    # Check data/.auth_token
+    if os.path.exists(AUTH_TOKEN_PATH):
+        try:
+            with open(AUTH_TOKEN_PATH, "r", encoding="utf-8") as f:
+                tok = f.read().strip()
+                if tok:
+                    return tok
+        except Exception:
+            pass
+            
+    # Check ~/.vaultmcp/auth_token
+    if os.path.exists(USER_TOKEN_PATH):
+        try:
+            with open(USER_TOKEN_PATH, "r", encoding="utf-8") as f:
+                tok = f.read().strip()
+                if tok:
+                    return tok
+        except Exception:
+            pass
+            
+    # Generate new cryptographically secure 32-byte hex token
+    import secrets
+    tok = secrets.token_hex(32)
+    try:
+        os.makedirs(os.path.dirname(AUTH_TOKEN_PATH), exist_ok=True)
+        with open(AUTH_TOKEN_PATH, "w", encoding="utf-8") as f:
+            f.write(tok)
+    except Exception:
+        pass
+    try:
+        os.makedirs(os.path.dirname(USER_TOKEN_PATH), exist_ok=True)
+        with open(USER_TOKEN_PATH, "w", encoding="utf-8") as f:
+            f.write(tok)
+    except Exception:
+        pass
+    return tok

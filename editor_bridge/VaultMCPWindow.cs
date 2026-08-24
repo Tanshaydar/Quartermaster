@@ -18,6 +18,7 @@ namespace VaultMCP
     public class VaultMCPWindow : EditorWindow
     {
         private const string BaseUrl = "http://localhost:7890";
+        private static string _authToken = "";
 
         private string _search = "";
         private string _status = "Ready.";
@@ -52,6 +53,43 @@ namespace VaultMCP
         {
             var w = GetWindow<VaultMCPWindow>("VaultMCP");
             w.minSize = new Vector2(420, 480);
+        }
+
+        
+        private static string GetAuthToken()
+        {
+            if (!string.IsNullOrEmpty(_authToken)) return _authToken;
+            
+            // Check EditorPrefs
+            string saved = EditorPrefs.GetString("VaultMCP_AuthToken", "");
+            if (!string.IsNullOrEmpty(saved)) { _authToken = saved; return _authToken; }
+
+            // Check ~/.vaultmcp/auth_token
+            try
+            {
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                string path = System.IO.Path.Combine(home, ".vaultmcp", "auth_token");
+                if (System.IO.File.Exists(path))
+                {
+                    _authToken = System.IO.File.ReadAllText(path).Trim();
+                    return _authToken;
+                }
+            }
+            catch {}
+
+            // Check D:/Projects/PERSONAL/VaultMCP/data/.auth_token
+            try
+            {
+                string devPath = @"D:\Projects\PERSONAL\VaultMCP\data\.auth_token";
+                if (System.IO.File.Exists(devPath))
+                {
+                    _authToken = System.IO.File.ReadAllText(devPath).Trim();
+                    return _authToken;
+                }
+            }
+            catch {}
+
+            return "";
         }
 
         private void OnEnable()
