@@ -35,8 +35,8 @@ If you have been building games or collecting assets for years, you likely own h
 
 ### 1. 🧠 Offline Hybrid Semantic Search (CPU FastEmbed + SQLite FTS5)
 * Combines **SQLite FTS5 BM25 keyword ranking** with **CPU-only vector embeddings** (`BAAI/bge-small-en-v1.5` via ONNX).
-* Uses **Reciprocal Rank Fusion (RRF)**: Exact keyword queries (`"MicroSplat HDRP"`) hit instantly, while conceptual natural language queries (`"spooky abandoned industrial site"`) retrieve *Warehouse – Abandoned Factory District* with zero external cloud API calls.
-* Vectors are brute-force cosine-scored in memory — no ANN index to tune and no recall cliff. Scoring the full vault takes single-digit milliseconds at the ~1,400-asset scale this was built against, and the flat scan stays comfortable into the tens of thousands.
+* Uses **Reciprocal Rank Fusion (RRF)**: exact product-name queries hit instantly, while conceptual natural language queries (`"spooky abandoned industrial site"`) surface the right warehouse pack even when it shares no keyword with the title — with zero external cloud API calls.
+* Vectors are brute-force cosine-scored in memory — no ANN index to tune and no recall cliff. Scoring the full vault takes single-digit milliseconds at typical library sizes, and the flat scan stays comfortable into the tens of thousands.
 
 ### 2. ⚡ Local Disk Cache Scanner (Cloud vs. On-Disk)
 * Scans `%APPDATA%\Unity\Asset Store-5.x\` and Epic Games VaultCache directories.
@@ -136,12 +136,12 @@ When connected over `stdio`, AI agents gain access to 9 tools:
 
 ### Example Agent Prompt & Flow
 
-> **User to Agent:** *"I want to create an atmospheric karst valley level in Unity HDRP with volumetric water and pine vegetation."*
+> **User to Agent:** *"I want an atmospheric foggy forest clearing at dusk in Unity HDRP, with volumetric light and ground vegetation."*
 >
-> 1. Agent calls `audit_project("D:/Projects/MyLevel")` $\rightarrow$ Detects Unity 6 / HDRP.
-> 2. Agent calls `get_stack_recommendations(...)` $\rightarrow$ Recommends `MicroVerse`, `StampIT! Valleys`, `MicroSplat HDRP`, `KWS2 Dynamic Water`, and `Mountain Environment`.
-> 3. Agent calls `validate_stack(...)` $\rightarrow$ Checks for conflicting renderers.
-> 4. Agent calls `import_asset_to_project(asset_id, project_dir)` $\rightarrow$ Unpacks directly into `Assets/`, stripping unneeded sample scenes.
+> 1. Agent calls `audit_project(...)` → detects the engine version and active render pipeline.
+> 2. Agent calls `get_stack_recommendations(...)` → returns owned packs covering terrain, texturing, vegetation, and atmospherics.
+> 3. Agent calls `validate_stack(...)` → flags role conflicts, e.g. two competing terrain systems.
+> 4. Agent calls `import_asset_to_project(asset_id, project_dir)` → unpacks directly into `Assets/`, stripping unneeded sample scenes.
 
 ---
 
