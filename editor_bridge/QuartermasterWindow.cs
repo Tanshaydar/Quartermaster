@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEditor;
 using UnityEngine.Networking;
 
-namespace VaultMCP
+namespace Quartermaster
 {
     /// <summary>
     /// VaultMCP in-editor window. Search your entire asset vault (Unity + Fab,
@@ -15,7 +15,7 @@ namespace VaultMCP
     ///
     /// Requires the VaultMCP server running (python -m src.desktop or src.server).
     /// </summary>
-    public class VaultMCPWindow : EditorWindow
+    public class QuartermasterWindow : EditorWindow
     {
         private const string BaseUrl = "http://localhost:7890";
         private static string _authToken = "";
@@ -26,14 +26,14 @@ namespace VaultMCP
         private bool _stripDemos = true;
 
         // result list
-        private readonly List<VaultAsset> _results = new List<VaultAsset>();
+        private readonly List<QuartermasterAsset> _results = new List<QuartermasterAsset>();
         private int _selected = -1;
-        private VaultAsset _detail;
+        private QuartermasterAsset _detail;
         private string _engineFilter = "all";
         private string _categoryFilter = "all";
         private List<string> _categories = new List<string>();
 
-        [Serializable] private class VaultAsset
+        [Serializable] private class QuartermasterAsset
         {
             public string id;
             public string source;      // unity | fab
@@ -48,10 +48,10 @@ namespace VaultMCP
             public string store_url;
         }
 
-        [MenuItem("Window/VaultMCP")]
+        [MenuItem("Window/Quartermaster")]
         public static void Open()
         {
-            var w = GetWindow<VaultMCPWindow>("VaultMCP");
+            var w = GetWindow<QuartermasterWindow>("Quartermaster");
             w.minSize = new Vector2(420, 480);
         }
 
@@ -61,14 +61,14 @@ namespace VaultMCP
             if (!string.IsNullOrEmpty(_authToken)) return _authToken;
             
             // Check EditorPrefs
-            string saved = EditorPrefs.GetString("VaultMCP_AuthToken", "");
+            string saved = EditorPrefs.GetString("Quartermaster_AuthToken", "");
             if (!string.IsNullOrEmpty(saved)) { _authToken = saved; return _authToken; }
 
             // Check ~/.vaultmcp/auth_token
             try
             {
                 string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                string path = System.IO.Path.Combine(home, ".vaultmcp", "auth_token");
+                string path = System.IO.Path.Combine(home, ".quartermaster", "auth_token");
                 if (System.IO.File.Exists(path))
                 {
                     _authToken = System.IO.File.ReadAllText(path).Trim();
@@ -79,7 +79,7 @@ namespace VaultMCP
             try
             {
                 string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                string path = System.IO.Path.Combine(localApp, "VaultMCP", "token");
+                string path = System.IO.Path.Combine(localApp, "Quartermaster", "token");
                 if (System.IO.File.Exists(path))
                 {
                     _authToken = System.IO.File.ReadAllText(path).Trim();
@@ -99,7 +99,7 @@ namespace VaultMCP
 
         // ---------------- API helpers ----------------
 
-        [Serializable] private class SearchResponse { public VaultAsset[] items; }
+        [Serializable] private class SearchResponse { public QuartermasterAsset[] items; }
         [Serializable] private class CategoriesResponse { public string[] categories; }
         [Serializable] private class ImportResponse
         {
@@ -179,7 +179,7 @@ namespace VaultMCP
             Repaint();
         }
 
-        private void DoImport(VaultAsset asset)
+        private void DoImport(QuartermasterAsset asset)
         {
             string projectRoot = Directory.GetParent(Application.dataPath).FullName;
             string body = "asset_id=" + WWW.EscapeURL(asset.id) +

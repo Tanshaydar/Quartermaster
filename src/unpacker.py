@@ -12,7 +12,7 @@ Format: .unitypackage is a gzipped tar archive with entries:
 Safety Sandbox:
 Every declared path is sanitized and normalized. Traversal segments ('..')
 are collapsed or stripped. Any path declared outside of Assets/ is relocated
-under Assets/_VaultMCP_Imported/. All final target paths are cryptographically
+under Assets/_Quartermaster_Imported/. All final target paths are cryptographically
 and structurally asserted to reside strictly inside <project>/Assets/.
 Escapes to <project>/Packages/, <project>/ProjectSettings/, or outside the project
 are strictly impossible and raise security errors.
@@ -43,7 +43,7 @@ def _sanitize_package_path(raw_rel: str) -> tuple[str, list[str]]:
     Guarantees:
     - Strips drive letters ('C:'), null bytes, and leading slashes.
     - Collapses '..' segments.
-    - Any path not starting with 'Assets/' is placed under 'Assets/_VaultMCP_Imported/'.
+    - Any path not starting with 'Assets/' is placed under 'Assets/_Quartermaster_Imported/'.
     """
     rel = raw_rel.split("\n")[0].strip().replace("\\", "/")
     # Remove null bytes or control characters
@@ -65,9 +65,9 @@ def _sanitize_package_path(raw_rel: str) -> tuple[str, list[str]]:
     if not collapsed:
         return "", []
 
-    # If first segment is not "Assets", relocate under Assets/_VaultMCP_Imported/
+    # If first segment is not "Assets", relocate under Assets/_Quartermaster_Imported/
     if collapsed[0] != "Assets":
-        safe_components = ["_VaultMCP_Imported"] + collapsed
+        safe_components = ["_Quartermaster_Imported"] + collapsed
     else:
         safe_components = collapsed[1:]  # components under Assets/
 

@@ -10,7 +10,7 @@ Registers the VaultMCP MCP server into supported AI clients:
 
 Behavior:
   - merges into existing JSON config (never clobbers unrelated keys)
-  - writes a .vaultmcp-backup next to the file before first modification
+  - writes a .quartermaster-backup next to the file before first modification
   - clients whose config file doesn't exist yet are created (except where
     the parent app clearly isn't installed)
 """
@@ -111,22 +111,22 @@ def register_client(client: str, dry_run: bool = False, remove: bool = False) ->
     cfg = _read_json(path) if os.path.exists(path) else {}
     servers = cfg.setdefault(key, {})
 
-    already = "vaultmcp" in servers
+    already = "quartermaster" in servers
     if remove:
         if not already:
             return f"[skip] {spec['name']}: not registered"
         if not dry_run:
-            servers.pop("vaultmcp")
+            servers.pop("quartermaster")
             _write_json(path, cfg)
         return f"[{'dry-run' if dry_run else 'ok'}] {spec['name']}: removed ({path})"
 
-    if already and servers["vaultmcp"] == _server_entry():
+    if already and servers["quartermaster"] == _server_entry():
         return f"[skip] {spec['name']}: already up-to-date ({path})"
 
     if not dry_run:
-        if os.path.exists(path) and not os.path.exists(path + ".vaultmcp-backup"):
-            shutil.copy2(path, path + ".vaultmcp-backup")
-        servers["vaultmcp"] = _server_entry()
+        if os.path.exists(path) and not os.path.exists(path + ".quartermaster-backup"):
+            shutil.copy2(path, path + ".quartermaster-backup")
+        servers["quartermaster"] = _server_entry()
         _write_json(path, cfg)
     verb = "would register" if dry_run else "registered"
     note = " (updated)" if already else ""

@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "vaultmcp": {
+    "quartermaster": {
       "command": "python",
       "args": ["-m", "src.mcp_server"],
-      "cwd": "<path-to-VaultMCP>"
+      "cwd": "<path-to-Quartermaster>"
     }
   }
 }

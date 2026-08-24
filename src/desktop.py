@@ -444,7 +444,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.cfg = load_config()
         self.results: List[dict] = []
-        self.setWindowTitle("VaultMCP")
+        self.setWindowTitle("Quartermaster")
         self.resize(1280, 800)
         self.setMinimumSize(900, 560)
 
@@ -811,7 +811,7 @@ class MainWindow(QMainWindow):
         menu.addAction(act_show); menu.addSeparator(); menu.addAction(act_quit)
 
         tray = QSystemTrayIcon(QIcon(pm), self)
-        tray.setToolTip("VaultMCP")
+        tray.setToolTip("Quartermaster")
         tray.setContextMenu(menu)
         tray.activated.connect(
             lambda r: self.toggle_visible() if r == QSystemTrayIcon.ActivationReason.Trigger else None)
@@ -833,7 +833,7 @@ class MainWindow(QMainWindow):
                 and QApplication.instance().property("quitting") is not True:
             ev.ignore()
             self.hide()
-            self._tray.showMessage("VaultMCP", "Still running in the tray — Win+Alt+V to reopen.",
+            self._tray.showMessage("Quartermaster", "Still running in the tray — Win+Alt+V to reopen.",
                                    QSystemTrayIcon.MessageIcon.Information, 2500)
             return
         ev.accept()
@@ -855,7 +855,7 @@ def _install_crash_logger():
 
     def sys_hook(t, v, tb):
         _write("uncaught exception", v)
-        sys.__stderr__.write(f"VaultMCP crashed — see {log_path}\n")
+        sys.__stderr__.write(f"Quartermaster crashed — see {log_path}\n")
 
     def thread_hook(args):
         _write(f"exception in thread {args.thread.name}", args.exc)
@@ -871,7 +871,7 @@ def main():
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("VaultMCP.AssetVault.Desktop.1.0")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Quartermaster.AssetVault.Desktop.1.0")
         except Exception:
             pass
 

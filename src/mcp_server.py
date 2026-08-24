@@ -26,7 +26,7 @@ from . import semantic, unpacker
 from . import project_audit
 from . import stack_rules
 
-mcp = FastMCP("vaultmcp")
+mcp = FastMCP("quartermaster")
 
 
 def _slim(item: dict) -> dict:

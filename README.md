@@ -1,241 +1,121 @@
-# ⚡ VaultMCP
+# Quartermaster
 
-<div align="center">
+**You own more game assets than you can remember. Your AI assistant knows about none of them.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![MCP Ready](https://img.shields.io/badge/MCP-Protocol%20Ready-success.svg)](https://modelcontextprotocol.io)
-[![Platform: Windows 11 / Native](https://img.shields.io/badge/Platform-Windows%20%7C%20Cross--Platform-lightgrey.svg)]()
-[![FastEmbed CPU](https://img.shields.io/badge/FastEmbed-Offline%20Vectors%20(CPU)-purple.svg)](https://github.com/qdrant/fastembed)
+Quartermaster indexes everything you've bought on the Unity Asset Store and Fab, and serves it to your coding agent over MCP. So when you ask for a foggy industrial level, you get the packs already sitting on your drive — not a shopping list, and not a suggestion to write a shader from scratch.
 
-**Your game-asset vault, queryable and executable by AI agents.**
+```
+you    →  "foggy forest clearing at dusk, Unity HDRP"
 
-*Ground your AI pair programmer in every Unity and Unreal/Fab asset you already own — with zero hallucinations, hybrid semantic search, stack conflict linting, and 1-click project unpacking.*
+agent  →  audit_project(<project>)        reads the engine version and pipeline
+          search_owned_assets(...)        ranks your library, flags what's already on disk
+          validate_stack([...])           catches two terrain systems in one stack
+          import_asset_to_project(...)    unpacks into Assets/, demo content stripped
+```
 
-[Features](#-key-features) • [Why VaultMCP](#-the-problem-vs-the-solution) • [Quick Start](#-quick-start) • [MCP Tools API](#-mcp-agent-tools-reference) • [In-Engine Unity Bridge](#-in-engine-unity-bridge) • [Architecture](#-architecture)
-
-</div>
-
----
-
-## 💡 The Problem vs. The Solution
-
-If you have been building games or collecting assets for years, you likely own hundreds of packages you cannot remember. When you ask an AI coding assistant to build a feature, it either **hallucinates assets you don't own** or suggests writing custom shaders and systems from scratch when you already own battle-tested production assets.
-
-| Without VaultMCP ❌ | With VaultMCP ⚡ |
-| :--- | :--- |
-| **Agent Hallucinations:** AI recommends buying packages you don't own or writing custom boilerplate. | **Grounded Library:** AI inspects your vault and selects the exact packages you own. |
-| **Manual Store Scrolling:** Searching Unity Asset Store & Fab purchase tabs to find what you bought. | **Hybrid Semantic Search:** Ask *"spooky abandoned factory with rubble"* to instantly find relevant packs. |
-| **Pipeline Mismatches:** Importing a URP-only shader into an HDRP project causing pink shader errors. | **Automated Linter:** VaultMCP sniffs the project and warns before incompatible imports. |
-| **Asset Store Download Friction:** Waiting for Package Manager or manually searching `.unitypackage` files. | **1-Click Direct Unpack:** AI or user unpacks local cache directly into `Assets/`, stripping demo bloat (~70% savings). |
+Every result is something you already own. Nothing is invented.
 
 ---
 
-## 🚀 Key Features
+## Why doesn't this already exist?
 
-### 1. 🧠 Offline Hybrid Semantic Search (CPU FastEmbed + SQLite FTS5)
-* Combines **SQLite FTS5 BM25 keyword ranking** with **CPU-only vector embeddings** (`BAAI/bge-small-en-v1.5` via ONNX).
-* Uses **Reciprocal Rank Fusion (RRF)**: exact product-name queries hit instantly, while conceptual natural language queries (`"spooky abandoned industrial site"`) surface the right warehouse pack even when it shares no keyword with the title — with zero external cloud API calls.
-* Vectors are brute-force cosine-scored in memory — no ANN index to tune and no recall cliff. Scoring the full vault takes single-digit milliseconds at typical library sizes, and the flat scan stays comfortable into the tens of thousands.
+Because neither store will tell you what you own.
 
-### 2. ⚡ Local Disk Cache Scanner (Cloud vs. On-Disk)
-* Scans `%APPDATA%\Unity\Asset Store-5.x\` and Epic Games VaultCache directories.
-* Matches files by normalized title and tags packages as **`⚡ Downloaded (Local)`** vs. **`☁ Cloud Library`**.
-* Agents prioritize local assets for immediate zero-download imports.
+Unity killed `/account/purchases` (404 as of August 2026). Fab has no ownership API at all. There is no export button, no OAuth scope, no CSV endpoint. The only machine-readable record of your own purchases lives inside the store's private GraphQL, behind SSO, MFA, and bot detection that rejects every headless browser it sees.
 
-### 3. 📦 Direct Project Unpacker with Demo Stripper
-* Extracts cached `.unitypackage` archives directly into your active Unity project's `Assets/` folder.
-* **Automatic Bloat Stripper:** Filters out heavy `/Demo/`, `/SampleScenes/`, `/Documentation/`, and `.pdf` files, saving **60% to 80% disk space** and compile time per package.
-* **Strict `Assets/` Sandbox:** Every path declared inside a package is normalized before use — `..` segments are collapsed, drive letters and control characters are stripped, and the resolved target is asserted to sit under `<project>/Assets/`. Anything that would land outside is relocated into `Assets/_VaultMCP_Imported/` rather than written, so a malformed or hostile `.unitypackage` cannot reach `ProjectSettings/`, `Packages/`, or anywhere else on disk.
+Quartermaster gets it by opening your real browser, letting *you* sign in with zero automation touching the login flow, then attaching a debugger afterward to intercept the store's own `myAssets` ownership list — and replaying its own paginated queries, with its own CSRF headers, to fill in the details.
 
-### 4. 🛡️ Project Pipeline Auditor & Stack Linter
-* **Project Sniffer:** Reads `ProjectSettings/ProjectVersion.txt` and `Packages/manifest.json` for Unity, and `.uproject` / `DefaultEngine.ini` for Unreal to identify the engine version and active render pipeline (`HDRP`, `URP`, `Built-in`).
-* **Stack Intelligence:** Uses rules in `data/recipes.json` to detect role conflicts (e.g. two competing weather systems or vegetation renderers) and missing prerequisite packages.
-* **Cross-Engine Warning:** Warns when unpacking Unreal/Fab ORM assets into Unity regarding roughness smoothness inversion.
-
-### 5. 🖥️ Native Desktop App & Modern Web UI
-* **Native Desktop (PySide6 / Qt):** Windows 11 taskbar integration (`AppUserModelID`), system tray minimization, custom icon, and **`Win + Alt + V` global Spotlight hotkey**.
-* **Modern Web Interface:** Dark glassmorphism dashboard running locally on `http://localhost:7890`.
-* **Authenticated Local API:** Read endpoints are open to the loopback UI; every state-changing endpoint (login, fetch, enrich, disk scan, import) requires a per-installation token and a same-origin request. See [Security](#-privacy-security--local-first-philosophy).
-
-### 6. 🎮 In-Engine Unity Editor Bridge
-* Drop `editor_bridge/VaultMCP-Bridge.unitypackage` into any Unity project to search, filter, and 1-click import assets from inside the Unity Editor (`Window > VaultMCP`).
+That plumbing is most of this project. It is also why you can't just write this in an afternoon.
 
 ---
 
-## 📦 Quick Start
+## What you get
 
-### Prerequisites
-* **Python 3.10+** (Tested on Python 3.11, 3.12, 3.14 on Windows 11).
+**Search that understands intent.** SQLite FTS5 keyword ranking fused with local ONNX embeddings via Reciprocal Rank Fusion. An exact product name hits exactly; a phrase like *"spooky abandoned industrial site"* surfaces the right warehouse pack even when it shares no keyword with the title. No cloud API, no vectors leaving the machine.
 
-### Installation
+**Ground truth about your disk.** Scans `%APPDATA%/Unity/Asset Store-5.x/` and Epic's VaultCache, so every result is tagged *already downloaded* or *cloud only*. Agents prefer what's local — a zero-download import beats a 4 GB one.
+
+**A linter for stacks, not just files.** Two weather systems will fight. Two vegetation renderers will fight. A modular shader's add-on installed without its core package silently does nothing. A URP shader in an HDRP project renders pink. Quartermaster knows these before you spend an afternoon on them.
+
+**Direct unpacking.** Extracts a cached `.unitypackage` straight into `Assets/`, skipping Package Manager entirely, and drops `/Demo/`, `/SampleScenes/`, `/Documentation/` and PDFs on the way in — typically 60–80% less disk and compile time per package.
+
+---
+
+## Install
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/Tanshaydar/VaultMCP.git
-cd VaultMCP
-
-# 2. Install dependencies
+git clone https://github.com/Tanshaydar/Quartermaster.git
+cd Quartermaster
 pip install -r requirements.txt
+```
 
-# 3. Seed your library
-# Drop your Unity/Fab CSV dumps into data/seed/, then run:
+Seed your library one of two ways:
+
+```bash
+# A. Live harvest — opens your browser, you sign in, it reads your account
+python -m src.store_client login unity
+python -m src.store_client fetch unity
+
+# B. From CSV — if you already exported from the store
 python -m src.ingest
-
-# 4. (Optional) Build semantic embeddings
-python -m src.semantic build
 ```
 
----
-
-## 🤖 Connect AI Agents in 1 Second
-
-VaultMCP includes an automated registration CLI that safely merges the MCP configuration into your AI tools without overwriting your existing MCP servers:
+Then connect your agent:
 
 ```bash
-# Register with ALL installed agents (Claude Desktop, Cursor, Windsurf, Antigravity)
-python -m src.register --all
-
-# Or preview changes without writing
-python -m src.register --all --dry-run
+python -m src.register --all          # Claude Desktop, Cursor, Windsurf, Antigravity
+python -m src.register --all --dry-run   # preview first
 ```
 
-### Manual Configuration Snippet
-
-If configuring manually, add this to your client's MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "vaultmcp": {
-      "command": "python",
-      "args": ["-m", "src.mcp_server"],
-      "cwd": "<path-to-VaultMCP>"
-    }
-  }
-}
-```
+`register` merges into existing MCP config and backs it up first; it will not clobber your other servers.
 
 ---
 
-## 🛠️ MCP Agent Tools Reference
+## Agent tools
 
-When connected over `stdio`, AI agents gain access to 9 tools:
-
-| MCP Tool | Description | Key Parameters |
-| :--- | :--- | :--- |
-| `search_owned_assets` | Hybrid keyword + semantic vector search across your library. | `query`, `engine`, `pipeline`, `category`, `local_only`, `limit` |
-| `get_asset_details` | Retrieves full technical metadata, usage notes, gallery links, and store URLs. | `asset_id` |
-| `list_asset_categories` | Lists all library categories and asset distribution counts. | *None* |
-| `get_stack_recommendations` | Given a game feature prompt (e.g. *"dark fantasy dungeon with volumetric fog"*), maps owned packs to solve each aspect. | `problem_description`, `limit_per_category` |
-| `audit_project` | Detects the engine, version, and active render pipeline of a game project. | `project_dir` |
-| `import_asset_to_project` | Extracts a locally-downloaded `.unitypackage` into a Unity project with demo stripping & safety checks. | `asset_id`, `project_dir`, `strip_demos` |
-| `validate_stack` | Lints a planned stack of asset IDs for role conflicts (dual skyboxes, dual renderers) and missing dependencies. | `asset_ids` |
-| `list_stack_recipes` | Returns curated production stacks from `data/recipes.json` resolved against assets **you own**. | *None* |
-| `get_vault_stats` | Returns total vault statistics, breakdown by store, and local vs. cloud counts. | *None* |
-
-### Example Agent Prompt & Flow
-
-> **User to Agent:** *"I want an atmospheric foggy forest clearing at dusk in Unity HDRP, with volumetric light and ground vegetation."*
->
-> 1. Agent calls `audit_project(...)` → detects the engine version and active render pipeline.
-> 2. Agent calls `get_stack_recommendations(...)` → returns owned packs covering terrain, texturing, vegetation, and atmospherics.
-> 3. Agent calls `validate_stack(...)` → flags role conflicts, e.g. two competing terrain systems.
-> 4. Agent calls `import_asset_to_project(asset_id, project_dir)` → unpacks directly into `Assets/`, stripping unneeded sample scenes.
+| Tool | What it answers |
+| :--- | :--- |
+| `search_owned_assets` | "What do I own that fits this?" — hybrid keyword + semantic |
+| `get_asset_details` | Full metadata, usage notes, gallery, store URL |
+| `get_stack_recommendations` | "Build me a stack for X" — maps a feature brief onto owned packs |
+| `validate_stack` | "Will these fight each other?" — role conflicts, missing prerequisites |
+| `list_stack_recipes` | Curated production stacks resolved against what you actually own |
+| `audit_project` | Engine, version, render pipeline of a target project |
+| `import_asset_to_project` | Unpack a local package into `Assets/`, demos stripped |
+| `list_asset_categories` / `get_vault_stats` | Library shape and counts |
 
 ---
 
-## 🎮 In-Engine Unity Bridge
+## Other ways in
 
-To use VaultMCP directly inside the Unity Editor without Alt-Tabbing:
-
-1. Open your Unity project.
-2. Import `editor_bridge/VaultMCP-Bridge.unitypackage` (or generate a fresh bridge via `python -m src.build_bridge`).
-3. In Unity, open **`Window > VaultMCP`**.
-4. Search your library, inspect packages, and click **"Import into this project"** or **"Add to Scene"**.
+- **Desktop app** (`run_desktop.bat`) — PySide6, system tray, `Win+Alt+V` spotlight hotkey.
+- **Web UI** (`run_ui.bat`) — `http://localhost:7890`, press `/` to search.
+- **Unity Editor** — import `editor_bridge/Quartermaster-Bridge.unitypackage`, then `Window > Quartermaster`. Search and import without leaving the editor.
 
 ---
 
-## 🖥️ Desktop & Web UI Usage
+## Security
 
-```bash
-# Launch Native Desktop App (PySide6 with Win+Alt+V global hotkey)
-run_desktop.bat
+The local API binds loopback, which any page in your browser can also reach. So:
 
-# Launch Local Web UI (http://localhost:7890)
-run_ui.bat
-```
+- **Every state-changing endpoint requires a token.** Generated on first run, stored at `data/.auth_token`, mirrored to `~/.vaultmcp/auth_token` for the Unity bridge. Send it as `X-Quartermaster-Token` or `Authorization: Bearer`. The web UI gets a `SameSite=Strict` cookie automatically.
+- **Foreign `Origin`/`Referer` is rejected with 403** even with a valid token, so a cross-site form POST cannot reach the unpacker.
+- **The unpacker cannot escape `Assets/`.** Package paths are normalized before use — `..` collapsed, drive letters stripped — and the resolved target is asserted under `<project>/Assets/`. Strays are relocated to `Assets/_Quartermaster_Imported/`, never written outside.
+- **The image proxy is domain-allowlisted.** Store CDNs only; direct-IP hosts, private ranges, and metadata endpoints refused; redirects re-validated per hop; 15 MB cap.
 
-* **Spotlight Hotkey:** Press `Win + Alt + V` anywhere on Windows to toggle the floating Vault window.
-* **Quick Search:** Press `/` in the Web UI to focus the search bar.
-* **View Modes:** Toggle between rich 16:9 media cards and compact table views.
+Nothing phones home. Your library, embeddings, disk paths, and store sessions stay on the machine. Embeddings are computed on-device.
 
 ---
 
-## 🏗️ Architecture
+## Limits
 
-```
-┌───────────────────────────────────────────────────────────┐
-│                     PRESENTATION LAYER                    │
-│  ┌────────────────────────┐    ┌───────────────────────┐  │
-│  │ Native Desktop App     │    │ Modern Web Dashboard  │  │
-│  │ (PySide6 / WinHot)     │    │ (FastAPI / Blur CSS)  │  │
-│  └───────────┬────────────┘    └───────────┬───────────┘  │
-│              │                             │              │
-│              │      ┌──────────────────────┴───────────┐  │
-│              │      │ AI Agents (MCP stdio Server)     │  │
-│              │      │ Claude / Cursor / Antigravity    │  │
-│              │      └──────────────┬───────────────────┘  │
-└──────────────┼─────────────────────┼──────────────────────┘
-               ▼                     ▼
-┌───────────────────────────────────────────────────────────┐
-│                      VAULTMCP BACKEND                     │
-│  ┌───────────────────┐  ┌──────────────────────────────┐  │
-│  │ Direct Unpacker   │  │ Offline Semantic Search      │  │
-│  │ (Safe Extract)    │  │ (FastEmbed BGE-Small ONNX)   │  │
-│  └───────────────────┘  └──────────────────────────────┘  │
-│  ┌───────────────────┐  ┌──────────────────────────────┐  │
-│  │ Local Disk Scan   │  │ Stack Conflict Engine        │  │
-│  │ (%APPDATA%/Vault) │  │ (data/recipes.json)          │  │
-│  └───────────────────┘  └──────────────────────────────┘  │
-│                              │                            │
-│                              ▼                            │
-│  ┌─────────────────────────────────────────────────────┐  │
-│  │ SQLite Database (data/assets.db)                   │  │
-│  │ - WAL Mode + 5000ms Busy Timeout (Zero Lock Cont.) │  │
-│  │ - FTS5 Virtual Table (BM25 Ranking)                 │  │
-│  │ - asset_vectors Table (384-dim Float Embeddings)    │  │
-│  └─────────────────────────────────────────────────────┘  │
-└───────────────────────────────────────────────────────────┘
-```
+- **Windows-first.** Disk scanning assumes Windows cache locations. The MCP server and search are portable; local-import detection is not.
+- **One machine, one user.** No sync, no multi-tenancy, no server mode. That is deliberate.
+- **Harvesting is scraping.** Unity and Fab can change their internals whenever they like, and have. Expect to need updates.
+- **Unpacking is Unity-only.** Fab/Unreal assets are indexed and searchable, but `.unitypackage` extraction obviously doesn't apply to them.
 
 ---
 
-## 🔒 Privacy, Security & Local-First Philosophy
+## License
 
-* **100% Local Storage:** Your database, embeddings, disk paths, and store sessions live entirely on your machine — `data/assets.db` for the library, `profiles/` for browser sessions. Both are gitignored.
-* **Zero Telemetry:** No external tracking, no cloud telemetry, and no remote servers. Embeddings are computed on-device via ONNX; no text ever leaves the machine.
-* **Sandboxed Extractions:** The unpacker resolves every package path against `<project>/Assets/` and refuses anything that escapes it. See [Direct Project Unpacker](#3--direct-project-unpacker-with-demo-stripper).
-
-### Local API Authentication
-
-The web UI and the Unity bridge talk to `127.0.0.1:7890`. Because any page in your browser can reach loopback, every state-changing endpoint is protected:
-
-* **Per-installation token** — generated on first run (`secrets.token_hex(32)`) and stored at `data/.auth_token`, mirrored to `~/.vaultmcp/auth_token` so the Unity bridge can find it without knowing where the vault lives. Both paths are gitignored.
-* **Token transport** — send `X-VaultMCP-Token: <token>`, or `Authorization: Bearer <token>`. The web UI receives a `SameSite=Strict` session cookie from `GET /` and uses that automatically.
-* **Origin pinning** — requests carrying a foreign `Origin` or `Referer` are rejected with `403` even if the token is valid, so a cross-site form POST cannot reach the unpacker.
-* **Protected endpoints** — `POST /api/login/{provider}`, `/api/fetch/{provider}`, `/api/enrich`, `/api/scan-local`, `/api/import`. Read endpoints (`/api/assets`, `/api/stats`, …) are unauthenticated but CORS-restricted to the local UI origin.
-
-Delete `data/.auth_token` and `~/.vaultmcp/auth_token` to roll the token; the next launch mints a fresh one.
-
-### Media Proxy
-
-`GET /api/image` proxies and disk-caches cover art. It accepts **only** `http(s)` URLs on an allowlist of store CDN domains (Unity, Fab/Epic, ArtStation, Sketchfab, YouTube thumbnails). Direct-IP hosts, `localhost`, private ranges, and cloud metadata endpoints are rejected, redirects are re-validated against the allowlist at every hop, non-image content types are refused, and responses are capped at 15 MB.
-
----
-
-## 📄 License
-
-Distributed under the [MIT License](LICENSE).
-
-Copyright (c) 2026 **Tanshaydar**.
+MIT. Copyright (c) 2026 Tanshaydar.

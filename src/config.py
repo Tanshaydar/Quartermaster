@@ -50,13 +50,13 @@ def save_config_partial(updates: dict):
         json.dump(cfg, f, indent=2)
 
 AUTH_TOKEN_PATH = os.path.join(ROOT_DIR, "data", ".auth_token")
-USER_TOKEN_PATH = os.path.join(os.path.expanduser("~"), ".vaultmcp", "auth_token")
-LOCALAPP_TOKEN_PATH = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VaultMCP", "token")
+USER_TOKEN_PATH = os.path.join(os.path.expanduser("~"), ".quartermaster", "auth_token")
+LOCALAPP_TOKEN_PATH = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Quartermaster", "token")
 
 
 def get_or_create_auth_token() -> str:
     """Returns or generates the per-installation API token.
-    Stored in data/.auth_token and mirrored to ~/.vaultmcp/auth_token and
+    Stored in data/.auth_token and mirrored to ~/.quartermaster/auth_token and
     %LOCALAPPDATA%/VaultMCP/token for portable client discovery."""
     cfg = load_config()
     if cfg.get("auth_token"):

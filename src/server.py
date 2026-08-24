@@ -39,7 +39,7 @@ except ImportError:
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.join(ROOT_DIR, "web")
 
-app = FastAPI(title="VaultMCP", docs_url="/api/docs")
+app = FastAPI(title="Quartermaster", docs_url="/api/docs")
 
 # ----------------------------- CORS & Security -----------------------------
 ALLOWED_ORIGINS = [
@@ -58,9 +58,10 @@ app.add_middleware(
 
 def verify_auth(
     request: Request,
+    x_qm_token: Optional[str] = Header(None, alias="X-Quartermaster-Token"),
     x_vault_token: Optional[str] = Header(None, alias="X-VaultMCP-Token"),
     authorization: Optional[str] = Header(None),
-    vault_cookie: Optional[str] = Cookie(None, alias="vault_token")
+    vault_cookie: Optional[str] = Cookie(None, alias="quartermaster_token")
 ):
     """
     Validates API authentication and enforces strict CSRF protections.
@@ -78,7 +79,7 @@ def verify_auth(
         raise HTTPException(403, "Forbidden: Invalid Referer origin (CSRF protection)")
 
     # 2. Token Check: X-VaultMCP-Token header OR Authorization: Bearer OR SameSite Cookie
-    token = x_vault_token
+    token = x_qm_token or x_vault_token
     if not token and authorization and authorization.startswith("Bearer "):
         token = authorization[7:].strip()
     if not token and vault_cookie:
@@ -96,7 +97,7 @@ def index():
     response = FileResponse(os.path.join(WEB_DIR, "index.html"))
     # Set SameSite=Strict cookie for the web UI on localhost
     response.set_cookie(
-        key="vault_token",
+        key="quartermaster_token",
         value=token,
         httponly=False,
         samesite="strict",
@@ -337,6 +338,6 @@ if __name__ == "__main__":
     import uvicorn
     cfg = load_config()
     tok = get_or_create_auth_token()
-    print(f"VaultMCP UI -> http://localhost:{cfg['server_port']}")
+    print(f"Quartermaster UI -> http://localhost:{cfg['server_port']}")
     print(f"API Auth Token active ({len(tok)} chars)")
     uvicorn.run(app, host="127.0.0.1", port=cfg["server_port"], log_level="warning")

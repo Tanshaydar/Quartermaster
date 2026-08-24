@@ -19,15 +19,15 @@ const $$ = (sel) => document.querySelectorAll(sel);
 
 // API Helper
 function getAuthToken() {
-  const match = document.cookie.match(/(?:^|; )vault_token=([^;]*)/);
-  return match ? decodeURIComponent(match[1]) : (localStorage.getItem("vault_token") || "");
+  const match = document.cookie.match(/(?:^|; )quartermaster_token=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : (localStorage.getItem("quartermaster_token") || "");
 }
 
 async function api(path, opts = {}) {
   opts.headers = opts.headers || {};
   const token = getAuthToken();
-  if (token && !opts.headers["X-VaultMCP-Token"]) {
-    opts.headers["X-VaultMCP-Token"] = token;
+  if (token && !opts.headers["X-Quartermaster-Token"]) {
+    opts.headers["X-Quartermaster-Token"] = token;
   }
   const res = await fetch(path, opts);
   if (!res.ok) {
@@ -355,7 +355,7 @@ async function openDetailModal(assetId) {
   const unpackBox = $('#unpack-box');
   if (isLocal && full.source === 'unity') {
     unpackBox.classList.remove('hidden');
-    const savedPath = localStorage.getItem('vaultmcp_last_project') || '';
+    const savedPath = localStorage.getItem('quartermaster_last_project') || '';
     $('#project-path-input').value = savedPath;
     $('#unpack-feedback').textContent = '';
   } else {
@@ -382,7 +382,7 @@ async function executeUnpack() {
     return;
   }
 
-  localStorage.setItem('vaultmcp_last_project', projectDir);
+  localStorage.setItem('quartermaster_last_project', projectDir);
   feedback.textContent = '⏳ Extracting .unitypackage directly to Assets/...';
   feedback.style.color = 'var(--text-secondary)';
 

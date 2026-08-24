@@ -1,8 +1,8 @@
 """
-Builds editor_bridge/VaultMCP-Bridge.unitypackage from the C# editor window.
+Builds editor_bridge/Quartermaster-Bridge.unitypackage from the C# editor window.
 
 A .unitypackage is a gzipped tar where each file lives in its own GUID folder:
-    <guid>/pathname   -> original project path (e.g. Assets/Editor/VaultMCP/VaultMCPWindow.cs)
+    <guid>/pathname   -> original project path (e.g. Assets/Editor/VaultMCP/QuartermasterWindow.cs)
     <guid>/asset      -> file bytes
     <guid>/asset.meta -> Unity .meta sidecar (we generate a minimal valid one)
 
@@ -15,7 +15,7 @@ import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(ROOT, "editor_bridge")
-OUT = os.path.join(SRC_DIR, "VaultMCP-Bridge.unitypackage")
+OUT = os.path.join(SRC_DIR, "Quartermaster-Bridge.unitypackage")
 
 META_TEMPLATE = """fileFormatVersion: 2
 guid: {guid}
