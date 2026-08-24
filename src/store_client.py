@@ -657,7 +657,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
         if isinstance(item.get("keyImage"), dict):
             image = item["keyImage"].get("url") or image
         asset = {
-            "id": f"{provider}_{item.get('id') or item.get('listingId') or abs(hash(title))}",
+            "id": f"{provider}_{item.get('id') or item.get('listingId') or hashlib.sha1(title.lower().strip().encode('utf-8')).hexdigest()[:16]}",
             "source": provider,
             "package_id": str(item.get("id") or item.get("listingId") or ""),
             "title": title,

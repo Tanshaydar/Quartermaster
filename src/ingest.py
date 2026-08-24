@@ -199,6 +199,13 @@ def detect_source(headers: List[str]) -> str:
     return "unknown"
 
 
+def _stable_id(prefix: str, identifier: str, fallback_title: str) -> str:
+    if identifier and str(identifier).strip():
+        return f"{prefix}_{str(identifier).strip()}"
+    import hashlib
+    h = hashlib.sha1(fallback_title.lower().strip().encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}_{h}"
+
 def _row_from_unity(row: Dict[str, str]) -> Optional[Dict[str, Any]]:
     title = (row.get("Asset Name") or "").strip()
     if not title:
@@ -206,7 +213,7 @@ def _row_from_unity(row: Dict[str, str]) -> Optional[Dict[str, Any]]:
     pkg_id = (row.get("Package ID") or "").strip()
     cls = classify_asset(title, row.get("Publisher", ""), _parse_size_mb(row.get("Size", "")))
     return {
-        "id": f"unity_{pkg_id}" if pkg_id else f"unity_{abs(hash(title))}",
+        "id": _stable_id("unity", pkg_id, title),
         "source": "unity",
         "package_id": pkg_id,
         "product_id": (row.get("Product ID") or "").strip(),
@@ -234,7 +241,7 @@ def _row_from_fab(row: Dict[str, str]) -> Optional[Dict[str, Any]]:
     cls = classify_asset(title, row.get("Seller/Publisher", ""))
     cls["render_pipelines"] = []  # pipeline concept doesn't apply to Fab listings
     return {
-        "id": f"fab_{listing_id}" if listing_id else f"fab_{abs(hash(title))}",
+        "id": _stable_id("fab", listing_id, title),
         "source": "fab",
         "package_id": listing_id,
         "product_id": "",

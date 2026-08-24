@@ -127,7 +127,9 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
     adopted = 0
     for key, p, title, source, publisher in to_adopt:
         cls = classify_asset(title, publisher)
-        new_id = f"{source}_disk_{abs(hash(key)) % 10**10}"
+        import hashlib
+        key_hash = hashlib.sha1(key.lower().strip().encode("utf-8")).hexdigest()[:16]
+        new_id = f"{source}_disk_{key_hash}"
         upsert_asset({
             "id": new_id, "source": source, "package_id": "", "title": title,
             "publisher": publisher, "local_path": p,
