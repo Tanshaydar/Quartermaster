@@ -682,26 +682,79 @@ def count_unenriched(db_path: str = DB_PATH) -> int:
     return n
 
 
+def _enrich_one(client, asset):
+    """Enrich a single asset. Returns True when marked done."""
+    url = asset.get("store_url") or ""
+    if not url.startswith("http"):
+        mark_enriched(asset["id"])   # nothing to fetch; don't retry forever
+        return True
+    try:
+        r = client.get(url)
+        html = r.text
+    except Exception as e:
+        _log(f"warn: {asset['title']}: {e}")
+        return False
+
+    image_url = ""
+    m = _OG_IMAGE_RE.search(html)
+    if m:
+        image_url = m.group(1).replace("&amp;", "&")
+
+    gallery = []
+    for g in re.findall(r'https://assetstorev1-prd-cdn\.unity3d\.com/package-screenshot/[^"\' )]+', html)[:8]:
+        if g not in gallery:
+            gallery.append(g)
+
+    videos = []
+    for vid in _YT_RE.findall(html):
+        link = f"https://www.youtube.com/watch?v={vid}"
+        if link not in videos:
+            videos.append(link)
+        if len(videos) >= 3:
+            break
+    for v in _VIDEO_HINTS.findall(html)[:3]:
+        if v not in videos:
+            videos.append(v)
+    videos = videos[:5]
+
+    desc = ""
+    md = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']{30,400})["\']', html, re.I)
+    if md:
+        desc = md.group(1)
+
+    mark_enriched(
+        asset["id"],
+        image_url=image_url,
+        gallery_images=gallery,
+        video_links=videos,
+        summary=(desc or "")[:400],
+    )
+    return True
+
+
 def enrich_assets(limit: Optional[int] = None, progress=None,
                   cancel_event=None) -> int:
     """
     Fetch store pages for un-enriched assets in BATCHES with pauses between
     them (polite to remote servers), extracting cover art, gallery images,
-    video LINKS, and description.
+    video LINKS, and description. Assets inside a batch download in parallel
+    (config: enrich_concurrency).
       limit=None -> sweep the ENTIRE backlog
-      progress   -> optional callable(str) for live status updates
+      progress   -> optional callable(done, total, text) for live UI updates
       cancel_event -> optional threading.Event; set to stop gracefully
     Returns number enriched.
     """
     import time as _time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     cfg = load_config()
     batch_size = int(cfg["enrich_batch_size"])
     pause = int(cfg.get("enrich_batch_pause", 3))
+    workers = max(1, int(cfg.get("enrich_concurrency", 4)))
     total_backlog = count_unenriched()
     if total_backlog == 0:
         _log("enrichment: nothing to do.")
         if progress:
-            progress("Enrichment: nothing to do — vault is fully enriched.")
+            progress(0, 0, "Enrichment: nothing to do — vault is fully enriched.")
         return 0
 
     done = 0
@@ -714,68 +767,28 @@ def enrich_assets(limit: Optional[int] = None, progress=None,
     with httpx.Client(follow_redirects=True, timeout=20,
                       headers={"User-Agent": "Mozilla/5.0 (VaultMCP enrichment)"}) as client:
         while done < target and not is_cancelled():
-            assets = get_unenriched(batch_size)
+            assets = get_unenriched(batch_size)[:target - done]
             if not assets:
                 break
-            for asset in assets:
-                if done >= target or is_cancelled():
-                    break
-                url = asset.get("store_url") or ""
-                if not url.startswith("http"):
-                    mark_enriched(asset["id"])   # nothing to fetch; don't retry forever
-                    done += 1
-                    continue
-                try:
-                    r = client.get(url)
-                    html = r.text
-                except Exception as e:
-                    _log(f"warn: {asset['title']}: {e}")
-                    continue
 
-                image_url = ""
-                m = _OG_IMAGE_RE.search(html)
-                if m:
-                    image_url = m.group(1).replace("&amp;", "&")
-
-                gallery = []
-                for g in re.findall(r'https://assetstorev1-prd-cdn\.unity3d\.com/package-screenshot/[^"\' )]+', html)[:8]:
-                    if g not in gallery:
-                        gallery.append(g)
-
-                videos = []
-                for vid in _YT_RE.findall(html):
-                    link = f"https://www.youtube.com/watch?v={vid}"
-                    if link not in videos:
-                        videos.append(link)
-                    if len(videos) >= 3:
+            with ThreadPoolExecutor(max_workers=min(workers, len(assets))) as ex:
+                futures = [ex.submit(_enrich_one, client, a) for a in assets]
+                for fut in as_completed(futures):
+                    try:
+                        if fut.result():
+                            done += 1
+                    except Exception:
+                        pass
+                    if progress:
+                        progress(done, target,
+                                 f"Enriching… {done}/{target} this run")
+                    if is_cancelled():
                         break
-                for v in _VIDEO_HINTS.findall(html)[:3]:
-                    if v not in videos:
-                        videos.append(v)
-                videos = videos[:5]
-
-                desc = ""
-                md = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']{30,400})["\']', html, re.I)
-                if md:
-                    desc = md.group(1)
-
-                mark_enriched(
-                    asset["id"],
-                    image_url=image_url,
-                    gallery_images=gallery,
-                    video_links=videos,
-                    summary=(desc or "")[:400],
-                )
-                done += 1
-                if progress and done % 5 == 0:
-                    remaining = count_unenriched()
-                    progress(f"Batch {done // max(batch_size,1)} — "
-                             f"{done}/{target} this run · {remaining} left in backlog")
 
             # pause between batches so remote servers see a human-ish cadence
-            if done < target and count_unenriched() > 0 and pause > 0:
+            if done < target and count_unenriched() > 0 and pause > 0 and not is_cancelled():
                 if progress:
-                    progress(f"Pausing {pause}s between batches (politeness mode)…")
+                    progress(done, target, f"Pausing {pause}s between batches (politeness mode)…")
                 steps = int(pause * 10)
                 for _ in range(steps):
                     if is_cancelled():
@@ -785,7 +798,7 @@ def enrich_assets(limit: Optional[int] = None, progress=None,
     status = "cancelled" if is_cancelled() else "finished"
     _log(f"enrichment {status}: {done} assets processed.")
     if progress:
-        progress(f"Enrichment {status}: {done} processed · "
+        progress(done, target, f"Enrichment {status}: {done} processed · "
                  f"{count_unenriched()} left in backlog (run again anytime).")
     return done
 

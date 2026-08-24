@@ -15,13 +15,14 @@ import json
 import os
 import sys
 import threading
+import time
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPushButton,
+    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
@@ -611,13 +612,21 @@ class MainWindow(QMainWindow):
             f"background: rgba(13,17,23,215); border: none;")
         lay = QVBoxLayout(self.overlay)
         lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.setSpacing(14)
-        self.overlay_icon = QLabel("⏳")
+        lay.setSpacing(12)
+        self.overlay_icon = QLabel("⠋")
         self.overlay_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.overlay_icon.setStyleSheet("font-size: 40px; background: transparent;")
+        self.overlay_icon.setStyleSheet("font-size: 34px; color: #4f8cff; background: transparent; font-family: 'Consolas';")
         self.overlay_title = QLabel("")
         self.overlay_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.overlay_title.setStyleSheet(f"font-size:18px; font-weight:600; color:{TEXT}; background:transparent;")
+        self.overlay_bar = QProgressBar()
+        self.overlay_bar.setFixedWidth(360)
+        self.overlay_bar.setRange(0, 0)   # busy pulse until totals known
+        self.overlay_bar.setStyleSheet(f"""
+            QProgressBar {{ background: #22272e; border: 1px solid {BORDER}; border-radius: 6px;
+                           color: {TEXT}; text-align: center; height: 16px; }}
+            QProgressBar::chunk {{ background: {ACCENT}; border-radius: 5px; }}
+        """)
         self.overlay_status = QLabel("")
         self.overlay_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.overlay_status.setWordWrap(True)
@@ -625,25 +634,54 @@ class MainWindow(QMainWindow):
         self.overlay_cancel = QPushButton("Cancel")
         self.overlay_cancel.setFixedWidth(120)
         self.overlay_cancel.clicked.connect(self._cancel_op)
-        for w in (self.overlay_icon, self.overlay_title, self.overlay_status):
+        for w in (self.overlay_icon, self.overlay_title, self.overlay_bar,
+                  self.overlay_status):
             lay.addWidget(w)
         h = QHBoxLayout()
         h.addStretch(); h.addWidget(self.overlay_cancel); h.addStretch()
         lay.addLayout(h)
         self.overlay.hide()
 
+        # braille spinner animation
+        self._spin_frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        self._spin_i = 0
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.setInterval(120)
+        self._spinner_timer.timeout.connect(self._spin_tick)
+
+    def _spin_tick(self):
+        self._spin_i = (self._spin_i + 1) % len(self._spin_frames)
+        self.overlay_icon.setText(self._spin_frames[self._spin_i])
+
     def _show_overlay(self, title: str, cancellable: bool = True):
         self.overlay_title.setText(title)
         self.overlay_status.setText("")
+        self.overlay_bar.setRange(0, 0)   # busy until a total is known
         self.overlay_cancel.setVisible(cancellable)
         self.overlay.setGeometry(self.centralWidget().rect())
         self.overlay.raise_()
         self.overlay.show()
+        self._op_t0 = time.time()
+        self._spinner_timer.start()
 
-    def _overlay_progress(self, text: str):
+    def _overlay_progress(self, done=None, total=None, text=None):
         if not self.overlay.isHidden():
-            self.overlay_status.setText(text)
-        self.sync_status.setText(text)
+            if done is not None and total:
+                self.overlay_bar.setRange(0, total)
+                self.overlay_bar.setValue(min(done, total))
+                # ETA from observed rate
+                elapsed = max(time.time() - getattr(self, "_op_t0", time.time()), 0.1)
+                if done > 0 and done <= total:
+                    eta = elapsed / done * (total - done)
+                    if text:
+                        text = f"{text}  ·  ~{int(eta // 60)}m {int(eta % 60):02d}s left"
+            if text:
+                self.overlay_status.setText(text)
+        self.sync_status.setText(text or "")
+
+    def _hide_overlay(self):
+        self.overlay.hide()
+        self._spinner_timer.stop()
 
     def _hide_overlay(self):
         self.overlay.hide()
@@ -681,7 +719,8 @@ class MainWindow(QMainWindow):
         self.op = LongOp(lambda: fn_builder(self._cancel_event), label,
                          success_text=success_text)
         if with_progress:
-            self.op.progress.connect(lambda s: self._overlay_progress(s))
+            self.op.progress.connect(
+                lambda d, t, s: self._overlay_progress(done=d, total=t, text=s))
 
         def finished(msg, ok):
             self._op_running = False
