@@ -98,7 +98,7 @@ python -m src.register --all --dry-run   # preview first
 
 The local API binds loopback, which any page in your browser can also reach. So:
 
-- **Every state-changing endpoint requires a token.** Generated on first run, stored at `data/.auth_token`, mirrored to `~/.vaultmcp/auth_token` for the Unity bridge. Send it as `X-Quartermaster-Token` or `Authorization: Bearer`. The web UI gets a `SameSite=Strict` cookie automatically.
+- **Every state-changing endpoint requires a token.** Generated on first run, stored at `data/.auth_token`, mirrored to `~/.quartermaster/auth_token` and `%LOCALAPPDATA%/Quartermaster/token` for the Unity bridge. Send it as `X-Quartermaster-Token` or `Authorization: Bearer`. The web UI gets a `SameSite=Strict` cookie automatically.
 - **Foreign `Origin`/`Referer` is rejected with 403** even with a valid token, so a cross-site form POST cannot reach the unpacker.
 - **The unpacker cannot escape `Assets/`.** Package paths are normalized before use — `..` collapsed, drive letters stripped — and the resolved target is asserted under `<project>/Assets/`. Strays are relocated to `Assets/_Quartermaster_Imported/`, never written outside.
 - **The image proxy is domain-allowlisted.** Store CDNs only; direct-IP hosts, private ranges, and metadata endpoints refused; redirects re-validated per hop; 15 MB cap.
