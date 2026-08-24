@@ -329,9 +329,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             if "graphql/batch" in req.url and req.post_data:
                 if len(captured_bodies) < 5:
                     captured_bodies.append(req.post_data)
-                    _log(f"  captured graphql request ({len(req.post_data)} bytes)")
-                    _log(f"  body[:1200]: {req.post_data[:1200]}")
-                    _log(f"  body[-800:]: {req.post_data[-800:]}")   # variables live at the tail
+                    _log(f"  captured graphql request template ({len(req.post_data)} bytes)")
                     # keep auth/CSRF headers so replays pass server checks
                     for hk, hv in (req.headers or {}).items():
                         lk = hk.lower()

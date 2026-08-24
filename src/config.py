@@ -49,79 +49,38 @@ def save_config_partial(updates: dict):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
 
-
-def get_or_create_token() -> str:
-    """Per-installation API token for state-changing endpoints.
-
-    Stored in data/.auth_token (gitignored) and mirrored to
-    %LOCALAPPDATA%/VaultMCP/token so the Unity editor bridge can read it
-    without knowing where the vault lives.
-    """
-    import secrets
-    token_path = os.path.join(ROOT_DIR, "data", ".auth_token")
-    if os.path.exists(token_path):
-        try:
-            with open(token_path, "r", encoding="utf-8") as f:
-                t = f.read().strip()
-            if t:
-                return t
-        except Exception:
-            pass
-    token = secrets.token_urlsafe(32)
-    os.makedirs(os.path.dirname(token_path), exist_ok=True)
-    with open(token_path, "w", encoding="utf-8") as f:
-        f.write(token)
-    try:
-        mirror_dir = os.path.join(
-            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VaultMCP")
-        os.makedirs(mirror_dir, exist_ok=True)
-        with open(os.path.join(mirror_dir, "token"), "w", encoding="utf-8") as f:
-            f.write(token)
-    except Exception:
-        pass
-    return token
-
 AUTH_TOKEN_PATH = os.path.join(ROOT_DIR, "data", ".auth_token")
 USER_TOKEN_PATH = os.path.join(os.path.expanduser("~"), ".vaultmcp", "auth_token")
+LOCALAPP_TOKEN_PATH = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VaultMCP", "token")
+
 
 def get_or_create_auth_token() -> str:
+    """Returns or generates the per-installation API token.
+    Stored in data/.auth_token and mirrored to ~/.vaultmcp/auth_token and
+    %LOCALAPPDATA%/VaultMCP/token for portable client discovery."""
     cfg = load_config()
     if cfg.get("auth_token"):
         return str(cfg["auth_token"]).strip()
-    
-    # Check data/.auth_token
-    if os.path.exists(AUTH_TOKEN_PATH):
-        try:
-            with open(AUTH_TOKEN_PATH, "r", encoding="utf-8") as f:
-                tok = f.read().strip()
-                if tok:
-                    return tok
-        except Exception:
-            pass
-            
-    # Check ~/.vaultmcp/auth_token
-    if os.path.exists(USER_TOKEN_PATH):
-        try:
-            with open(USER_TOKEN_PATH, "r", encoding="utf-8") as f:
-                tok = f.read().strip()
-                if tok:
-                    return tok
-        except Exception:
-            pass
-            
+
+    # Check existing token paths
+    for p in (AUTH_TOKEN_PATH, USER_TOKEN_PATH, LOCALAPP_TOKEN_PATH):
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    tok = f.read().strip()
+                    if tok:
+                        return tok
+            except Exception:
+                pass
+
     # Generate new cryptographically secure 32-byte hex token
     import secrets
     tok = secrets.token_hex(32)
-    try:
-        os.makedirs(os.path.dirname(AUTH_TOKEN_PATH), exist_ok=True)
-        with open(AUTH_TOKEN_PATH, "w", encoding="utf-8") as f:
-            f.write(tok)
-    except Exception:
-        pass
-    try:
-        os.makedirs(os.path.dirname(USER_TOKEN_PATH), exist_ok=True)
-        with open(USER_TOKEN_PATH, "w", encoding="utf-8") as f:
-            f.write(tok)
-    except Exception:
-        pass
+    for p in (AUTH_TOKEN_PATH, USER_TOKEN_PATH, LOCALAPP_TOKEN_PATH):
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(tok)
+        except Exception:
+            pass
     return tok

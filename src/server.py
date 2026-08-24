@@ -214,43 +214,42 @@ def api_image(url: str):
 
     import httpx
     try:
-        # Step-by-step redirect validation to prevent Open Redirect SSRF attacks
+        # Step-by-step redirect validation with proper connection cleanup
         current_url = url
-        client = httpx.Client(timeout=15.0, headers={"User-Agent": "Mozilla/5.0", "Referer": url})
-        
-        for _ in range(5):  # max 5 redirects
-            if not is_safe_image_url(current_url):
-                raise HTTPException(400, "Forbidden: Redirect target failed security allowlist check.")
+        with httpx.Client(timeout=15.0, headers={"User-Agent": "Mozilla/5.0", "Referer": url}) as client:
+            for _ in range(5):  # max 5 redirects
+                if not is_safe_image_url(current_url):
+                    raise HTTPException(400, "Forbidden: Redirect target failed security allowlist check.")
 
-            req = client.build_request("GET", current_url)
-            r = client.send(req, stream=True)
+                req = client.build_request("GET", current_url)
+                r = client.send(req, stream=True)
 
-            if r.is_redirect:
-                loc = r.headers.get("location")
-                if not loc:
-                    break
-                import urllib.parse
-                current_url = urllib.parse.urljoin(current_url, loc)
-                r.close()
-                continue
-            
-            r.raise_for_status()
-            ctype = r.headers.get("content-type", "").lower()
-            if not any(t in ctype for t in ("image/", "application/octet-stream", "binary/octet-stream")):
-                r.close()
-                raise HTTPException(400, f"Invalid content-type: {ctype}. Only image resources are proxied.")
+                if r.is_redirect:
+                    loc = r.headers.get("location")
+                    if not loc:
+                        break
+                    import urllib.parse
+                    current_url = urllib.parse.urljoin(current_url, loc)
+                    r.close()
+                    continue
 
-            # Read with size cap
-            content = r.read()
-            if len(content) > MAX_IMAGE_BYTES:
-                raise HTTPException(413, "Image exceeds maximum allowed size (15MB).")
+                r.raise_for_status()
+                ctype = r.headers.get("content-type", "").lower()
+                if not any(t in ctype for t in ("image/", "application/octet-stream", "binary/octet-stream")):
+                    r.close()
+                    raise HTTPException(400, f"Invalid content-type: {ctype}. Only image resources are proxied.")
 
-            if cfg["media_cache_enabled"]:
-                os.makedirs(cache_dir, exist_ok=True)
-                with open(cached, "wb") as f:
-                    f.write(content)
+                # Read with size cap
+                content = r.read()
+                if len(content) > MAX_IMAGE_BYTES:
+                    raise HTTPException(413, "Image exceeds maximum allowed size (15MB).")
 
-            return Response(content, media_type=ctype if "image/" in ctype else "image/jpeg")
+                if cfg["media_cache_enabled"]:
+                    os.makedirs(cache_dir, exist_ok=True)
+                    with open(cached, "wb") as f:
+                        f.write(content)
+
+                return Response(content, media_type=ctype if "image/" in ctype else "image/jpeg")
 
         raise HTTPException(502, "Too many redirects while proxying image.")
     except HTTPException:
