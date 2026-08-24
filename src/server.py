@@ -59,9 +59,8 @@ app.add_middleware(
 def verify_auth(
     request: Request,
     x_qm_token: Optional[str] = Header(None, alias="X-Quartermaster-Token"),
-    x_vault_token: Optional[str] = Header(None, alias="X-VaultMCP-Token"),
     authorization: Optional[str] = Header(None),
-    vault_cookie: Optional[str] = Cookie(None, alias="quartermaster_token")
+    qm_cookie: Optional[str] = Cookie(None, alias="quartermaster_token")
 ):
     """
     Validates API authentication and enforces strict CSRF protections.
@@ -78,15 +77,15 @@ def verify_auth(
     if referer and not any(referer.startswith(a) for a in ALLOWED_ORIGINS):
         raise HTTPException(403, "Forbidden: Invalid Referer origin (CSRF protection)")
 
-    # 2. Token Check: X-VaultMCP-Token header OR Authorization: Bearer OR SameSite Cookie
-    token = x_qm_token or x_vault_token
+    # 2. Token Check: X-Quartermaster-Token header OR Authorization: Bearer OR SameSite Cookie
+    token = x_qm_token
     if not token and authorization and authorization.startswith("Bearer "):
         token = authorization[7:].strip()
-    if not token and vault_cookie:
-        token = vault_cookie
+    if not token and qm_cookie:
+        token = qm_cookie
 
     if not token or token != expected:
-        raise HTTPException(401, "Unauthorized: Valid X-VaultMCP-Token header or local session required.")
+        raise HTTPException(401, "Unauthorized: Valid X-Quartermaster-Token or session cookie required.")
 
 
 # ------------------------------- static UI ---------------------------------

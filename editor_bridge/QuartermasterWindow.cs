@@ -105,7 +105,6 @@ namespace Quartermaster
             if (!string.IsNullOrEmpty(tok))
             {
                 req.SetRequestHeader("X-Quartermaster-Token", tok);
-                req.SetRequestHeader("X-VaultMCP-Token", tok);
                 req.SetRequestHeader("Authorization", "Bearer " + tok);
             }
         }
