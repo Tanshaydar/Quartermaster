@@ -106,11 +106,11 @@ class LongOp(QThread):
 
 
 class _ImgSignals(QObject):
-    fetched = Signal(str, QPixmap)
+    fetched = Signal(str, bytes)
 
 
 class ImageLoader(QRunnable):
-    """Downloads (or loads from disk cache) an image and emits a QPixmap."""
+    """Downloads (or loads from disk cache) an image and emits raw bytes (thread-safe)."""
     _signals: Dict[str, _ImgSignals] = {}
 
     def __init__(self, url: str, key: str):
@@ -143,9 +143,8 @@ class ImageLoader(QRunnable):
                 if path:
                     with open(path, "wb") as f:
                         f.write(data)
-            pm = QPixmap()
-            if pm.loadFromData(data):
-                self.signals.fetched.emit(self.key, pm)
+            if data:
+                self.signals.fetched.emit(self.key, data)
         except Exception:
             pass
 
@@ -404,16 +403,20 @@ class DetailPanel(QScrollArea):
             QMessageBox.critical(self, "Import failed", str(e))
 
     @staticmethod
-    def _set_cover(label: QLabel, pm: QPixmap):
-        label.setPixmap(pm.scaled(label.width(), label.height(),
-                                  Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                  Qt.TransformationMode.SmoothTransformation))
+    def _set_cover(label: QLabel, data: bytes):
+        pm = QPixmap()
+        if pm.loadFromData(data):
+            label.setPixmap(pm.scaled(label.width(), label.height(),
+                                      Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                      Qt.TransformationMode.SmoothTransformation))
 
     @staticmethod
-    def _set_thumb(label: QLabel, pm: QPixmap):
-        label.setPixmap(pm.scaled(label.size(),
-                                  Qt.AspectRatioMode.KeepAspectRatio,
-                                  Qt.TransformationMode.SmoothTransformation))
+    def _set_thumb(label: QLabel, data: bytes):
+        pm = QPixmap()
+        if pm.loadFromData(data):
+            label.setPixmap(pm.scaled(label.size(),
+                                      Qt.AspectRatioMode.KeepAspectRatio,
+                                      Qt.TransformationMode.SmoothTransformation))
 
     def _copy_context(self):
         a = self.current
@@ -700,9 +703,6 @@ class MainWindow(QMainWindow):
         self.overlay.hide()
         self._spinner_timer.stop()
 
-    def _hide_overlay(self):
-        self.overlay.hide()
-
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         if hasattr(self, "overlay"):
@@ -756,7 +756,7 @@ class MainWindow(QMainWindow):
                     self.do_search()
                     self.refresh_stats()
                 if auto_follow:
-                    auto_follow(msg, ok)
+                    QTimer.singleShot(100, lambda: auto_follow(msg, ok))
 
         self.op.done.connect(finished)
         self.op.start()
