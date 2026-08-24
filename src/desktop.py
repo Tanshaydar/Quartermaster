@@ -35,6 +35,8 @@ except ImportError:
     import store_client, local_scan
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ICON_PATH = os.path.join(ROOT_DIR, "assets", "icon.ico")
+ICON_PNG = os.path.join(ROOT_DIR, "assets", "icon.png")
 
 ACCENT = "#4f8cff"
 GREEN = "#3fb950"
@@ -802,12 +804,33 @@ def _install_crash_logger():
 
 def main():
     _install_crash_logger()
+    
+    # Register explicit Windows Application ID for native Taskbar Icon grouping
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("VaultMCP.AssetVault.Desktop.1.0")
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
     app.setQuitOnLastWindowClosed(False)
 
+    # Set Window and Taskbar Icon
+    app_icon = None
+    if os.path.exists(ICON_PATH):
+        app_icon = QIcon(ICON_PATH)
+    elif os.path.exists(ICON_PNG):
+        app_icon = QIcon(ICON_PNG)
+        
+    if app_icon:
+        app.setWindowIcon(app_icon)
+
     win = MainWindow()
+    if app_icon:
+        win.setWindowIcon(app_icon)
     win._tray = win.make_tray_icon()
     win.show()
 
