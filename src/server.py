@@ -141,18 +141,67 @@ def api_categories():
     return {"categories": get_categories()}
 
 
-# --------------------------- media proxy cache -----------------------------
+# --------------------------- media proxy cache (SSRF Protected) -----------------------------
+
+ALLOWED_IMAGE_DOMAINS = (
+    ".unity3d.com", "unity3d.com",
+    ".unity.com", "unity.com",
+    ".fab.com", "fab.com",
+    ".epicgames.com", "epicgames.com",
+    ".unrealengine.com", "unrealengine.com",
+    ".artstation.com", "artstation.com",
+    ".sketchfab.com", "sketchfab.com",
+    ".ytimg.com", "ytimg.com",
+    ".youtube.com", "youtube.com",
+)
+
+MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 15MB cap to prevent cache-fill exhaustion
+
+
+def is_safe_image_url(target_url: str) -> bool:
+    """
+    Validates that a URL is strictly HTTP(S), targets an allowlisted CDN domain,
+    and does not point to localhost, RFC1918 private ranges, or cloud metadata endpoints.
+    """
+    import urllib.parse
+    import ipaddress
+    try:
+        parsed = urllib.parse.urlparse(target_url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = (parsed.hostname or "").lower()
+        if not host or host == "localhost":
+            return False
+
+        # Block any IP-based host directly (prevent 127.0.0.1, 169.254.169.254, 10.x, 192.168.x)
+        try:
+            ip = ipaddress.ip_address(host)
+            return False
+        except ValueError:
+            pass
+
+        # Verify against allowed CDN domain suffixes
+        return any(host == d or host.endswith(d if d.startswith(".") else "." + d)
+                   for d in ALLOWED_IMAGE_DOMAINS)
+    except Exception:
+        return False
+
 
 @app.get("/api/image")
 def api_image(url: str):
-    cfg = load_config()
-    if not url.startswith("http"):
-        raise HTTPException(400, "Invalid URL")
+    """
+    Proxies and caches cover/gallery images from allowlisted CDN domains.
+    Guards against SSRF via domain allowlisting, loopback/metadata IP blocking,
+    redirect re-validation, and response size limits.
+    """
+    if not is_safe_image_url(url):
+        raise HTTPException(400, "Forbidden: URL is not an allowlisted CDN domain or points to an unsafe host.")
 
+    cfg = load_config()
     cache_dir = cfg["media_cache_dir"]
     key = hashlib.sha1(url.encode()).hexdigest()
     ext = ".jpg"
-    for e in (".png", ".webp", ".gif"):
+    for e in (".png", ".webp", ".gif", ".jpeg"):
         if e in url.lower():
             ext = e
             break
@@ -161,23 +210,53 @@ def api_image(url: str):
     if cfg["media_cache_enabled"] and os.path.exists(cached):
         with open(cached, "rb") as f:
             data = f.read()
-        return Response(data, media_type=f"image{ext}")
+        return Response(data, media_type=f"image/{ext.lstrip('.')}")
 
     import httpx
     try:
-        r = httpx.get(url, timeout=15, follow_redirects=True,
-                      headers={"User-Agent": "Mozilla/5.0", "Referer": url})
-        r.raise_for_status()
+        # Step-by-step redirect validation to prevent Open Redirect SSRF attacks
+        current_url = url
+        client = httpx.Client(timeout=15.0, headers={"User-Agent": "Mozilla/5.0", "Referer": url})
+        
+        for _ in range(5):  # max 5 redirects
+            if not is_safe_image_url(current_url):
+                raise HTTPException(400, "Forbidden: Redirect target failed security allowlist check.")
+
+            req = client.build_request("GET", current_url)
+            r = client.send(req, stream=True)
+
+            if r.is_redirect:
+                loc = r.headers.get("location")
+                if not loc:
+                    break
+                import urllib.parse
+                current_url = urllib.parse.urljoin(current_url, loc)
+                r.close()
+                continue
+            
+            r.raise_for_status()
+            ctype = r.headers.get("content-type", "").lower()
+            if not any(t in ctype for t in ("image/", "application/octet-stream", "binary/octet-stream")):
+                r.close()
+                raise HTTPException(400, f"Invalid content-type: {ctype}. Only image resources are proxied.")
+
+            # Read with size cap
+            content = r.read()
+            if len(content) > MAX_IMAGE_BYTES:
+                raise HTTPException(413, "Image exceeds maximum allowed size (15MB).")
+
+            if cfg["media_cache_enabled"]:
+                os.makedirs(cache_dir, exist_ok=True)
+                with open(cached, "wb") as f:
+                    f.write(content)
+
+            return Response(content, media_type=ctype if "image/" in ctype else "image/jpeg")
+
+        raise HTTPException(502, "Too many redirects while proxying image.")
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(502, f"Fetch failed: {e}")
-
-    if cfg["media_cache_enabled"]:
-        os.makedirs(cache_dir, exist_ok=True)
-        with open(cached, "wb") as f:
-            f.write(r.content)
-
-    ctype = r.headers.get("content-type", "image/jpeg")
-    return Response(r.content, media_type=ctype)
+        raise HTTPException(502, f"Proxy fetch failed: {e}")
 
 
 # -------------------- Protected State-Mutating APIs ------------------------
