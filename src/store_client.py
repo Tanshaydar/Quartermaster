@@ -376,10 +376,13 @@ def fetch_library(provider: str, cancel_event=None) -> int:
 
             lists = _looks_like_asset_lists(body)
             if not lists and "graphql" in url:
-                # keep evidence of unrecognized batch payloads for matching
-                snippet = json.dumps(body)[:400] if not isinstance(body, str) else body[:400]
-                _log(f"  [diag] graphql batch w/o recognizable lists "
-                     f"({len(json.dumps(body))} bytes): {snippet}")
+                # log structural keys only without dumping user identity/email/PII
+                keys_summary = ""
+                if isinstance(body, dict):
+                    keys_summary = f"keys={list(body.keys())[:6]}"
+                elif isinstance(body, list) and body and isinstance(body[0], dict):
+                    keys_summary = f"list of dicts, entry keys={list(body[0].keys())[:6]}"
+                _log(f"  [diag] graphql batch w/o recognizable lists ({keys_summary})")
 
             for lst in lists:
                 # reject UI-facet payloads (platform/tag filters): tiny dicts
