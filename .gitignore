@@ -2,6 +2,7 @@
 data/*.db
 data/*.db-wal
 data/*.db-shm
+data/*.log
 data/seed/*.csv
 cache/
 profiles/
@@ -10,8 +11,17 @@ config.json
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .venv/
+env/
+venv/
 
-# OS
+# Logs & Diagnostics
+*.log
+
+# OS & Editor
 Thumbs.db
 .DS_Store
+.idea/
+.vscode/

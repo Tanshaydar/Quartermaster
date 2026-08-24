@@ -780,8 +780,18 @@ def enrich_assets(limit: Optional[int] = None, progress=None,
                     except Exception:
                         pass
                     if progress:
+                        remaining = count_unenriched()
+                        try:
+                            conn = get_connection()
+                            row = conn.execute(
+                                "SELECT COUNT(*) AS t, COALESCE(SUM(enriched),0) AS e FROM assets").fetchone()
+                            conn.close()
+                            vault_total, vault_enriched = row["t"], row["e"]
+                        except Exception:
+                            vault_total = vault_enriched = 0
                         progress(done, target,
-                                 f"Enriching… {done}/{target} this run")
+                                 f"Enriching… {done}/{target} this run · "
+                                 f"vault: {vault_enriched}/{vault_total} enriched · {remaining} pending")
                     if is_cancelled():
                         break
 

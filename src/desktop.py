@@ -80,6 +80,7 @@ a {{ color: {ACCENT}; }}
 class LongOp(QThread):
     """Runs a blocking backend call off the UI thread."""
     done = Signal(str, bool)
+    progress = Signal(object, object, str)
 
     def __init__(self, fn, label, success_text=None, parent=None):
         super().__init__(parent)
@@ -611,7 +612,6 @@ class MainWindow(QMainWindow):
         self.overlay.setStyleSheet(
             f"background: rgba(13,17,23,215); border: none;")
         lay = QVBoxLayout(self.overlay)
-        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.setSpacing(12)
         self.overlay_icon = QLabel("⠋")
         self.overlay_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -620,11 +620,11 @@ class MainWindow(QMainWindow):
         self.overlay_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.overlay_title.setStyleSheet(f"font-size:18px; font-weight:600; color:{TEXT}; background:transparent;")
         self.overlay_bar = QProgressBar()
-        self.overlay_bar.setFixedWidth(360)
+        self.overlay_bar.setFixedWidth(460)
         self.overlay_bar.setRange(0, 0)   # busy pulse until totals known
         self.overlay_bar.setStyleSheet(f"""
             QProgressBar {{ background: #22272e; border: 1px solid {BORDER}; border-radius: 6px;
-                           color: {TEXT}; text-align: center; height: 16px; }}
+                           color: {TEXT}; text-align: center; height: 18px; }}
             QProgressBar::chunk {{ background: {ACCENT}; border-radius: 5px; }}
         """)
         self.overlay_status = QLabel("")
@@ -634,14 +634,22 @@ class MainWindow(QMainWindow):
         self.overlay_cancel = QPushButton("Cancel")
         self.overlay_cancel.setFixedWidth(120)
         self.overlay_cancel.clicked.connect(self._cancel_op)
-        for w in (self.overlay_icon, self.overlay_title, self.overlay_bar,
-                  self.overlay_status):
-            lay.addWidget(w)
-        h = QHBoxLayout()
-        h.addStretch(); h.addWidget(self.overlay_cancel); h.addStretch()
-        lay.addLayout(h)
+        lay.addStretch()
+        lay.addWidget(self.overlay_icon, 0, Qt.AlignmentFlag.AlignHCenter)
+        lay.addWidget(self.overlay_title, 0, Qt.AlignmentFlag.AlignHCenter)
+        bar_row = QHBoxLayout()
+        bar_row.addStretch()
+        bar_row.addWidget(self.overlay_bar)
+        bar_row.addStretch()
+        lay.addLayout(bar_row)
+        lay.addWidget(self.overlay_status, 0, Qt.AlignmentFlag.AlignHCenter)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(self.overlay_cancel)
+        btn_row.addStretch()
+        lay.addLayout(btn_row)
+        lay.addStretch()
         self.overlay.hide()
-
         # braille spinner animation
         self._spin_frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
         self._spin_i = 0
@@ -664,7 +672,12 @@ class MainWindow(QMainWindow):
         self._op_t0 = time.time()
         self._spinner_timer.start()
 
-    def _overlay_progress(self, done=None, total=None, text=None):
+    def _overlay_progress(self, *args, done=None, total=None, text=None):
+        if len(args) == 3:
+            done, total, text = args
+        elif len(args) == 1:
+            if isinstance(args[0], str):
+                text = args[0]
         if not self.overlay.isHidden():
             if done is not None and total:
                 self.overlay_bar.setRange(0, total)
@@ -744,7 +757,7 @@ class MainWindow(QMainWindow):
             self.sync_status.setText("Vault already fully enriched.")
             return
         self._long_op(
-            lambda ev: store_client.enrich_assets(progress=lambda s: self._overlay_progress(s),
+            lambda ev: store_client.enrich_assets(progress=lambda *a, **kw: self._overlay_progress(*a, **kw),
                                                   cancel_event=ev),
             "Enrichment",
             pre_status=f"Enriching {pending} assets in batches (pause between batches)…",
@@ -761,7 +774,7 @@ class MainWindow(QMainWindow):
             if ok and pending > 0:
                 self._long_op(
                     lambda ev: store_client.enrich_assets(
-                        progress=lambda s: self._overlay_progress(s), cancel_event=ev),
+                        progress=lambda *a, **kw: self._overlay_progress(*a, **kw), cancel_event=ev),
                     "Auto-enrichment",
                     pre_status=f"Fetch done — enriching {pending} new/updated assets in batches…",
                     with_progress=True)
