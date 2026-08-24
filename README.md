@@ -45,7 +45,7 @@ If you have been building games or collecting assets for years, you likely own h
 ### 3. 📦 Direct Project Unpacker with Demo Stripper
 * Extracts cached `.unitypackage` archives directly into your active Unity project's `Assets/` folder.
 * **Automatic Bloat Stripper:** Filters out heavy `/Demo/`, `/SampleScenes/`, `/Documentation/`, and `.pdf` files, saving **60% to 80% disk space** and compile time per package.
-* **Path Traversal Guard:** Sandboxes extractions to prevent directory escapes (`../../`).
+* **Strict `Assets/` Sandbox:** Every path declared inside a package is normalized before use — `..` segments are collapsed, drive letters and control characters are stripped, and the resolved target is asserted to sit under `<project>/Assets/`. Anything that would land outside is relocated into `Assets/_VaultMCP_Imported/` rather than written, so a malformed or hostile `.unitypackage` cannot reach `ProjectSettings/`, `Packages/`, or anywhere else on disk.
 
 ### 4. 🛡️ Project Pipeline Auditor & Stack Linter
 * **Project Sniffer:** Reads `ProjectSettings/ProjectVersion.txt` and `Packages/manifest.json` for Unity, and `.uproject` / `DefaultEngine.ini` for Unreal to identify the engine version and active render pipeline (`HDRP`, `URP`, `Built-in`).
@@ -55,6 +55,7 @@ If you have been building games or collecting assets for years, you likely own h
 ### 5. 🖥️ Native Desktop App & Modern Web UI
 * **Native Desktop (PySide6 / Qt):** Windows 11 taskbar integration (`AppUserModelID`), system tray minimization, custom icon, and **`Win + Alt + V` global Spotlight hotkey**.
 * **Modern Web Interface:** Dark glassmorphism dashboard running locally on `http://localhost:7890`.
+* **Authenticated Local API:** Read endpoints are open to the loopback UI; every state-changing endpoint (login, fetch, enrich, disk scan, import) requires a per-installation token and a same-origin request. See [Security](#-privacy-security--local-first-philosophy).
 
 ### 6. 🎮 In-Engine Unity Editor Bridge
 * Drop `editor_bridge/VaultMCP-Bridge.unitypackage` into any Unity project to search, filter, and 1-click import assets from inside the Unity Editor (`Window > VaultMCP`).
@@ -209,11 +210,26 @@ run_ui.bat
 
 ---
 
-## 🔒 Privacy & Local-First Philosophy
+## 🔒 Privacy, Security & Local-First Philosophy
 
-* **100% Local Storage:** Your database, embeddings, disk paths, and session tokens live entirely on your machine in `data/assets.db`.
-* **Zero Telemetry:** No external tracking, no cloud telemetry, and no remote servers.
-* **Sandboxed Extractions:** The unpacker strictly verifies all tar paths against target roots before extracting files.
+* **100% Local Storage:** Your database, embeddings, disk paths, and store sessions live entirely on your machine — `data/assets.db` for the library, `profiles/` for browser sessions. Both are gitignored.
+* **Zero Telemetry:** No external tracking, no cloud telemetry, and no remote servers. Embeddings are computed on-device via ONNX; no text ever leaves the machine.
+* **Sandboxed Extractions:** The unpacker resolves every package path against `<project>/Assets/` and refuses anything that escapes it. See [Direct Project Unpacker](#3--direct-project-unpacker-with-demo-stripper).
+
+### Local API Authentication
+
+The web UI and the Unity bridge talk to `127.0.0.1:7890`. Because any page in your browser can reach loopback, every state-changing endpoint is protected:
+
+* **Per-installation token** — generated on first run (`secrets.token_hex(32)`) and stored at `data/.auth_token`, mirrored to `~/.vaultmcp/auth_token` so the Unity bridge can find it without knowing where the vault lives. Both paths are gitignored.
+* **Token transport** — send `X-VaultMCP-Token: <token>`, or `Authorization: Bearer <token>`. The web UI receives a `SameSite=Strict` session cookie from `GET /` and uses that automatically.
+* **Origin pinning** — requests carrying a foreign `Origin` or `Referer` are rejected with `403` even if the token is valid, so a cross-site form POST cannot reach the unpacker.
+* **Protected endpoints** — `POST /api/login/{provider}`, `/api/fetch/{provider}`, `/api/enrich`, `/api/scan-local`, `/api/import`. Read endpoints (`/api/assets`, `/api/stats`, …) are unauthenticated but CORS-restricted to the local UI origin.
+
+Delete `data/.auth_token` and `~/.vaultmcp/auth_token` to roll the token; the next launch mints a fresh one.
+
+### Media Proxy
+
+`GET /api/image` proxies and disk-caches cover art. It accepts **only** `http(s)` URLs on an allowlist of store CDN domains (Unity, Fab/Epic, ArtStation, Sketchfab, YouTube thumbnails). Direct-IP hosts, `localhost`, private ranges, and cloud metadata endpoints are rejected, redirects are re-validated against the allowlist at every hop, non-image content types are refused, and responses are capped at 15 MB.
 
 ---
 
