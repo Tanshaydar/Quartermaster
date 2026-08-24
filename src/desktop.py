@@ -92,10 +92,14 @@ class LongOp(QThread):
                 self.progress.emit(done, total, text)
 
             import inspect
-            sig = inspect.signature(self.fn)
-            if len(sig.parameters) >= 1:
-                result = self.fn(safe_progress)
-            else:
+            try:
+                sig = inspect.signature(self.fn)
+                params = len(sig.parameters)
+                if params >= 1:
+                    result = self.fn(safe_progress)
+                else:
+                    result = self.fn()
+            except Exception:
                 result = self.fn()
 
             if result is False:
@@ -765,8 +769,27 @@ class MainWindow(QMainWindow):
         self.sync_status.setText(title)
         self._show_overlay(title, cancellable=cancellable and label != "Disk scan")
 
-        self.op = LongOp(lambda prog_cb: fn_builder(self._cancel_event, prog_cb), label,
-                         success_text=success_text)
+        def _runner(prog_cb):
+            import inspect
+            try:
+                sig = inspect.signature(fn_builder)
+                p_count = len(sig.parameters)
+                if p_count >= 2:
+                    return fn_builder(self._cancel_event, prog_cb)
+                elif p_count == 1:
+                    return fn_builder(self._cancel_event)
+                else:
+                    return fn_builder()
+            except Exception:
+                try:
+                    return fn_builder(self._cancel_event, prog_cb)
+                except TypeError:
+                    try:
+                        return fn_builder(self._cancel_event)
+                    except TypeError:
+                        return fn_builder()
+
+        self.op = LongOp(_runner, label, success_text=success_text)
         if with_progress:
             self.op.progress.connect(
                 lambda d, t, s: self._overlay_progress(done=d, total=t, text=s))
