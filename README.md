@@ -10,7 +10,7 @@
 
 **Your game-asset vault, queryable and executable by AI agents.**
 
-*Ground your AI pair programmer in the 1,400+ Unity and Unreal/Fab assets you already own — with zero hallucinations, hybrid semantic search, stack conflict linting, and 1-click project unpacking.*
+*Ground your AI pair programmer in every Unity and Unreal/Fab asset you already own — with zero hallucinations, hybrid semantic search, stack conflict linting, and 1-click project unpacking.*
 
 [Features](#-key-features) • [Why VaultMCP](#-the-problem-vs-the-solution) • [Quick Start](#-quick-start) • [MCP Tools API](#-mcp-agent-tools-reference) • [In-Engine Unity Bridge](#-in-engine-unity-bridge) • [Architecture](#-architecture)
 
@@ -36,6 +36,7 @@ If you have been building games or collecting assets for years, you likely own h
 ### 1. 🧠 Offline Hybrid Semantic Search (CPU FastEmbed + SQLite FTS5)
 * Combines **SQLite FTS5 BM25 keyword ranking** with **CPU-only vector embeddings** (`BAAI/bge-small-en-v1.5` via ONNX).
 * Uses **Reciprocal Rank Fusion (RRF)**: Exact keyword queries (`"MicroSplat HDRP"`) hit instantly, while conceptual natural language queries (`"spooky abandoned industrial site"`) retrieve *Warehouse – Abandoned Factory District* with zero external cloud API calls.
+* Vectors are brute-force cosine-scored in memory — no ANN index to tune and no recall cliff. Scoring the full vault takes single-digit milliseconds at the ~1,400-asset scale this was built against, and the flat scan stays comfortable into the tens of thousands.
 
 ### 2. ⚡ Local Disk Cache Scanner (Cloud vs. On-Disk)
 * Scans `%APPDATA%\Unity\Asset Store-5.x\` and Epic Games VaultCache directories.
