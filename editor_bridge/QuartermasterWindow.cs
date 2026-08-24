@@ -60,26 +60,34 @@ namespace Quartermaster
         {
             if (!string.IsNullOrEmpty(_authToken)) return _authToken;
             
-            // Check EditorPrefs
+            // 1. Check EditorPrefs
             string saved = EditorPrefs.GetString("Quartermaster_AuthToken", "");
             if (!string.IsNullOrEmpty(saved)) { _authToken = saved; return _authToken; }
 
-            // Check ~/.vaultmcp/auth_token
+            // 2. Check ~/.quartermaster/auth_token or legacy ~/.vaultmcp/auth_token
             try
             {
                 string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 string path = System.IO.Path.Combine(home, ".quartermaster", "auth_token");
+                if (!System.IO.File.Exists(path))
+                    path = System.IO.Path.Combine(home, ".vaultmcp", "auth_token");
+
                 if (System.IO.File.Exists(path))
                 {
                     _authToken = System.IO.File.ReadAllText(path).Trim();
                     return _authToken;
                 }
             }
-            // Check %LOCALAPPDATA%/VaultMCP/token
+            catch {}
+
+            // 3. Check %LOCALAPPDATA%/Quartermaster/token or legacy %LOCALAPPDATA%/VaultMCP/token
             try
             {
                 string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 string path = System.IO.Path.Combine(localApp, "Quartermaster", "token");
+                if (!System.IO.File.Exists(path))
+                    path = System.IO.Path.Combine(localApp, "VaultMCP", "token");
+
                 if (System.IO.File.Exists(path))
                 {
                     _authToken = System.IO.File.ReadAllText(path).Trim();
@@ -89,6 +97,17 @@ namespace Quartermaster
             catch {}
 
             return "";
+        }
+
+        private static void SetAuthHeaders(UnityWebRequest req)
+        {
+            string tok = GetAuthToken();
+            if (!string.IsNullOrEmpty(tok))
+            {
+                req.SetRequestHeader("X-Quartermaster-Token", tok);
+                req.SetRequestHeader("X-VaultMCP-Token", tok);
+                req.SetRequestHeader("Authorization", "Bearer " + tok);
+            }
         }
 
         private void OnEnable()
@@ -117,6 +136,7 @@ namespace Quartermaster
             using (var req = UnityWebRequest.Get(url))
             {
                 req.timeout = 15;
+                SetAuthHeaders(req);
                 var op = req.SendWebRequest();
                 while (!op.isDone) { System.Threading.Thread.Sleep(10); }
 #if UNITY_2020_1_OR_NEWER
@@ -136,6 +156,7 @@ namespace Quartermaster
                 req.uploadHandler = new UploadHandlerRaw(body);
                 req.downloadHandler = new DownloadHandlerBuffer();
                 req.SetRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+                SetAuthHeaders(req);
                 req.timeout = 600;
                 var op = req.SendWebRequest();
                 bool cancelled = false;
@@ -143,7 +164,7 @@ namespace Quartermaster
                 {
                     System.Threading.Thread.Sleep(50);
                     cancelled = EditorUtility.DisplayCancelableProgressBar(
-                        "VaultMCP", "Importing package…", Mathf.Clamp01(op.progress));
+                        "Quartermaster", "Importing package…", Mathf.Clamp01(op.progress));
                 }
                 EditorUtility.ClearProgressBar();
 #if UNITY_2020_1_OR_NEWER
@@ -198,7 +219,7 @@ namespace Quartermaster
 
                 // offer to instantiate the first matching prefab
                 if (resp.prefabs != null && resp.prefabs.Length > 0 &&
-                    EditorUtility.DisplayDialog("VaultMCP",
+                    EditorUtility.DisplayDialog("Quartermaster",
                         $"Imported {resp.written} files.\nAdd a prefab to the scene?\n\n{resp.prefabs[0]}",
                         "Add to Scene", "Skip"))
                 {
