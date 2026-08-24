@@ -108,22 +108,53 @@ def build_index(batch_size: int = 64, db_path: str = DB_PATH) -> int:
     conn.executemany("DELETE FROM asset_vectors WHERE asset_id = ?", [(a,) for a in stale])
     conn.commit()
     conn.close()
+    invalidate_vector_cache()
     print(f"[semantic] indexed {done} assets.")
     return done
 
 
+# In-memory vector matrix cache keyed on index_size to eliminate per-query SQLite blob re-reads
+_MATRIX_CACHE: Dict[str, Any] = {
+    "db_path": None,
+    "size": -1,
+    "ids": None,
+    "mat": None,
+    "np": None,
+}
+
+
+def invalidate_vector_cache():
+    _MATRIX_CACHE["size"] = -1
+    _MATRIX_CACHE["ids"] = None
+    _MATRIX_CACHE["mat"] = None
+
+
 def _load_matrix(db_path: str = DB_PATH):
+    current_size = index_size(db_path)
+    if (_MATRIX_CACHE["ids"] is not None and
+        _MATRIX_CACHE["db_path"] == db_path and
+        _MATRIX_CACHE["size"] == current_size):
+        return _MATRIX_CACHE["ids"], _MATRIX_CACHE["mat"], _MATRIX_CACHE["np"]
+
     conn = get_connection(db_path)
     _ensure_table(conn)
     ids, dims, blobs = [], [], []
-    for aid, dim, vec in conn.execute("SELECT asset_id, dim, vec FROM asset_vectors"):
-        ids.append(aid); dims.append(dim); blobs.append(vec)
+    for aid, dim, vec in conn.execute("SELECT asset_id, dim, vec FROM asset_vectors ORDER BY asset_id"):
+        ids.append(aid)
+        dims.append(dim)
+        blobs.append(vec)
     conn.close()
     if not ids:
         return None, None, None
     import numpy as np
     mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(ids), dims[0]).copy()
     mat /= (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-9)
+
+    _MATRIX_CACHE["db_path"] = db_path
+    _MATRIX_CACHE["size"] = len(ids)
+    _MATRIX_CACHE["ids"] = ids
+    _MATRIX_CACHE["mat"] = mat
+    _MATRIX_CACHE["np"] = np
     return ids, mat, np
 
 
@@ -193,11 +224,13 @@ def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[s
 
     results = []
     for i, score in ordered:
+        if i not in by_id:
+            continue
         item = dict(by_id[i])
         item["match"] = why[i]
         item["relevance"] = round(score, 4)
         if why[i] in ("semantic", "both"):
-            item["sem_score"] = round(sem_map[i], 4)
+            item["sem_score"] = round(sem_map.get(i, 0.0), 4)
         results.append(item)
 
     mode = "hybrid" if any(why[i] != "keyword" for i, _ in ordered) else "keyword"
