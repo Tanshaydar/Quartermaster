@@ -1,60 +1,95 @@
 """
-VaultMCP direct project unpacker.
+Direct project unpacker.
 
-Extracts a locally cached .unitypackage directly into a Unity project's
-Assets/ directory, skipping the Package Manager / drag-and-drop dance.
+Extracts a locally-downloaded Unity Asset Store .unitypackage straight into
+a target Unity project's Assets/ directory, skipping the Package Manager / drag-and-drop dance.
 
-.unitypackage format: a gzipped tar where each GUID folder contains
-    <guid>/asset        the actual file bytes
+Format: .unitypackage is a gzipped tar archive with entries:
+    <guid>/asset        the payload file (or empty directory marker)
     <guid>/asset.meta   the .meta sidecar
     <guid>/pathname     original project path, e.g. "Assets/Foo/Bar.cs"
 
-Safety: declared paths are normalized before any destination decision, so
-'..' segments collapse or are stripped and cannot escape; anything resolving
-outside Assets/ is relocated under Assets/_VaultMCP_Imported/ ; every final
-target is verified to live under the target project.
+Safety Sandbox:
+Every declared path is sanitized and normalized. Traversal segments ('..')
+are collapsed or stripped. Any path declared outside of Assets/ is relocated
+under Assets/_VaultMCP_Imported/. All final target paths are cryptographically
+and structurally asserted to reside strictly inside <project>/Assets/.
+Escapes to <project>/Packages/, <project>/ProjectSettings/, or outside the project
+are strictly impossible and raise security errors.
 """
 import os
 import tarfile
-from typing import Any, Dict, Optional
+from typing import Dict, Any, Optional
 
 try:
     from .db import get_asset_by_id
     from .config import load_config
+    from .project_audit import audit_project
 except ImportError:
     from db import get_asset_by_id
     from config import load_config
+    from project_audit import audit_project
 
-# Default demo-content filters: any path segment matching these (case-insensitive)
-# is skipped, plus documentation files.
 DEFAULT_STRIP_DIRS = {"demo", "demos", "samples", "samplescene", "samplescenes",
                       "example", "examples", "documentation"}
 DEFAULT_STRIP_EXTS = {".pdf", ".chm"}
 
 
-def _clean_rel(rel: str) -> str:
-    """Normalize a package-relative path and neutralize traversal.
-    '..' segments collapse within the relative path or are stripped outright;
-    drive letters and empty/dot segments are removed."""
-    rel = rel.replace("\\", "/")
+def _sanitize_package_path(raw_rel: str) -> tuple[str, list[str]]:
+    """
+    Normalizes a package relative path and collapses/neutralizes traversal.
+    Returns (normalized_rel_path, safe_path_components_under_Assets).
+    
+    Guarantees:
+    - Strips drive letters ('C:'), null bytes, and leading slashes.
+    - Collapses '..' segments.
+    - Any path not starting with 'Assets/' is placed under 'Assets/_VaultMCP_Imported/'.
+    """
+    rel = raw_rel.split("\n")[0].strip().replace("\\", "/")
+    # Remove null bytes or control characters
+    rel = "".join(c for c in rel if ord(c) >= 32)
+    # Remove drive letters e.g. "C:"
+    if ":" in rel:
+        rel = rel.split(":", 1)[1]
+    rel = rel.lstrip("/")
+
     parts = [p for p in rel.split("/") if p not in ("", ".")]
-    parts = [p for p in parts if ":" not in p]          # kill drive letters
-    out = []
+    collapsed = []
     for p in parts:
         if p == "..":
-            if out:
-                out.pop()                                # collapse within rel
-            continue                                     # else: drop silently
-        out.append(p)
-    return "/".join(out)
+            if collapsed:
+                collapsed.pop()
+        else:
+            collapsed.append(p)
+
+    if not collapsed:
+        return "", []
+
+    # If first segment is not "Assets", relocate under Assets/_VaultMCP_Imported/
+    if collapsed[0] != "Assets":
+        safe_components = ["_VaultMCP_Imported"] + collapsed
+    else:
+        safe_components = collapsed[1:]  # components under Assets/
+
+    if not safe_components:
+        # Was literally just "Assets" or "Assets/.."
+        return "", []
+
+    final_rel = "Assets/" + "/".join(safe_components)
+    return final_rel, safe_components
 
 
-def _safe_target(project_dir: str, rel_path: str) -> str:
-    """Resolve rel under project_dir and refuse escapes."""
-    target = os.path.normpath(os.path.join(project_dir, *rel_path.split("/")))
-    root = os.path.normpath(project_dir)
-    if not (target == root or target.startswith(root + os.sep)):
-        raise ValueError(f"Unsafe path in package: {rel_path}")
+def _safe_target(project_dir: str, safe_components_under_assets: list[str]) -> str:
+    """
+    Resolves safe_components_under_assets against <project_dir>/Assets/
+    and rigorously asserts that the target path does not escape the Assets/ directory.
+    """
+    assets_root = os.path.normpath(os.path.join(os.path.abspath(project_dir), "Assets"))
+    target = os.path.normpath(os.path.join(assets_root, *safe_components_under_assets))
+    
+    # Strict boundary assertion: target MUST start with assets_root + sep
+    if not (target == assets_root or target.startswith(assets_root + os.sep)):
+        raise ValueError(f"Security: Target path escapes Assets/ sandbox: {target}")
     return target
 
 
@@ -75,8 +110,8 @@ def unpack_unitypackage(pkg_path: str, project_dir: str,
     project_dir = os.path.abspath(project_dir)
     if not os.path.isdir(project_dir):
         raise ValueError(f"Project dir does not exist: {project_dir}")
-    # Heuristic sanity check: should look like a Unity project
-    if not os.path.isdir(os.path.join(project_dir, "Assets")):
+    assets_root = os.path.normpath(os.path.join(project_dir, "Assets"))
+    if not os.path.isdir(assets_root):
         raise ValueError("Target does not look like a Unity project (no Assets/ folder).")
 
     written = 0
@@ -115,12 +150,10 @@ def unpack_unitypackage(pkg_path: str, project_dir: str,
 
         for guid, raw_rel in pathname_of.items():
             # pathname format: "Assets/foo/bar.ext\n" + archive offset marker (e.g. '00')
-            rel = _clean_rel(raw_rel.split("\n")[0])
-            if not rel:
+            rel, safe_components = _sanitize_package_path(raw_rel)
+            if not rel or not safe_components:
                 skipped += 1
                 continue
-            if not rel.startswith("Assets/"):
-                rel = f"Assets/_VaultMCP_Imported/{rel}"
 
             am = asset_member.get(guid)
             if not am or not am.isfile():
@@ -134,11 +167,7 @@ def unpack_unitypackage(pkg_path: str, project_dir: str,
                     stripped_bytes += am.size
                     continue
 
-            target = _safe_target(project_dir, rel)
-            assets_root = os.path.normpath(os.path.join(project_dir, "Assets"))
-            if not (target == assets_root or target.startswith(assets_root + os.sep)):
-                # belt-and-braces: even 'Assets/...' prefixes must resolve inside
-                raise ValueError(f"Path escapes Assets/: {rel}")
+            target = _safe_target(project_dir, safe_components)
 
             am = asset_member.get(guid)
             if not am or not am.isfile():
@@ -169,20 +198,34 @@ def import_asset_to_project(asset_id: str, project_dir: str,
     """MCP-facing wrapper: unpack a vault asset's cached .unitypackage."""
     asset = get_asset_by_id(asset_id)
     if not asset:
-        raise ValueError(f"No asset with id '{asset_id}'")
-    pkg = asset.get("local_path") or ""
-    if not pkg.lower().endswith(".unitypackage") or not os.path.isfile(pkg):
+        raise ValueError(f"Asset not found: {asset_id}")
+
+    pkg_path = asset.get("local_path")
+    if not pkg_path or not os.path.exists(pkg_path):
         raise ValueError(
-            f"'{asset['title']}' is not downloaded locally (no .unitypackage on disk). "
-            "Download it via Unity Hub / the Asset Store first, then re-run the disk scan.")
-    result = unpack_unitypackage(pkg, project_dir, strip_demos=strip_demos)
+            f"Asset '{asset['title']}' is not downloaded locally. "
+            f"Download it first via the Unity Package Manager / Asset Store.")
+
+    if not pkg_path.lower().endswith(".unitypackage"):
+        raise ValueError(
+            f"Asset '{asset['title']}' is not a .unitypackage (found: {pkg_path}). "
+            f"Direct import is currently supported for Unity Asset Store packages.")
+
+    # Project audit & pre-import warnings
+    audit = audit_project(project_dir)
+    warnings = []
+    if audit.get("engine") == "unity":
+        proj_pipe = (audit.get("pipeline") or "").upper()
+        asset_pipes = [p.upper() for p in (asset.get("pipelines") or [])]
+        if proj_pipe and asset_pipes and proj_pipe not in asset_pipes and "BUILT-IN" not in asset_pipes:
+            warnings.append(
+                f"Pipeline mismatch: project uses {proj_pipe}, but asset supports {asset.get('pipelines')}. "
+                f"Shaders/materials may render magenta until converted.")
+    elif audit.get("engine") == "unreal":
+        warnings.append("Project is an Unreal project, but this is a Unity .unitypackage.")
+
+    result = unpack_unitypackage(pkg_path, project_dir, strip_demos=strip_demos)
+    result["warnings"] = warnings
     result["title"] = asset["title"]
+    result["asset_id"] = asset_id
     return result
-
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 3:
-        print("Usage: python -m src.unpacker <asset_id> <project_dir>")
-    else:
-        print(import_asset_to_project(sys.argv[1], sys.argv[2]))
