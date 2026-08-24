@@ -462,7 +462,7 @@ class MainWindow(QMainWindow):
         tl.setSpacing(8)
 
         brand = QHBoxLayout()
-        logo = QLabel("Vault<span style='color:%s'>MCP</span>" % ACCENT)
+        logo = QLabel("Quarter<span style='color:%s'>master</span>" % ACCENT)
         logo.setTextFormat(Qt.TextFormat.RichText)
         logo.setStyleSheet("font-size:19px; font-weight:700;")
         self.stats_label = QLabel("")
