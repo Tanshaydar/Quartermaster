@@ -714,12 +714,6 @@ class MainWindow(QMainWindow):
             self.overlay.setGeometry(self.centralWidget().rect())
         return super().eventFilter(obj, ev)
 
-    def eventFilter(self, obj, ev):
-        # keep the overlay covering the content area through ANY layout change
-        if obj is self.centralWidget() and ev.type() == QEvent.Type.Resize:
-            self.overlay.setGeometry(self.centralWidget().rect())
-        return super().eventFilter(obj, ev)
-
     def _cancel_op(self):
         if getattr(self, "_cancel_event", None):
             self._cancel_event.set()

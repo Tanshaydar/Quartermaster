@@ -49,6 +49,38 @@ def save_config_partial(updates: dict):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
 
+
+def get_or_create_token() -> str:
+    """Per-installation API token for state-changing endpoints.
+
+    Stored in data/.auth_token (gitignored) and mirrored to
+    %LOCALAPPDATA%/VaultMCP/token so the Unity editor bridge can read it
+    without knowing where the vault lives.
+    """
+    import secrets
+    token_path = os.path.join(ROOT_DIR, "data", ".auth_token")
+    if os.path.exists(token_path):
+        try:
+            with open(token_path, "r", encoding="utf-8") as f:
+                t = f.read().strip()
+            if t:
+                return t
+        except Exception:
+            pass
+    token = secrets.token_urlsafe(32)
+    os.makedirs(os.path.dirname(token_path), exist_ok=True)
+    with open(token_path, "w", encoding="utf-8") as f:
+        f.write(token)
+    try:
+        mirror_dir = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VaultMCP")
+        os.makedirs(mirror_dir, exist_ok=True)
+        with open(os.path.join(mirror_dir, "token"), "w", encoding="utf-8") as f:
+            f.write(token)
+    except Exception:
+        pass
+    return token
+
 AUTH_TOKEN_PATH = os.path.join(ROOT_DIR, "data", ".auth_token")
 USER_TOKEN_PATH = os.path.join(os.path.expanduser("~"), ".vaultmcp", "auth_token")
 

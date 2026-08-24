@@ -9,8 +9,10 @@ Assets/ directory, skipping the Package Manager / drag-and-drop dance.
     <guid>/asset.meta   the .meta sidecar
     <guid>/pathname     original project path, e.g. "Assets/Foo/Bar.cs"
 
-Safety: paths are sanitized; anything outside Assets/ is relocated under
-Assets/_VaultMCP_Imported/ ; nothing can escape the target project.
+Safety: declared paths are normalized before any destination decision, so
+'..' segments collapse or are stripped and cannot escape; anything resolving
+outside Assets/ is relocated under Assets/_VaultMCP_Imported/ ; every final
+target is verified to live under the target project.
 """
 import os
 import tarfile
@@ -28,6 +30,23 @@ except ImportError:
 DEFAULT_STRIP_DIRS = {"demo", "demos", "samples", "samplescene", "samplescenes",
                       "example", "examples", "documentation"}
 DEFAULT_STRIP_EXTS = {".pdf", ".chm"}
+
+
+def _clean_rel(rel: str) -> str:
+    """Normalize a package-relative path and neutralize traversal.
+    '..' segments collapse within the relative path or are stripped outright;
+    drive letters and empty/dot segments are removed."""
+    rel = rel.replace("\\", "/")
+    parts = [p for p in rel.split("/") if p not in ("", ".")]
+    parts = [p for p in parts if ":" not in p]          # kill drive letters
+    out = []
+    for p in parts:
+        if p == "..":
+            if out:
+                out.pop()                                # collapse within rel
+            continue                                     # else: drop silently
+        out.append(p)
+    return "/".join(out)
 
 
 def _safe_target(project_dir: str, rel_path: str) -> str:
@@ -96,7 +115,7 @@ def unpack_unitypackage(pkg_path: str, project_dir: str,
 
         for guid, raw_rel in pathname_of.items():
             # pathname format: "Assets/foo/bar.ext\n" + archive offset marker (e.g. '00')
-            rel = raw_rel.split("\n")[0].strip().replace("\\", "/").lstrip("/")
+            rel = _clean_rel(raw_rel.split("\n")[0])
             if not rel:
                 skipped += 1
                 continue
@@ -116,6 +135,10 @@ def unpack_unitypackage(pkg_path: str, project_dir: str,
                     continue
 
             target = _safe_target(project_dir, rel)
+            assets_root = os.path.normpath(os.path.join(project_dir, "Assets"))
+            if not (target == assets_root or target.startswith(assets_root + os.sep)):
+                # belt-and-braces: even 'Assets/...' prefixes must resolve inside
+                raise ValueError(f"Path escapes Assets/: {rel}")
 
             am = asset_member.get(guid)
             if not am or not am.isfile():
