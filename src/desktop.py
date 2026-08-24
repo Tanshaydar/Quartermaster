@@ -616,44 +616,61 @@ class MainWindow(QMainWindow):
     def _build_overlay(self):
         self.overlay = QFrame(self.centralWidget())
         self.overlay.setStyleSheet(
-            f"background: rgba(13,17,23,215); border: none;")
+            f"background: rgba(13,17,23,230); border: none;")
         lay = QVBoxLayout(self.overlay)
-        lay.setSpacing(12)
+        lay.setSpacing(14)
         self.overlay_icon = QLabel("⠋")
         self.overlay_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.overlay_icon.setStyleSheet("font-size: 34px; color: #4f8cff; background: transparent; font-family: 'Consolas';")
+        
         self.overlay_title = QLabel("")
         self.overlay_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.overlay_title.setStyleSheet(f"font-size:18px; font-weight:600; color:{TEXT}; background:transparent;")
+        self.overlay_title.setWordWrap(True)
+        self.overlay_title.setFixedWidth(620)
+        self.overlay_title.setStyleSheet(f"font-size:17px; font-weight:600; color:{TEXT}; background:transparent;")
+        
         self.overlay_bar = QProgressBar()
-        self.overlay_bar.setFixedWidth(460)
+        self.overlay_bar.setFixedWidth(480)
         self.overlay_bar.setRange(0, 0)   # busy pulse until totals known
         self.overlay_bar.setStyleSheet(f"""
             QProgressBar {{ background: #22272e; border: 1px solid {BORDER}; border-radius: 6px;
                            color: {TEXT}; text-align: center; height: 18px; }}
             QProgressBar::chunk {{ background: {ACCENT}; border-radius: 5px; }}
         """)
+        
         self.overlay_status = QLabel("")
         self.overlay_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.overlay_status.setWordWrap(True)
-        self.overlay_status.setStyleSheet(f"color:{MUTED}; font-size:13px; background:transparent;")
+        self.overlay_status.setFixedWidth(560)
+        self.overlay_status.setMinimumHeight(44)
+        self.overlay_status.setStyleSheet("color:#9ba3af; font-size:13px; background:transparent; padding: 2px 0;")
+        
         self.overlay_cancel = QPushButton("Cancel")
         self.overlay_cancel.setFixedWidth(120)
         self.overlay_cancel.clicked.connect(self._cancel_op)
+        
         lay.addStretch()
         lay.addWidget(self.overlay_icon, 0, Qt.AlignmentFlag.AlignHCenter)
         lay.addWidget(self.overlay_title, 0, Qt.AlignmentFlag.AlignHCenter)
+        
         bar_row = QHBoxLayout()
         bar_row.addStretch()
         bar_row.addWidget(self.overlay_bar)
         bar_row.addStretch()
         lay.addLayout(bar_row)
-        lay.addWidget(self.overlay_status, 0, Qt.AlignmentFlag.AlignHCenter)
+        
+        status_row = QHBoxLayout()
+        status_row.addStretch()
+        status_row.addWidget(self.overlay_status)
+        status_row.addStretch()
+        lay.addLayout(status_row)
+        
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_row.addWidget(self.overlay_cancel)
         btn_row.addStretch()
         lay.addLayout(btn_row)
+        
         lay.addStretch()
         self.overlay.hide()
         # braille spinner animation
