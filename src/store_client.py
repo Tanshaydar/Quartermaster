@@ -837,32 +837,32 @@ def enrich_assets(limit: Optional[int] = None, progress=None,
 
         with ThreadPoolExecutor(max_workers=min(workers, len(assets))) as ex:
             futures = [ex.submit(_enrich_one, a) for a in assets]
-                for fut in as_completed(futures):
-                    try:
-                        if fut.result():
-                            done += 1
-                    except Exception:
-                        pass
-                    if progress:
-                        remaining = count_unenriched()
-                        try:
-                            conn = get_connection()
-                            row = conn.execute(
-                                "SELECT COUNT(*) AS t, COALESCE(SUM(enriched),0) AS e FROM assets").fetchone()
-                            conn.close()
-                            vault_total, vault_enriched = row["t"], row["e"]
-                        except Exception:
-                            vault_total = vault_enriched = 0
-                        progress(done, target,
-                                 f"Enriching… {done}/{target} this run · "
-                                 f"vault: {vault_enriched}/{vault_total} enriched · {remaining} pending")
-                    if is_cancelled():
-                        break
-
-            # pause between batches so remote servers see a human-ish cadence
-            if done < target and count_unenriched() > 0 and pause > 0 and not is_cancelled():
+            for fut in as_completed(futures):
+                try:
+                    if fut.result():
+                        done += 1
+                except Exception:
+                    pass
                 if progress:
-                    progress(done, target, f"Pausing {pause}s between batches (politeness mode)…")
+                    remaining = count_unenriched()
+                    try:
+                        conn = get_connection()
+                        row = conn.execute(
+                            "SELECT COUNT(*) AS t, COALESCE(SUM(enriched),0) AS e FROM assets").fetchone()
+                        conn.close()
+                        vault_total, vault_enriched = row["t"], row["e"]
+                    except Exception:
+                        vault_total = vault_enriched = 0
+                    progress(done, target,
+                             f"Enriching… {done}/{target} this run · "
+                             f"vault: {vault_enriched}/{vault_total} enriched · {remaining} pending")
+                if is_cancelled():
+                    break
+
+        # pause between batches so remote servers see a human-ish cadence
+        if done < target and count_unenriched() > 0 and pause > 0 and not is_cancelled():
+            if progress:
+                progress(done, target, f"Pausing {pause}s between batches (politeness mode)…")
                 steps = int(pause * 10)
                 for _ in range(steps):
                     if is_cancelled():
