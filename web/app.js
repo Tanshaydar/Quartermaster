@@ -47,6 +47,12 @@ function esc(str) {
   return d.innerHTML;
 }
 
+function safeUrl(url) {
+  if (!url || typeof url !== 'string') return '#';
+  const trimmed = url.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : '#';
+}
+
 function imgSrc(url) {
   return url ? `/api/image?url=${encodeURIComponent(url)}` : null;
 }
@@ -65,7 +71,7 @@ function createAssetCard(item) {
       ${src ? `<img src="${src}" alt="${esc(item.title)}" loading="lazy">`
             : `<div class="card-media-placeholder">📦</div>`}
       <div class="media-top-badges">
-        <span class="source-tag ${item.source}">${item.source === 'unity' ? 'Unity' : 'Fab'}</span>
+        <span class="source-tag ${esc(item.source)}">${item.source === 'unity' ? 'Unity' : 'Fab'}</span>
         <span class="status-tag ${isLocal ? 'local' : 'cloud'}">
           ${isLocal ? '⚡ Local' : '☁ Cloud'}
         </span>
@@ -260,7 +266,7 @@ async function openDetailModal(assetId) {
   // Badges
   const badgesBox = $('#modal-badges');
   badgesBox.innerHTML = `
-    <span class="source-tag ${full.source}">${full.source === 'unity' ? 'Unity Asset Store' : 'Fab / Unreal'}</span>
+    <span class="source-tag ${esc(full.source)}">${full.source === 'unity' ? 'Unity Asset Store' : 'Fab / Unreal'}</span>
     <span class="category-badge">${esc(full.category)}</span>
     ${(full.render_pipelines || []).map(p => `<span class="pipeline-badge">${esc(p)}</span>`).join('')}
   `;
@@ -299,7 +305,7 @@ async function openDetailModal(assetId) {
     full.video_links.forEach(vUrl => {
       const a = document.createElement('a');
       a.className = 'video-chip';
-      a.href = vUrl;
+      a.href = safeUrl(vUrl);
       a.target = '_blank';
       a.rel = 'noopener';
       a.innerHTML = `▶ Watch Demo / Trailer ↗`;

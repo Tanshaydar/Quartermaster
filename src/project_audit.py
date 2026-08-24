@@ -82,7 +82,7 @@ def audit_unreal(project_dir: str) -> Dict[str, Any]:
     if os.path.isfile(ini):
         with open(ini, "r", encoding="utf-8", errors="ignore") as f:
             txt = f.read()
-        if re.search(r"GlobalDefaultGameMode", txt) or True:
+        if re.search(r"GlobalDefaultGameMode", txt):
             hints = []
             if re.search(r"^r\.DynamicGlobalIlluminationMethod=(\d)", txt, re.M):
                 hints.append("Lumen-era project")

@@ -108,7 +108,7 @@ If configuring manually, add this to your client's MCP configuration:
     "vaultmcp": {
       "command": "python",
       "args": ["-m", "src.mcp_server"],
-      "cwd": "D:\\Projects\\PERSONAL\\VaultMCP"
+      "cwd": "<path-to-VaultMCP>"
     }
   }
 }

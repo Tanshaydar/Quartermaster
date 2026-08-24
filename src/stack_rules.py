@@ -132,27 +132,38 @@ def validate_stack(asset_ids: List[str], db_path: str = DB_PATH) -> Dict[str, An
     }
 
 
-def resolve_stack_patterns(patterns: List[str], db_path: str = DB_PATH) -> List[Dict[str, Any]]:
-    """Resolve title-pattern list to concrete owned assets (best match each)."""
-    conn = get_connection(db_path)
+def resolve_stack_patterns(patterns: List[str], db_path: str = DB_PATH,
+                           all_assets: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """Resolve title-pattern list to concrete owned assets (best match each).
+    Loads database assets once if all_assets is not pre-populated."""
+    if all_assets is None:
+        conn = get_connection(db_path)
+        cur = conn.execute("SELECT id, title, category, local_path FROM assets")
+        all_assets = [dict(r) for r in cur]
+        conn.close()
+
     resolved = []
     for pat in patterns:
-        cur = conn.execute("SELECT id, title, category, local_path FROM assets")
         best = None
-        for row in cur:
+        for row in all_assets:
             if _title_matches(row["title"], pat):
                 if best is None or len(row["title"]) < len(best["title"]):
                     best = dict(row)
         if best:
-            best["matched_pattern"] = pat
-            best["local"] = bool(best.pop("local_path"))
-            resolved.append(best)
-    conn.close()
+            entry = dict(best)
+            entry["matched_pattern"] = pat
+            entry["local"] = bool(entry.pop("local_path", ""))
+            resolved.append(entry)
     return resolved
 
 
 def list_recipes(db_path: str = DB_PATH) -> List[Dict[str, Any]]:
     rules = load_rules()
+    conn = get_connection(db_path)
+    cur = conn.execute("SELECT id, title, category, local_path FROM assets")
+    all_assets = [dict(r) for r in cur]
+    conn.close()
+
     out = []
     for recipe in rules.get("recipes", []):
         out.append({
@@ -160,7 +171,7 @@ def list_recipes(db_path: str = DB_PATH) -> List[Dict[str, Any]]:
             "engine": recipe.get("engine"),
             "pipeline": recipe.get("pipeline"),
             "notes": recipe.get("notes", ""),
-            "owned_matches": resolve_stack_patterns(recipe["stack_patterns"], db_path),
+            "owned_matches": resolve_stack_patterns(recipe["stack_patterns"], db_path, all_assets=all_assets),
         })
     return out
 
