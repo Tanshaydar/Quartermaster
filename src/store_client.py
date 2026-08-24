@@ -746,17 +746,19 @@ def count_unenriched(db_path: str = DB_PATH) -> int:
     return n
 
 
-def _enrich_one(client, asset):
-    """Enrich a single asset. Returns True when marked done."""
+def _enrich_one(asset):
+    """Enrich a single asset with a dedicated thread-safe HTTP request. Returns True when marked done."""
     url = asset.get("store_url") or ""
     if not url.startswith("http"):
         mark_enriched(asset["id"])   # nothing to fetch; don't retry forever
         return True
     try:
-        r = client.get(url)
-        html = r.text
+        with httpx.Client(follow_redirects=True, timeout=15,
+                          headers={"User-Agent": "Mozilla/5.0 (Quartermaster enrichment)"}) as client:
+            r = client.get(url)
+            html = r.text
     except Exception as e:
-        _log(f"warn: {asset['title']}: {e}")
+        _log(f"warn: {asset.get('title')}: {e}")
         return False
 
     image_url = ""
@@ -828,15 +830,13 @@ def enrich_assets(limit: Optional[int] = None, progress=None,
     def is_cancelled():
         return cancel_event is not None and cancel_event.is_set()
 
-    with httpx.Client(follow_redirects=True, timeout=20,
-                      headers={"User-Agent": "Mozilla/5.0 (VaultMCP enrichment)"}) as client:
-        while done < target and not is_cancelled():
-            assets = get_unenriched(batch_size)[:target - done]
-            if not assets:
-                break
+    while done < target and not is_cancelled():
+        assets = get_unenriched(batch_size)[:target - done]
+        if not assets:
+            break
 
-            with ThreadPoolExecutor(max_workers=min(workers, len(assets))) as ex:
-                futures = [ex.submit(_enrich_one, client, a) for a in assets]
+        with ThreadPoolExecutor(max_workers=min(workers, len(assets))) as ex:
+            futures = [ex.submit(_enrich_one, a) for a in assets]
                 for fut in as_completed(futures):
                     try:
                         if fut.result():

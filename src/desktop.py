@@ -78,7 +78,7 @@ a {{ color: {ACCENT}; }}
 # ---------------------------------------------------------------------------
 
 class LongOp(QThread):
-    """Runs a blocking backend call off the UI thread."""
+    """Runs a blocking backend call off the UI thread with thread-safe progress marshaling."""
     done = Signal(str, bool)
     progress = Signal(object, object, str)
 
@@ -88,7 +88,16 @@ class LongOp(QThread):
 
     def run(self):
         try:
-            result = self.fn()
+            def safe_progress(done=None, total=None, text=None):
+                self.progress.emit(done, total, text)
+
+            import inspect
+            sig = inspect.signature(self.fn)
+            if len(sig.parameters) >= 1:
+                result = self.fn(safe_progress)
+            else:
+                result = self.fn()
+
             if result is False:
                 self.done.emit(f"{self.label}: not completed.", False)
                 return
@@ -756,7 +765,7 @@ class MainWindow(QMainWindow):
         self.sync_status.setText(title)
         self._show_overlay(title, cancellable=cancellable and label != "Disk scan")
 
-        self.op = LongOp(lambda: fn_builder(self._cancel_event), label,
+        self.op = LongOp(lambda prog_cb: fn_builder(self._cancel_event, prog_cb), label,
                          success_text=success_text)
         if with_progress:
             self.op.progress.connect(
@@ -784,8 +793,8 @@ class MainWindow(QMainWindow):
             self.sync_status.setText("Vault already fully enriched.")
             return
         self._long_op(
-            lambda ev: store_client.enrich_assets(progress=lambda *a, **kw: self._overlay_progress(*a, **kw),
-                                                  cancel_event=ev),
+            lambda ev, prog_cb: store_client.enrich_assets(progress=prog_cb,
+                                                           cancel_event=ev),
             "Enrichment",
             pre_status=f"Enriching {pending} assets in batches (pause between batches)…",
             with_progress=True)
@@ -800,14 +809,14 @@ class MainWindow(QMainWindow):
             pending = store_client.count_unenriched()
             if ok and pending > 0:
                 self._long_op(
-                    lambda ev: store_client.enrich_assets(
-                        progress=lambda *a, **kw: self._overlay_progress(*a, **kw), cancel_event=ev),
+                    lambda ev, prog_cb: store_client.enrich_assets(
+                        progress=prog_cb, cancel_event=ev),
                     "Auto-enrichment",
                     pre_status=f"Fetch done — enriching {pending} new/updated assets in batches…",
                     with_progress=True)
 
         self._long_op(
-            lambda ev: store_client.fetch_library(provider, cancel_event=ev),
+            lambda ev, _cb: store_client.fetch_library(provider, cancel_event=ev),
             f"Fetch {provider}",
             pre_status=f"Fetching {provider} library — a browser window will open; leave it alone until it closes itself.",
             auto_follow=auto_enrich)
