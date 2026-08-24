@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QEvent, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -537,6 +537,9 @@ class MainWindow(QMainWindow):
 
         self.statusBar().setStyleSheet(f"color:{MUTED}; background:{BG};")
 
+        # track resizes on the central widget so the overlay always covers it
+        self.centralWidget().installEventFilter(self)
+
         # ---- overlay (must exist before any long op can start) ----
         self._build_overlay()
 
@@ -669,6 +672,7 @@ class MainWindow(QMainWindow):
         self.overlay.setGeometry(self.centralWidget().rect())
         self.overlay.raise_()
         self.overlay.show()
+        QTimer.singleShot(0, lambda: self.overlay.setGeometry(self.centralWidget().rect()))
         self._op_t0 = time.time()
         self._spinner_timer.start()
 
@@ -703,6 +707,18 @@ class MainWindow(QMainWindow):
         super().resizeEvent(ev)
         if hasattr(self, "overlay"):
             self.overlay.setGeometry(self.centralWidget().rect())
+
+    def eventFilter(self, obj, ev):
+        # keep the overlay covering the content area through ANY layout change
+        if obj is self.centralWidget() and ev.type() == QEvent.Type.Resize:
+            self.overlay.setGeometry(self.centralWidget().rect())
+        return super().eventFilter(obj, ev)
+
+    def eventFilter(self, obj, ev):
+        # keep the overlay covering the content area through ANY layout change
+        if obj is self.centralWidget() and ev.type() == QEvent.Type.Resize:
+            self.overlay.setGeometry(self.centralWidget().rect())
+        return super().eventFilter(obj, ev)
 
     def _cancel_op(self):
         if getattr(self, "_cancel_event", None):

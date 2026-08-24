@@ -758,7 +758,7 @@ def enrich_assets(limit: Optional[int] = None, progress=None,
         return 0
 
     done = 0
-    target = min(limit or total_backlog, total_backlog)
+    target = min(total_backlog if limit is None else limit, total_backlog)
     cancelled = False
 
     def is_cancelled():
