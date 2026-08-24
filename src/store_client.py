@@ -34,6 +34,7 @@ network responses, recursively harvest any asset-like list. Every JSON URL
 seen is logged to data/store_harvest.log so failures are diagnosable.
 """
 
+import hashlib
 import json
 import os
 import re

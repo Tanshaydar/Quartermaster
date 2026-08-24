@@ -68,14 +68,18 @@ def verify_auth(
     """
     expected = get_or_create_auth_token()
 
-    # 1. CSRF Defense: check Origin / Referer if present
+    # 1. CSRF Defense: exact-match Origin / Referer if present
+    import urllib.parse
     origin = request.headers.get("origin")
-    if origin and not any(origin.startswith(a) for a in ALLOWED_ORIGINS):
+    if origin and origin.rstrip("/") not in ALLOWED_ORIGINS:
         raise HTTPException(403, "Forbidden: Cross-Origin request blocked (CSRF protection)")
 
     referer = request.headers.get("referer")
-    if referer and not any(referer.startswith(a) for a in ALLOWED_ORIGINS):
-        raise HTTPException(403, "Forbidden: Invalid Referer origin (CSRF protection)")
+    if referer:
+        ref_parsed = urllib.parse.urlsplit(referer)
+        ref_origin = f"{ref_parsed.scheme}://{ref_parsed.netloc}".rstrip("/")
+        if ref_origin not in ALLOWED_ORIGINS:
+            raise HTTPException(403, "Forbidden: Invalid Referer origin (CSRF protection)")
 
     # 2. Token Check: X-Quartermaster-Token header OR Authorization: Bearer OR SameSite Cookie
     token = x_qm_token
@@ -246,6 +250,16 @@ def api_image(url: str):
 
                 if cfg["media_cache_enabled"]:
                     os.makedirs(cache_dir, exist_ok=True)
+                    # Enforce bounded LRU cache (max 2000 files)
+                    try:
+                        cached_files = [os.path.join(cache_dir, f) for f in os.listdir(cache_dir)]
+                        if len(cached_files) >= 2000:
+                            cached_files.sort(key=os.path.getmtime)
+                            for old_f in cached_files[:100]:  # Evict oldest 100
+                                try: os.remove(old_f)
+                                except Exception: pass
+                    except Exception:
+                        pass
                     with open(cached, "wb") as f:
                         f.write(content)
 

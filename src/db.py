@@ -67,6 +67,16 @@ def init_db(db_path: str = DB_PATH):
     conn.commit()
     conn.close()
 
+def _sync_fts(cur: sqlite3.Cursor, asset_id: str):
+    """Centralized FTS sync to ensure assets_fts never drifts."""
+    cur.execute("DELETE FROM assets_fts WHERE id = ?", (asset_id,))
+    cur.execute("""
+        INSERT INTO assets_fts (id, title, publisher, category, tags, summary, usage_notes, render_pipelines)
+        SELECT id, title, publisher, category, tags, summary, usage_notes, render_pipelines
+        FROM assets WHERE id = ?
+    """, (asset_id,))
+
+
 def upsert_asset(asset: Dict[str, Any], db_path: str = DB_PATH):
     conn = get_connection(db_path)
     cur = conn.cursor()
@@ -101,11 +111,11 @@ def upsert_asset(asset: Dict[str, Any], db_path: str = DB_PATH):
         category=excluded.category,
         render_pipelines=excluded.render_pipelines,
         tags=excluded.tags,
-        summary=excluded.summary,
-        usage_notes=excluded.usage_notes,
+        summary=CASE WHEN assets.enriched = 1 AND excluded.enriched = 0 THEN assets.summary ELSE (CASE WHEN excluded.summary != '' THEN excluded.summary ELSE assets.summary END) END,
+        usage_notes=CASE WHEN assets.enriched = 1 AND excluded.enriched = 0 THEN assets.usage_notes ELSE (CASE WHEN excluded.usage_notes != '' THEN excluded.usage_notes ELSE assets.usage_notes END) END,
         image_url=CASE WHEN excluded.image_url != '' THEN excluded.image_url ELSE assets.image_url END,
         gallery_images=CASE WHEN excluded.gallery_images != '[]' THEN excluded.gallery_images ELSE assets.gallery_images END,
-        video_links=excluded.video_links,
+        video_links=CASE WHEN assets.enriched = 1 AND excluded.enriched = 0 THEN assets.video_links ELSE (CASE WHEN excluded.video_links != '[]' THEN excluded.video_links ELSE assets.video_links END) END,
         formats=excluded.formats,
         license=excluded.license,
         enriched=MAX(assets.enriched, excluded.enriched),

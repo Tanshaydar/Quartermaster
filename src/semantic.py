@@ -166,6 +166,10 @@ def _load_matrix(db_path: str = DB_PATH):
         return None, None, None
 
     import numpy as np
+    if len(set(dims)) > 1:
+        # Mixed dimensions detected (e.g. model switched in config)
+        print("[semantic] Mixed vector dimensions detected in database; re-indexing required.")
+        return None, None, None
     mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(ids), dims[0]).copy()
     mat /= (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-9)
 
@@ -183,8 +187,9 @@ def semantic_search(query: str, k: int = 40, db_path: str = DB_PATH) -> List[Dic
     conn = get_connection(db_path)
     total_assets = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
     conn.close()
-    if index_size(db_path) < total_assets * 0.9:
-        build_index(db_path=db_path)   # lazy first-time / stale rebuild
+    # Non-blocking: if index is empty, return empty and let hybrid_search fallback to keyword mode
+    if index_size(db_path) == 0:
+        return []
 
     ids, mat, np = _load_matrix(db_path)
     if ids is None:

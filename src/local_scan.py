@@ -66,14 +66,11 @@ def _detect_fab_vault_dirs(cfg: dict) -> List[str]:
 
 def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
     cfg = load_config()
-    conn = get_connection(db_path)
-    cur = conn.cursor()
-
-    # reset previous scan marks
-    cur.execute("UPDATE assets SET local_path = '' WHERE source IN ('unity', 'fab')")
 
     found: Dict[str, str] = {}          # norm_title -> disk path
     unmatched: List[str] = []
+
+    # 1. Discover all disk paths safely first BEFORE touching the database
 
     # ---------------- Unity ----------------
     unity_root = os.path.join(os.environ.get("APPDATA", ""), "Unity", "Asset Store-5.x")
@@ -100,6 +97,12 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
             fab_count += 1
 
     # ---------------- match against DB ----------------
+    conn = get_connection(db_path)
+    cur = conn.cursor()
+
+    # Reset previous scan marks inside transaction only after disk read succeeds
+    cur.execute("UPDATE assets SET local_path = '' WHERE source IN ('unity', 'fab')")
+
     cur.execute("SELECT id, title FROM assets")
     db_norms = {_norm(t): aid for aid, t in cur.fetchall()}
     matched = 0

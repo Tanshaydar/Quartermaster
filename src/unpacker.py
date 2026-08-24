@@ -49,8 +49,8 @@ def _sanitize_package_path(raw_rel: str) -> tuple[str, list[str]]:
     # Remove null bytes or control characters
     rel = "".join(c for c in rel if ord(c) >= 32)
     # Remove drive letters e.g. "C:"
-    if ":" in rel:
-        rel = rel.split(":", 1)[1]
+    if len(rel) >= 2 and rel[1] == ":" and rel[0].isalpha():
+        rel = rel[2:]
     rel = rel.lstrip("/")
 
     parts = [p for p in rel.split("/") if p not in ("", ".")]
@@ -168,12 +168,6 @@ def unpack_unitypackage(pkg_path: str, project_dir: str,
                     continue
 
             target = _safe_target(project_dir, safe_components)
-
-            am = asset_member.get(guid)
-            if not am or not am.isfile():
-                skipped += 1
-                continue
-
             os.makedirs(os.path.dirname(target), exist_ok=True)
 
             src = tf.extractfile(am)
@@ -212,20 +206,15 @@ def import_asset_to_project(asset_id: str, project_dir: str,
             f"Direct import is currently supported for Unity Asset Store packages.")
 
     # Project audit & pre-import warnings
-    audit = audit_project(project_dir)
-    warnings = []
-    if audit.get("engine") == "unity":
-        proj_pipe = (audit.get("pipeline") or "").upper()
-        asset_pipes = [p.upper() for p in (asset.get("pipelines") or [])]
-        if proj_pipe and asset_pipes and proj_pipe not in asset_pipes and "BUILT-IN" not in asset_pipes:
-            warnings.append(
-                f"Pipeline mismatch: project uses {proj_pipe}, but asset supports {asset.get('pipelines')}. "
-                f"Shaders/materials may render magenta until converted.")
-    elif audit.get("engine") == "unreal":
-        warnings.append("Project is an Unreal project, but this is a Unity .unitypackage.")
+    info = audit_project(project_dir)
+    from . import project_audit
+    warnings = project_audit.compatibility_warning(asset, info)
 
     result = unpack_unitypackage(pkg_path, project_dir, strip_demos=strip_demos)
     result["warnings"] = warnings
+    result["target"] = {"engine": info.get("engine"),
+                        "version": info.get("version"),
+                        "pipeline": info.get("pipeline")}
     result["title"] = asset["title"]
     result["asset_id"] = asset_id
     return result
