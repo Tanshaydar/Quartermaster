@@ -147,21 +147,7 @@ def upsert_asset(asset: Dict[str, Any], db_path: str = DB_PATH):
         "local_path": asset.get("local_path", "")
     })
 
-    cur.execute("DELETE FROM assets_fts WHERE id = ?", (asset["id"],))
-    cur.execute("""
-    INSERT INTO assets_fts (id, title, publisher, category, tags, summary, usage_notes, render_pipelines)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        asset["id"],
-        asset["title"],
-        asset.get("publisher", ""),
-        asset.get("category", ""),
-        tags,
-        asset.get("summary", ""),
-        asset.get("usage_notes", ""),
-        render_pipelines
-    ))
-
+    _sync_fts(cur, asset["id"])
     conn.commit()
     conn.close()
 
@@ -283,13 +269,7 @@ def mark_enriched(asset_id: str, image_url: str = "", gallery_images=None, video
     params.append(asset_id)
     cur.execute(f"UPDATE assets SET {', '.join(sets)} WHERE id = ?", params)
 
-    if image_url or gallery_images or summary or usage_notes:
-        cur.execute("SELECT title, publisher, category, tags, summary, usage_notes, render_pipelines FROM assets WHERE id = ?", (asset_id,))
-        row = cur.fetchone()
-        if row:
-            cur.execute("DELETE FROM assets_fts WHERE id = ?", (asset_id,))
-            cur.execute("INSERT INTO assets_fts (id, title, publisher, category, tags, summary, usage_notes, render_pipelines) VALUES (?,?,?,?,?,?,?,?)",
-                        (asset_id, row["title"], row["publisher"], row["category"], row["tags"], row["summary"], row["usage_notes"], row["render_pipelines"]))
+    _sync_fts(cur, asset_id)
     conn.commit()
     conn.close()
 

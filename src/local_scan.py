@@ -85,7 +85,11 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
     # ---------------- Fab ----------------
     fab_count = 0
     for vault_dir in _detect_fab_vault_dirs(cfg):
-        for entry in os.listdir(vault_dir):
+        try:
+            entries = os.listdir(vault_dir)
+        except OSError as e:
+            continue
+        for entry in entries:
             path = os.path.join(vault_dir, entry)
             if not os.path.isdir(path):
                 continue

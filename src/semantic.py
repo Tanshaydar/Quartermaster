@@ -208,13 +208,26 @@ def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[s
     RRF-fused keyword + semantic search.
     Returns items plus per-item match info so agents can see WHY something hit.
     """
-    kw = search_assets(query=query, limit=50)
+    kw = search_assets(query=query, limit=50, db_path=db_path)
     kw_ids = [r["id"] for r in kw]
+
+    conn = get_connection(db_path)
+    total_assets = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    total_vectors = conn.execute("SELECT COUNT(*) FROM asset_vectors").fetchone()[0]
+    conn.close()
+
+    if total_vectors == 0:
+        return {
+            "count": len(kw[:limit]),
+            "search_mode": "keyword-only",
+            "results": kw[:limit],
+            "note": "Semantic index is unbuilt (0 vectors). Run 'python -m src.semantic build' to enable AI vector search."
+        }
 
     try:
         sem = semantic_search(query, k=50, db_path=db_path)
     except Exception as e:
-        return {"results": kw[:limit], "mode": "keyword-only",
+        return {"count": len(kw[:limit]), "search_mode": "keyword-only", "results": kw[:limit],
                 "note": f"semantic index unavailable: {e}"}
 
     K = 60
@@ -258,7 +271,10 @@ def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[s
         results.append(item)
 
     mode = "hybrid" if any(why[i] != "keyword" for i, _ in ordered) else "keyword"
-    return {"results": results, "mode": mode}
+    ret = {"count": len(results), "search_mode": mode, "results": results}
+    if total_vectors < total_assets:
+        ret["note"] = f"Partial vector coverage ({total_vectors}/{total_assets} indexed). Run 'python -m src.semantic build' to index recent additions."
+    return ret
 
 
 if __name__ == "__main__":

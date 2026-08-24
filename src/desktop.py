@@ -123,23 +123,25 @@ class _ImgSignals(QObject):
 
 
 class ImageLoader(QRunnable):
-    """Downloads (or loads from disk cache) an image and emits raw bytes (thread-safe)."""
-    _signals: Dict[str, _ImgSignals] = {}
+    """Downloads (or loads from disk cache) an image and emits raw bytes (thread-safe, bounded)."""
 
     def __init__(self, url: str, key: str):
         super().__init__()
         self.url, self.key = url, key
-        if key not in ImageLoader._signals:
-            ImageLoader._signals[key] = _ImgSignals()
-        self.signals = ImageLoader._signals[key]
+        self.signals = _ImgSignals()
 
     @classmethod
     def cached_path(cls, cfg, url: str) -> str:
         import hashlib
         d = cfg["media_cache_dir"]
         os.makedirs(d, exist_ok=True)
-        ext = ".png" if ".png" in url.lower() else ".jpg"
-        return os.path.join(d, hashlib.sha1(url.encode()).hexdigest() + ext)
+        key = hashlib.sha1(url.encode()).hexdigest()
+        ext = ".jpg"
+        for e in (".png", ".webp", ".gif", ".jpeg"):
+            if e in url.lower():
+                ext = e
+                break
+        return os.path.join(d, key + ext)
 
     def run(self):
         cfg = load_config()
@@ -152,6 +154,8 @@ class ImageLoader(QRunnable):
                 r = httpx.get(self.url, timeout=15, follow_redirects=True,
                               headers={"User-Agent": "Mozilla/5.0", "Referer": self.url})
                 r.raise_for_status()
+                if len(r.content) > 15 * 1024 * 1024:
+                    return
                 data = r.content
                 if path:
                     with open(path, "wb") as f:
