@@ -596,6 +596,22 @@ def harvest_fab_library(page, known_titles: Optional[set] = None) -> List[Dict[s
         if items is None:
             _log(f"  [fab diag] unrecognized payload shape: top-keys={list(body.keys())[:8]}")
             break
+
+        # One-time schema capture: what does a raw listing item actually carry?
+        # (media depth, slugs for building listing URLs, video fields, …)
+        _sample_path = os.path.join(ROOT_DIR, "data", "fab_library_sample.json")
+        if not os.path.exists(_sample_path):
+            try:
+                probe = {
+                    "top_keys": list(body.keys()),
+                    "first_item": items[0],
+                    "item_count_this_page": len(items),
+                }
+                with open(_sample_path, "w", encoding="utf-8") as _sf:
+                    _sf.write(json.dumps(probe, ensure_ascii=False)[:100_000])
+                _log("  [diag] saved first fab item -> data/fab_library_sample.json")
+            except Exception:
+                pass
         if pages == 0 and items:
             sample_flat = _fab_flatten(items[0])
             _log(f"  [fab sample] keys={list(sample_flat.keys())[:12]}")
@@ -608,6 +624,10 @@ def harvest_fab_library(page, known_titles: Optional[set] = None) -> List[Dict[s
             if not title or title in known_titles:
                 continue
             known_titles.add(title)
+            # The top-level library-entry uid is the canonical listing anchor:
+            # /library/assets/<this uid> is what Fab itself declares as og:url.
+            if raw.get("uid"):
+                item["_lib_uid"] = str(raw["uid"])
             collected.append(item)
             new += 1
         pages += 1
@@ -635,6 +655,173 @@ def harvest_fab_library(page, known_titles: Optional[set] = None) -> List[Dict[s
     if not collected and pages == 0:
         _log("  fab harvest produced nothing — see [fab diag] above for payload shape")
     return collected
+
+
+def _balanced_json_array(html: str, from_pos: int):
+    """Return the balanced [...] array text starting at/after from_pos, or ''."""
+    i = html.find("[", from_pos)
+    if i == -1:
+        return ""
+    depth, j = 0, i
+    while j < len(html):
+        c = html[j]
+        if c == '"':
+            j = html.find('"', j + 1)
+            if j == -1:
+                return ""
+        elif c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                return html[i:j + 1]
+        j += 1
+    return ""
+
+
+
+def run_fab_deep_media(cancel_event=None, progress=None) -> int:
+    """SEPARATE long-running pass (like enrichment, NOT part of fetch):
+    visits each Fab listing's canonical page in the authed browser and pulls
+    its full 'medias' gallery + description.
+
+    Work list = fab rows whose store_url is a canonical /library/assets/ URL
+    but whose gallery is still cover-only — so re-runs resume where the last
+    one stopped. Plain HTTP gets 403'd by Fab's bot wall; this rides the
+    authed browser. Images/CSS/fonts aborted during navigation for speed.
+    Returns number of listings enriched."""
+    from .db import get_connection
+
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, title, store_url FROM assets WHERE source='fab' "
+        "AND store_url LIKE '%/library/assets/%'").fetchall()
+    pending = []
+    for r in rows:
+        try:
+            n_imgs = len(json.loads(r["gallery_images"] or "[]"))
+        except Exception:
+            n_imgs = 0
+        if n_imgs <= 1:
+            pending.append((r["id"], r["title"], r["store_url"]))
+    conn.close()
+
+    if not pending:
+        if progress:
+            progress(0, 0, "Fab deep-media: nothing to do — all galleries populated.")
+        return 0
+
+    total = len(pending)
+    _log(f"fab deep-media: {total} listings to scan")
+
+    cfg = load_config()
+    proc, port = _launch_browser(cfg, "fab", start_url="about:blank", cdp=True)
+    pw = browser = page = None
+    enriched = 0
+    route_on = False
+
+    def _block_heavy(route):
+        try:
+            if route.request.resource_type in ("image", "media", "font", "stylesheet"):
+                return route.abort()
+            return route.continue_()
+        except Exception:
+            pass
+
+    try:
+        pw, browser = _connect_cdp(port)
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        target = next((p for p in ctx.pages if (p.url or "") == "about:blank"), None)
+        if target is None:
+            target = ctx.new_page()
+        else:
+            for p in ctx.pages:
+                if p is not target:
+                    try: p.close()
+                    except Exception: pass
+        page = target
+        try:
+            page.route("**/*", _block_heavy)
+            route_on = True
+        except Exception:
+            pass
+
+        for idx, (aid, title, url) in enumerate(pending):
+            if cancel_event is not None and cancel_event.is_set():
+                _log("  fab deep-media cancelled.")
+                break
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                page.wait_for_timeout(600)
+                html = page.content()
+            except Exception as e:
+                _log(f"  deep-media {idx + 1}/{total}: load failed ({e})")
+                continue
+
+            m = re.search(re.escape('"medias"'), html)
+            if not m:
+                continue                      # soft-404 / delisted: stays pending
+            arr_txt = _balanced_json_array(html, m.start())
+            if not arr_txt:
+                continue
+            try:
+                medias = json.loads(arr_txt)
+            except Exception:
+                continue
+
+            gallery = []
+            for med in medias[:12]:
+                imgs = [x for x in med.get("images", [])
+                        if isinstance(x, dict) and x.get("url")]
+                if imgs:
+                    best = max(imgs, key=lambda x: x.get("width", 0))
+                    u = best["url"]
+                    g = "https:" + u if u.startswith("//") else u
+                    if g not in gallery:
+                        gallery.append(g)
+            if not gallery:
+                continue
+
+            description = ""
+            md = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']{30,400})',
+                           html, re.I)
+            if md:
+                description = md.group(1).replace("&amp;", "&")
+
+            conn = get_connection()
+            sets = ["gallery_images = ?"]
+            params: List[Any] = [json.dumps(gallery)]
+            sets.append("image_url = CASE WHEN image_url = '' THEN ? ELSE image_url END")
+            params.append(gallery[0])
+            if description:
+                sets.append("summary = CASE WHEN summary = '' OR summary LIKE '%asset pack%' THEN ? ELSE summary END")
+                params.append(description)
+            params.append(aid)
+            conn.execute(f"UPDATE assets SET {', '.join(sets)} WHERE id = ?", params)
+            conn.commit()
+            conn.close()
+
+            enriched += 1
+            if progress:
+                progress(idx + 1, total,
+                         f"Fab deep-media {idx + 1}/{total} — {title[:40]}")
+            if (idx + 1) % 10 == 0:
+                _log(f"  fab deep-media: {idx + 1}/{total} ({enriched} galleries pulled)")
+    finally:
+        if route_on and page is not None:
+            try:
+                page.unroute("**/*", _block_heavy)
+            except Exception:
+                pass
+        _close_browser_gracefully(proc, _profile_dir(cfg, "fab"))
+        if browser:
+            try: browser.close()
+            except Exception: pass
+        if pw:
+            pw.stop()
+
+    _log(f"fab deep-media done: {enriched}/{total} galleries populated.")
+    return enriched
 
 
 def fetch_library(provider: str, cancel_event=None) -> int:
@@ -1024,6 +1211,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
                 fab_items = harvest_fab_library(page)
                 harvested.extend(fab_items)
                 _log(f"  fab native harvest returned {len(fab_items)} items")
+
             except Exception as e:
                 _log(f"  fab native harvest failed: {e}")
 
@@ -1064,6 +1252,10 @@ def fetch_library(provider: str, cancel_event=None) -> int:
         store_url = _extract_store_url(item, provider)
         publisher = _extract_publisher(item)
 
+        # Fab: canonical listing URL from the library-entry uid stashed at harvest.
+        if provider == "fab" and item.get("_lib_uid"):
+            store_url = f"https://www.fab.com/library/assets/{item['_lib_uid']}"
+
         # Prefer the category-path URL scheme (verified working 2026-08):
         # https://assetstore.unity.com/packages/<category>/<anything>-<id>
         # The slug text is irrelevant; category + id resolve to the real page.
@@ -1079,6 +1271,12 @@ def fetch_library(provider: str, cancel_event=None) -> int:
 
         cls = classify_asset(title)
         cover_img, gallery_imgs = _extract_media_images(item)
+        # Deep-scan results win: full screenshot galleries from the listing page.
+        deep_gal = item.get("_deep_gallery") or []
+        if deep_gal:
+            gallery_imgs = deep_gal
+            if not cover_img and gallery_imgs:
+                cover_img = gallery_imgs[0]
         stable_id = _stable_id(provider, pkg_id, title)
         asset = {
             "id": stable_id,
@@ -1104,6 +1302,8 @@ def fetch_library(provider: str, cancel_event=None) -> int:
         rich = re.sub(r"\s+", " ", rich).strip()
         if len(rich) > 60:
             asset["summary"] = rich[:800]
+        elif item.get("_deep_summary"):
+            asset["summary"] = str(item["_deep_summary"])[:800]
         upsert_asset(asset)
         count += 1
 
@@ -1184,13 +1384,46 @@ def _enrich_one(asset):
         if m_key:
             image_url = m_key.group(0)
 
+    # ---- Scope extraction to THIS package's media array. ----
+    # Listing pages embed ~95 "images" arrays: one for the product itself,
+    # the rest for recommendation cards (each with its own price/media).
+    # Sweeping the whole document grabs whichever array comes first — always
+    # the sitewide featured strip. The array following the product's own
+    # "id":"<pid>" marker belongs to it (verified: exactly one such array).
+    own_media = ""
+    pid = str(asset.get("package_id") or "")
+    if pid:
+        id_pos = -1
+        for pat in (f'"id":"{pid}"', f'"id": {pid}', f'"id":{pid}'):
+            mm = re.search(re.escape(pat), html)
+            if mm:
+                id_pos = mm.start()
+                break
+        if id_pos >= 0:
+            arr = re.search(r'"images"\s*:\s*\[', html[id_pos:])
+            if arr:
+                i = html.index("[", id_pos + arr.start())
+                depth, j = 0, i
+                while j < len(html):
+                    c = html[j]
+                    if c == '"':                      # skip bracket chars inside strings
+                        j = html.find('"', j + 1)
+                    elif c == '[':
+                        depth += 1
+                    elif c == ']':
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    j += 1
+                own_media = html[i:j + 1]
+
     gallery = []
 
     def _norm_img(u: str) -> str:
         return "https:" + u if u.startswith("//") else u
 
-    # Preferred: the page's own typed media array (screenshots only).
-    for u in _SCREENSHOT_RE.findall(html):
+    # Preferred: the product's own typed media array (screenshots only).
+    for u in _SCREENSHOT_RE.findall(own_media):
         g = _norm_img(u)
         if g not in gallery:
             gallery.append(g)
@@ -1206,15 +1439,23 @@ def _enrich_one(asset):
                 break
 
     videos = []
-    for vid in _YT_RE.findall(html):
-        link = f"https://www.youtube.com/watch?v={vid}"
-        if link not in videos:
-            videos.append(link)
-        if len(videos) >= 5:
-            break
-    for v in _VIDEO_HINTS.findall(html)[:3]:
-        if v not in videos:
-            videos.append(v)
+    # Videos scoped to the product's own media array — sitewide sweeps picked
+    # up recommendation cards' trailers.
+    if own_media:
+        for vid in _YT_EMBED_RE.findall(own_media):
+            link = f"https://www.youtube.com/watch?v={vid}"
+            if link not in videos:
+                videos.append(link)
+        for v in _VIDEO_HINTS.findall(own_media)[:3]:
+            v = v.replace("\\/", "/")
+            if v not in videos:
+                videos.append(v)
+    else:
+        # Legacy fallback for pages where the own-id marker wasn't found.
+        for vid in _YT_RE.findall(html)[:3]:
+            link = f"https://www.youtube.com/watch?v={vid}"
+            if link not in videos:
+                videos.append(link)
     videos = videos[:5]
 
     desc = ""
@@ -1320,6 +1561,8 @@ if __name__ == "__main__":
     elif cmd == "enrich":
         n = int(sys.argv[2]) if len(sys.argv) > 2 else None
         enrich_assets(n)
+    elif cmd == "fab-deep-media":
+        run_fab_deep_media()
     else:
         print("Usage:\n  python -m src.store_client login <unity|fab>\n"
               "  python -m src.store_client fetch <unity|fab>\n"

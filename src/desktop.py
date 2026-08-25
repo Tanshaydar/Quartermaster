@@ -584,6 +584,11 @@ class MainWindow(QMainWindow):
             cancellable=False))
         add_sync_btn("⟳ Fetch Fab", lambda: self._fetch_op("fab"))
         add_sync_btn("🖼 Enrich library", lambda: self._start_enrich_sweep())
+        add_sync_btn("🖼 Fab galleries", lambda: self._long_op(
+            lambda ev, cb: store_client.run_fab_deep_media(cancel_event=ev, progress=cb),
+            "Fab galleries",
+            pre_status="Visiting each Fab listing to pull full screenshot galleries…",
+            with_progress=True))
         add_sync_btn("⚡ Scan local", lambda: self._long_op(
             lambda ev: local_scan.scan_all(), "Disk scan"))
         sp.addWidget(self.sync_status, 1)

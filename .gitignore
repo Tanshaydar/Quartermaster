@@ -29,3 +29,5 @@ Thumbs.db
 .DS_Store
 .idea/
 .vscode/
+data/unity_solr_sample.json
+data/fab_library_sample.json
