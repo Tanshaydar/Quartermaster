@@ -115,11 +115,12 @@ def index():
 
 @app.get("/api/assets")
 def api_assets(query: str = "", category: str = "all", pipeline: str = "all",
-               source: str = "all", local: str = "all", limit: int = 60, offset: int = 0):
+               source: str = "all", local: str = "all", sort_by: str = "title_asc",
+               limit: int = 60, offset: int = 0):
     return {
         "items": search_assets(query=query or None, category=category, pipeline=pipeline,
                                source=source, local=None if local == "all" else local,
-                               limit=min(limit, 2000), offset=offset),
+                               sort_by=sort_by, limit=min(limit, 2000), offset=offset),
         "stats": get_stats(),
     }
 

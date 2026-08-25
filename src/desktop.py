@@ -547,8 +547,9 @@ class MainWindow(QMainWindow):
         self.engine = QComboBox(); self.engine.addItems(["All Engines", "Unity", "Fab / Unreal"])
         self.pipeline = QComboBox(); self.pipeline.addItems(["All Pipelines", "HDRP", "URP", "Built-in"])
         self.category = QComboBox(); self.category.addItem("All Categories")
+        self.sort_by = QComboBox(); self.sort_by.addItems(["Name (A-Z)", "Name (Z-A)", "Recently Acquired", "Size (Largest)"])
         self.sync_btn = QPushButton("⚙ Sync")
-        for w in (self.search, self.engine, self.pipeline, self.category, self.sync_btn):
+        for w in (self.search, self.engine, self.pipeline, self.category, self.sort_by, self.sync_btn):
             bar.addWidget(w)
         bar.setStretch(0, 1)
         tl.addLayout(bar)
@@ -616,7 +617,7 @@ class MainWindow(QMainWindow):
 
         # ---- wiring ----
         self.search.textChanged.connect(self._debounce_search)
-        for cb in (self.engine, self.pipeline, self.category):
+        for cb in (self.engine, self.pipeline, self.category, self.sort_by):
             cb.currentIndexChanged.connect(self.do_search)
         self.sync_btn.clicked.connect(
             lambda: self.sync_panel.setVisible(not self.sync_panel.isVisible()))
@@ -649,8 +650,9 @@ class MainWindow(QMainWindow):
         eng = {0: None, 1: "unity", 2: "fab"}[self.engine.currentIndex()]
         pipe = {0: None, 1: "HDRP", 2: "URP", 3: "Built-in"}[self.pipeline.currentIndex()]
         cat = None if self.category.currentIndex() <= 0 else self.category.currentText()
+        sort_mode = {0: "title_asc", 1: "title_desc", 2: "claimed_desc", 3: "size_desc"}[self.sort_by.currentIndex()]
         self.results = search_assets(query=q or None, source=eng, pipeline=pipe,
-                                     category=cat, limit=5000)
+                                     category=cat, sort_by=sort_mode, limit=5000)
         self.list.clear()
         self._rendered_count = 0
         self._render_next_batch()

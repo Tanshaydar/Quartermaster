@@ -185,6 +185,7 @@ def search_assets(
     pipeline: Optional[str] = None,
     source: Optional[str] = None,
     local: Optional[str] = None,   # 'local' | 'cloud' | None
+    sort_by: Optional[str] = "title_asc",
     limit: int = 100,
     offset: int = 0,
     db_path: str = DB_PATH
@@ -233,9 +234,23 @@ def search_assets(
             sql += " AND a.local_path = ''"
 
         if query and query.strip():
-            sql += " ORDER BY fts.rank ASC LIMIT ? OFFSET ?"
+            if sort_by == "title_desc":
+                sql += " ORDER BY a.title COLLATE NOCASE DESC LIMIT ? OFFSET ?"
+            elif sort_by == "claimed_desc":
+                sql += " ORDER BY a.claimed_date DESC, a.title COLLATE NOCASE ASC LIMIT ? OFFSET ?"
+            elif sort_by == "size_desc":
+                sql += " ORDER BY a.size_mb DESC, a.title COLLATE NOCASE ASC LIMIT ? OFFSET ?"
+            else:
+                sql += " ORDER BY fts.rank ASC, a.title COLLATE NOCASE ASC LIMIT ? OFFSET ?"
         else:
-            sql += " ORDER BY a.claimed_date DESC, a.title ASC LIMIT ? OFFSET ?"
+            if sort_by == "title_desc":
+                sql += " ORDER BY a.title COLLATE NOCASE DESC LIMIT ? OFFSET ?"
+            elif sort_by == "claimed_desc":
+                sql += " ORDER BY a.claimed_date DESC, a.title COLLATE NOCASE ASC LIMIT ? OFFSET ?"
+            elif sort_by == "size_desc":
+                sql += " ORDER BY a.size_mb DESC, a.title COLLATE NOCASE ASC LIMIT ? OFFSET ?"
+            else:
+                sql += " ORDER BY a.title COLLATE NOCASE ASC LIMIT ? OFFSET ?"
 
         params.extend([limit, offset])
 

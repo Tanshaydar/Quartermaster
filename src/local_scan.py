@@ -104,18 +104,39 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
     conn = get_connection(db_path)
     cur = conn.cursor()
 
+    # 1. Purge any legacy _disk_ stubs whose title already exists as a real store record
+    cur.execute("""
+        DELETE FROM assets 
+        WHERE id LIKE '%_disk_%' 
+          AND title IN (
+              SELECT title FROM assets WHERE id NOT LIKE '%_disk_%'
+          )
+    """)
+
     # Reset previous scan marks inside transaction only after disk read succeeds
     cur.execute("UPDATE assets SET local_path = '' WHERE source IN ('unity', 'fab')")
 
-    cur.execute("SELECT id, title FROM assets")
-    db_norms = {_norm(t): aid for aid, t in cur.fetchall()}
+    # Prioritize matching real library assets over disk stubs
+    cur.execute("SELECT id, title, source FROM assets WHERE id NOT LIKE '%_disk_%'")
+    real_db_norms = {_norm(t): (aid, src) for aid, t, src in cur.fetchall()}
+
+    cur.execute("SELECT id, title, source FROM assets WHERE id LIKE '%_disk_%'")
+    disk_db_norms = {_norm(t): (aid, src) for aid, t, src in cur.fetchall()}
+
     matched = 0
     to_adopt = []
     for key, p in found.items():
-        asset_id = db_norms.get(key)
-        if asset_id:
-            cur.execute("UPDATE assets SET local_path = ? WHERE id = ?",
-                        (p, asset_id))
+        if key in real_db_norms:
+            aid, _ = real_db_norms[key]
+            cur.execute("UPDATE assets SET local_path = ? WHERE id = ?", (p, aid))
+            matched += 1
+            # If an old disk stub exists for this title, clean it up
+            if key in disk_db_norms:
+                stub_id, _ = disk_db_norms[key]
+                cur.execute("DELETE FROM assets WHERE id = ?", (stub_id,))
+        elif key in disk_db_norms:
+            stub_id, _ = disk_db_norms[key]
+            cur.execute("UPDATE assets SET local_path = ? WHERE id = ?", (p, stub_id))
             matched += 1
         else:
             # Discovered on disk but missing from library imports -> adopt it
