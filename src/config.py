@@ -5,6 +5,7 @@ Loaded from config.json in the project root; sensible defaults otherwise.
 """
 import json
 import os
+from typing import Optional
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
