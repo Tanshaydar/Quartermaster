@@ -211,6 +211,11 @@ def _row_from_unity(row: Dict[str, str]) -> Optional[Dict[str, Any]]:
     if not title:
         return None
     pkg_id = (row.get("Package ID") or "").strip()
+    store_url = (row.get("Store URL") or "").strip()
+    if not store_url and pkg_id and pkg_id.isdigit():
+        store_url = f"https://assetstore.unity.com/packages/slug/{pkg_id}"
+    elif "packages/slug-" in store_url:
+        store_url = store_url.replace("packages/slug-", "packages/slug/")
     cls = classify_asset(title, row.get("Publisher", ""), _parse_size_mb(row.get("Size", "")))
     return {
         "id": _stable_id("unity", pkg_id, title),
@@ -224,7 +229,7 @@ def _row_from_unity(row: Dict[str, str]) -> Optional[Dict[str, Any]]:
         "size_mb": round(_parse_size_mb(row.get("Size", "")), 2),
         "size_str": (row.get("Size") or "").strip(),
         "claimed_date": (row.get("Claimed/Grant Date") or "").strip(),
-        "store_url": (row.get("Store URL") or "").strip(),
+        "store_url": store_url,
         **cls,
         "image_url": "",
         "gallery_images": [],

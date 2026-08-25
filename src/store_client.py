@@ -362,7 +362,7 @@ def _extract_store_url(item: dict, provider: str) -> str:
         return f"https://www.fab.com/listings/{slug.strip('/')}"
     pkg_id = item.get("id") or item.get("listingId") or item.get("packageId")
     if pkg_id and str(pkg_id).isdigit() and provider == "unity":
-        return f"https://assetstore.unity.com/packages/slug-{pkg_id}"
+        return f"https://assetstore.unity.com/packages/slug/{pkg_id}"
     return ""
 
 
@@ -570,6 +570,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
     landed_on_login = False
     owned_ids: set = set()
     fab_diag = {"logged": False}
+    unity_diag = {"logged": False}
 
     def on_request(req):
         try:
@@ -637,6 +638,20 @@ def fetch_library(provider: str, cancel_event=None) -> int:
                                 _log(f"  myAssets: {len(owned_ids)} owned package ids seen")
             except Exception:
                 pass
+
+            # Unity solr payloads: log one sample so we know whether keyImage,
+            # slug and category fields are available for building valid URLs.
+            if provider == "unity" and "assetstore" in url and not unity_diag["logged"]:
+                lists = _looks_like_asset_lists(body)
+                if lists:
+                    unity_diag["logged"] = True
+                    try:
+                        item = lists[0][0]
+                        _log(f"  [unity diag] item keys={sorted(str(k) for k in item.keys())[:24]}")
+                        _log("  [unity diag] sample=" + json.dumps(
+                            {k: str(item[k])[:60] for k in list(item)[:12]}, ensure_ascii=False))
+                    except Exception as e:
+                        _log(f"  [unity diag] error: {e}")
 
             lists = _looks_like_asset_lists(body)
             if not lists and "graphql" in url:
@@ -871,6 +886,18 @@ def fetch_library(provider: str, cancel_event=None) -> int:
                                 _log(f"  chunk harvest stopped (page eval): {e}")
                                 stale = 99
                                 break
+
+                            # One-time schema capture: save the first replayed
+                            # response so field mappings (cover art, slugs, URLs)
+                            # are built from evidence instead of guesses.
+                            _sample_path = os.path.join(ROOT_DIR, "data", "unity_solr_sample.json")
+                            if text and not os.path.exists(_sample_path):
+                                try:
+                                    with open(_sample_path, "w", encoding="utf-8") as _sf:
+                                        _sf.write(text[:200_000])
+                                    _log("  [diag] saved first solr response -> data/unity_solr_sample.json")
+                                except Exception:
+                                    pass
                             n = harvest_text(text)
                             _log(f"  chunk {ci // chunk_size + 1}/{total_chunks} "
                                  f"page {pagenum}: +{n} new (total {len(harvested)})")
@@ -995,6 +1022,10 @@ _OG_IMAGE_RE = re.compile(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["
 _YT_RE = re.compile(r'(?:youtube\.com/(?:watch\?v=|embed/)|youtu\.be/)([\w-]{11})')
 _VIDEO_HINTS = re.compile(r'"(https?://[^"]+\.(?:mp4|webm)[^"]*)"', re.I)
 
+# Unity soft-404 shells (dead listing URLs) expose only the site-wide logo
+# as og:image — storing it gives every asset the same useless "cover".
+_GENERIC_LOGO_MARKERS = ("/images/logo.png", "/cdn-origin/images/logo")
+
 
 def count_unenriched(db_path: str = DB_PATH) -> int:
     conn = get_connection(db_path)
@@ -1007,13 +1038,22 @@ def _enrich_one(asset):
     """Enrich a single asset with a dedicated thread-safe HTTP request. Returns True when marked done."""
     url = asset.get("store_url") or ""
     if not url.startswith("http"):
-        mark_enriched(asset["id"])   # nothing to fetch; don't retry forever
-        return True
+        pkg_id = str(asset.get("package_id") or "").strip()
+        if pkg_id and pkg_id.isdigit() and asset.get("source") == "unity":
+            url = f"https://assetstore.unity.com/packages/slug/{pkg_id}"
+        else:
+            mark_enriched(asset["id"])   # nothing to fetch; don't retry forever
+            return True
+
+    if "packages/slug-" in url:
+        url = url.replace("packages/slug-", "packages/slug/")
+
     try:
         with httpx.Client(follow_redirects=True, timeout=15,
                           headers={"User-Agent": "Mozilla/5.0 (Quartermaster enrichment)"}) as client:
             r = client.get(url)
             html = r.text
+            canonical_url = str(r.url) if (str(r.url).startswith("http") and "assetstore.unity.com" in str(r.url)) else url
     except Exception as e:
         _log(f"warn: {asset.get('title')}: {e}")
         return False
@@ -1021,19 +1061,28 @@ def _enrich_one(asset):
     image_url = ""
     m = _OG_IMAGE_RE.search(html)
     if m:
-        image_url = m.group(1).replace("&amp;", "&")
+        candidate = m.group(1).replace("&amp;", "&")
+        if not any(marker in candidate for marker in _GENERIC_LOGO_MARKERS):
+            image_url = candidate
+
+    if not image_url:
+        m_key = re.search(r'https?://assetstorev1-prd-cdn\.unity3d\.com/key-image/[0-9a-f-]+\.(?:png|jpg|jpeg|webp)', html, re.I)
+        if m_key:
+            image_url = m_key.group(0)
 
     gallery = []
-    for g in re.findall(r'https://assetstorev1-prd-cdn\.unity3d\.com/package-screenshot/[^"\' )]+', html)[:8]:
+    for g in re.findall(r'https?://assetstorev1-prd-cdn\.unity3d\.com/(?:package-screenshot|key-image)/[0-9a-f-]+\.(?:png|jpg|jpeg|webp)', html, re.I):
         if g not in gallery:
             gallery.append(g)
+        if len(gallery) >= 8:
+            break
 
     videos = []
     for vid in _YT_RE.findall(html):
         link = f"https://www.youtube.com/watch?v={vid}"
         if link not in videos:
             videos.append(link)
-        if len(videos) >= 3:
+        if len(videos) >= 5:
             break
     for v in _VIDEO_HINTS.findall(html)[:3]:
         if v not in videos:
@@ -1043,7 +1092,7 @@ def _enrich_one(asset):
     desc = ""
     md = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']{30,400})["\']', html, re.I)
     if md:
-        desc = md.group(1)
+        desc = md.group(1).replace("&amp;", "&")
 
     mark_enriched(
         asset["id"],
