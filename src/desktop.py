@@ -669,63 +669,73 @@ class MainWindow(QMainWindow):
 
     def _build_overlay(self):
         self.overlay = QFrame(self.centralWidget())
-        self.overlay.setStyleSheet(
-            f"background: rgba(13,17,23,230); border: none;")
-        lay = QVBoxLayout(self.overlay)
-        lay.setSpacing(14)
+        self.overlay.setStyleSheet("background: rgba(10, 14, 20, 235); border: none;")
+        outer_lay = QVBoxLayout(self.overlay)
+        outer_lay.setContentsMargins(20, 20, 20, 20)
+
+        # Centered modal card container
+        self.overlay_card = QFrame()
+        self.overlay_card.setFixedWidth(540)
+        self.overlay_card.setStyleSheet(f"""
+            QFrame {{
+                background: {PANEL};
+                border: 1px solid {BORDER};
+                border-radius: 12px;
+            }}
+        """)
+        card_lay = QVBoxLayout(self.overlay_card)
+        card_lay.setContentsMargins(28, 24, 28, 24)
+        card_lay.setSpacing(14)
+
         self.overlay_icon = QLabel("⠋")
         self.overlay_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.overlay_icon.setStyleSheet("font-size: 34px; color: #4f8cff; background: transparent; font-family: 'Consolas';")
-        
+        self.overlay_icon.setStyleSheet(f"font-size: 32px; color: {ACCENT}; background: transparent; border: none; font-family: 'Segoe UI Symbol', 'Consolas';")
+
         self.overlay_title = QLabel("")
         self.overlay_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.overlay_title.setWordWrap(True)
-        self.overlay_title.setFixedWidth(620)
-        self.overlay_title.setStyleSheet(f"font-size:17px; font-weight:600; color:{TEXT}; background:transparent;")
-        
-        self.overlay_bar = QProgressBar()
-        self.overlay_bar.setFixedWidth(480)
-        self.overlay_bar.setRange(0, 0)   # busy pulse until totals known
-        self.overlay_bar.setStyleSheet(f"""
-            QProgressBar {{ background: #22272e; border: 1px solid {BORDER}; border-radius: 6px;
-                           color: {TEXT}; text-align: center; height: 18px; }}
-            QProgressBar::chunk {{ background: {ACCENT}; border-radius: 5px; }}
-        """)
-        
+        self.overlay_title.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {TEXT}; background: transparent; border: none;")
+
         self.overlay_status = QLabel("")
         self.overlay_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.overlay_status.setWordWrap(True)
-        self.overlay_status.setFixedWidth(560)
-        self.overlay_status.setMinimumHeight(44)
-        self.overlay_status.setStyleSheet("color:#9ba3af; font-size:13px; background:transparent; padding: 2px 0;")
-        
+        self.overlay_status.setStyleSheet(f"color: {MUTED}; font-size: 13px; line-height: 1.4; background: transparent; border: none;")
+
+        self.overlay_bar = QProgressBar()
+        self.overlay_bar.setFixedHeight(12)
+        self.overlay_bar.setRange(0, 0)   # busy pulse until totals known
+        self.overlay_bar.setTextVisible(False)
+        self.overlay_bar.setStyleSheet(f"""
+            QProgressBar {{ background: #21262d; border: none; border-radius: 6px; }}
+            QProgressBar::chunk {{ background: {ACCENT}; border-radius: 6px; }}
+        """)
+
         self.overlay_cancel = QPushButton("Cancel")
-        self.overlay_cancel.setFixedWidth(120)
+        self.overlay_cancel.setFixedWidth(110)
+        self.overlay_cancel.setStyleSheet(f"""
+            QPushButton {{
+                background: #21262d; border: 1px solid {BORDER}; border-radius: 6px;
+                color: {TEXT}; font-size: 12px; padding: 6px 12px;
+            }}
+            QPushButton:hover {{ background: #30363d; }}
+        """)
         self.overlay_cancel.clicked.connect(self._cancel_op)
-        
-        lay.addStretch()
-        lay.addWidget(self.overlay_icon, 0, Qt.AlignmentFlag.AlignHCenter)
-        lay.addWidget(self.overlay_title, 0, Qt.AlignmentFlag.AlignHCenter)
-        
-        bar_row = QHBoxLayout()
-        bar_row.addStretch()
-        bar_row.addWidget(self.overlay_bar)
-        bar_row.addStretch()
-        lay.addLayout(bar_row)
-        
-        status_row = QHBoxLayout()
-        status_row.addStretch()
-        status_row.addWidget(self.overlay_status)
-        status_row.addStretch()
-        lay.addLayout(status_row)
-        
+
+        card_lay.addWidget(self.overlay_icon)
+        card_lay.addWidget(self.overlay_title)
+        card_lay.addWidget(self.overlay_status)
+        card_lay.addWidget(self.overlay_bar)
+
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_row.addWidget(self.overlay_cancel)
         btn_row.addStretch()
-        lay.addLayout(btn_row)
-        
-        lay.addStretch()
+        card_lay.addLayout(btn_row)
+
+        outer_lay.addStretch()
+        outer_lay.addWidget(self.overlay_card, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer_lay.addStretch()
+
         self.overlay.hide()
         # braille spinner animation
         self._spin_frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -738,9 +748,10 @@ class MainWindow(QMainWindow):
         self._spin_i = (self._spin_i + 1) % len(self._spin_frames)
         self.overlay_icon.setText(self._spin_frames[self._spin_i])
 
-    def _show_overlay(self, title: str, cancellable: bool = True):
+    def _show_overlay(self, title: str, status: str = "", cancellable: bool = True):
         self.overlay_title.setText(title)
-        self.overlay_status.setText("")
+        self.overlay_status.setText(status)
+        self.overlay_status.setVisible(bool(status))
         self.overlay_bar.setRange(0, 0)   # busy until a total is known
         self.overlay_cancel.setVisible(cancellable)
         self.overlay.setGeometry(self.centralWidget().rect())
@@ -806,9 +817,9 @@ class MainWindow(QMainWindow):
         self.sync_panel.setEnabled(False)
         self._cancel_event = _threading.Event()
 
-        title = pre_status or f"{label}…"
-        self.sync_status.setText(title)
-        self._show_overlay(title, cancellable=cancellable and label != "Disk scan")
+        self.sync_status.setText(f"{label}…")
+        self._show_overlay(f"{label}…", status=pre_status or "",
+                           cancellable=cancellable and label != "Disk scan")
 
         def _runner(prog_cb):
             import inspect
