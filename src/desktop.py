@@ -598,6 +598,7 @@ class MainWindow(QMainWindow):
         self.list.setWordWrap(True)
         self.list.itemClicked.connect(self._on_select)
         self.list.setStyleSheet(f"QListWidget {{ border-right: 1px solid {BORDER}; }}")
+        self.list.verticalScrollBar().valueChanged.connect(self._on_scroll)
         split.addWidget(self.list, 5)
 
         self.detail = DetailPanel()
@@ -624,6 +625,9 @@ class MainWindow(QMainWindow):
         self.search_timer.setInterval(150)
         self.search_timer.timeout.connect(self.do_search)
 
+        self._rendered_count = 0
+        self._batch_size = 100
+
         self.refresh_categories()
         self.refresh_stats()
         self.do_search()
@@ -645,18 +649,36 @@ class MainWindow(QMainWindow):
         pipe = {0: None, 1: "HDRP", 2: "URP", 3: "Built-in"}[self.pipeline.currentIndex()]
         cat = None if self.category.currentIndex() <= 0 else self.category.currentText()
         self.results = search_assets(query=q or None, source=eng, pipeline=pipe,
-                                     category=cat, limit=2000)
+                                     category=cat, limit=5000)
         self.list.clear()
-        shown = self.results[:300]
-        for item in shown:
-            li = QListWidgetItem(self.list)
-            li.setData(Qt.ItemDataRole.UserRole, item)
-            card = AssetCard(item)
-            li.setSizeHint(card.sizeHint())
-            self.list.setItemWidget(li, card)
+        self._rendered_count = 0
+        self._render_next_batch()
+
+    def _render_next_batch(self):
+        if not hasattr(self, "results") or self._rendered_count >= len(self.results):
+            return
+        next_items = self.results[self._rendered_count : self._rendered_count + self._batch_size]
+        self.list.setUpdatesEnabled(False)
+        try:
+            for item in next_items:
+                li = QListWidgetItem(self.list)
+                li.setData(Qt.ItemDataRole.UserRole, item)
+                card = AssetCard(item)
+                li.setSizeHint(card.sizeHint())
+                self.list.setItemWidget(li, card)
+        finally:
+            self.list.setUpdatesEnabled(True)
+        self._rendered_count += len(next_items)
         total = len(self.results)
-        note = "" if total <= 300 else f" (showing first 300)"
-        self.statusBar().showMessage(f"{total} matches{note}")
+        if total > self._rendered_count:
+            self.statusBar().showMessage(f"Showing {self._rendered_count} of {total} matches (scroll down for more)")
+        else:
+            self.statusBar().showMessage(f"{total} matches")
+
+    def _on_scroll(self, value):
+        sb = self.list.verticalScrollBar()
+        if sb.maximum() - value < 150:
+            self._render_next_batch()
 
     def _on_select(self, li: QListWidgetItem):
         item = li.data(Qt.ItemDataRole.UserRole)
