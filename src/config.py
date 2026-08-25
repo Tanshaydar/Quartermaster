@@ -7,6 +7,38 @@ import json
 import os
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+__version__ = "1.0.0"
+
+
+def evict_image_cache(cache_dir: str, max_files: int = 2000, prune_count: int = 100):
+    """Enforce bounded LRU image cache across desktop and server frontends."""
+    try:
+        if not os.path.isdir(cache_dir):
+            return
+        cached_files = [os.path.join(cache_dir, f) for f in os.listdir(cache_dir) if not f.startswith(".")]
+        if len(cached_files) >= max_files:
+            cached_files.sort(key=os.path.getmtime)
+            for old_f in cached_files[:prune_count]:
+                try:
+                    os.remove(old_f)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+def rotate_log_if_large(log_path: str, max_bytes: int = 5 * 1024 * 1024):
+    """Rotate log file if it exceeds maximum size cap (5 MB)."""
+    try:
+        if os.path.exists(log_path) and os.path.getsize(log_path) > max_bytes:
+            backup = log_path + ".1"
+            if os.path.exists(backup):
+                os.remove(backup)
+            os.rename(log_path, backup)
+    except Exception:
+        pass
+
 CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 
 DEFAULTS = {
@@ -99,10 +131,15 @@ def get_or_create_auth_token() -> str:
     # Sync token to all mirror paths so bridges and CLI find it reliably
     for p in ALL_TOKEN_PATHS:
         try:
-            if not os.path.exists(p) or open(p, "r", encoding="utf-8").read().strip() != tok:
+            needs_write = True
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as rf:
+                    if rf.read().strip() == tok:
+                        needs_write = False
+            if needs_write:
                 os.makedirs(os.path.dirname(p), exist_ok=True)
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(tok)
+                with open(p, "w", encoding="utf-8") as wf:
+                    wf.write(tok)
         except Exception:
             pass
 

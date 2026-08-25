@@ -66,8 +66,9 @@ def search_owned_assets(query: str, engine: str = "all", pipeline: str = "all",
     local_only: only assets already downloaded to disk."""
     if query.strip():
         merged = semantic.hybrid_search(query, limit=max(limit * 2, 50))
-        results = merged["results"]
-        mode = merged["mode"]
+        results = merged.get("results", [])
+        mode = merged.get("search_mode") or merged.get("mode") or "keyword"
+        note = merged.get("note")
     else:
         results, mode = search_assets(limit=min(max(limit, 1), 100)), "keyword"
     if engine != "all":
@@ -78,11 +79,14 @@ def search_owned_assets(query: str, engine: str = "all", pipeline: str = "all",
         results = [r for r in results if r.get("category") == category]
     if local_only:
         results = [r for r in results if r.get("local_path")]
-    return json.dumps({
+    out = {
         "count": len(results),
         "search_mode": mode,
         "results": [_slim(r) for r in results[:limit]],
-    }, ensure_ascii=False)
+    }
+    if note:
+        out["note"] = note
+    return json.dumps(out, ensure_ascii=False)
 
 
 @mcp.tool()

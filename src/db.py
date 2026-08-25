@@ -16,7 +16,11 @@ def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
     return conn
 
 def init_db(db_path: str = DB_PATH):
-    conn = get_connection(db_path)
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     cur = conn.cursor()
 
     cur.execute("""
@@ -63,6 +67,18 @@ def init_db(db_path: str = DB_PATH):
         tokenize = 'unicode61 remove_diacritics 2'
     );
     """)
+
+    # Schema & FTS data migration: user_version 2 ensures FTS is fully rebuilt from assets table
+    ver = cur.execute("PRAGMA user_version").fetchone()[0]
+    if ver < 2:
+        has_assets = cur.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+        if has_assets > 0:
+            cur.execute("DELETE FROM assets_fts")
+            cur.execute("""
+                INSERT INTO assets_fts (id, title, publisher, category, tags, summary, usage_notes, render_pipelines)
+                SELECT id, title, publisher, category, tags, summary, usage_notes, render_pipelines FROM assets
+            """)
+        cur.execute("PRAGMA user_version = 2")
 
     conn.commit()
     conn.close()

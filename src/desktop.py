@@ -159,6 +159,7 @@ class ImageLoader(QRunnable):
                     return
                 data = r.content
                 if path:
+                    evict_image_cache(cfg["media_cache_dir"])
                     with open(path, "wb") as f:
                         f.write(data)
             if data:
@@ -900,7 +901,7 @@ class MainWindow(QMainWindow):
         menu.addAction(act_show); menu.addSeparator(); menu.addAction(act_quit)
 
         tray = QSystemTrayIcon(QIcon(pm), self)
-        tray.setToolTip("Quartermaster")
+        tray.setToolTip(f"Quartermaster v{__version__}")
         tray.setContextMenu(menu)
         tray.activated.connect(
             lambda r: self.toggle_visible() if r == QSystemTrayIcon.ActivationReason.Trigger else None)
@@ -940,6 +941,7 @@ class MainWindow(QMainWindow):
 def _install_crash_logger():
     """All uncaught exceptions (main + threads) go to data/crash.log."""
     log_path = os.path.join(ROOT_DIR, "data", "crash.log")
+    rotate_log_if_large(log_path)
 
     def _write(header, exc):
         import traceback
