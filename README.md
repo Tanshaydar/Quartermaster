@@ -1,42 +1,76 @@
 # Quartermaster
 
-A local MCP server and desktop companion that indexes your purchased Unity Asset Store and Fab libraries, so your AI coding agents (Claude, Cursor, Antigravity, etc.) know what you actually own instead of telling you to buy new packs or write boilerplate shaders from scratch.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Tanshaydar/Quartermaster?include_prereleases&label=release)](https://github.com/Tanshaydar/Quartermaster/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Tanshaydar/Quartermaster?style=social)](https://github.com/Tanshaydar/Quartermaster/stargazers)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Platform](https://img.shields.io/badge/platform-Windows%2011%20%7C%20cross--platform-lightgrey)]()
 
----
+[![MCP Ready](https://img.shields.io/badge/MCP-protocol%20ready-success)](https://modelcontextprotocol.io)
+[![Search](https://img.shields.io/badge/search-SQLite%20FTS5-informational)](https://www.sqlite.org/fts5.html)
+[![Vectors](https://img.shields.io/badge/vectors-FastEmbed%20CPU%2C%20offline-purple)](https://github.com/qdrant/fastembed)
+[![GUI](https://img.shields.io/badge/desktop-PySide6-green)](https://doc.qt.io/qtforpython/)
+[![Telemetry](https://img.shields.io/badge/telemetry-none-success)]()
+[![Tests](https://img.shields.io/badge/tests-13%20passing-brightgreen)](run_tests.py)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)]()
+[![Inspired by](https://img.shields.io/badge/inspired%20by-a%20dam-4f8cff)](#this-project-started-because-i-wanted-to-prototype-a-dam)
 
-## The Problem
+This project started because I wanted to prototype a dam.
 
-If you've been doing gamedev for a few years, you probably have hundreds of assets across Unity and Fab. When you ask an AI assistant to build a scene or implement a feature, it usually does one of two things:
-1. Gives you a generic script that duplicates a plugin you already paid $80 for.
-2. Suggests a list of commercial assets to buy, with no idea if they're in your library.
+Nothing serious — a short demo, maybe more if it worked out. Before building anything, I wanted to see what I already owned that could speed it up. So I searched my library for "dam": nothing came back. Of course nothing came back — no asset is *called* a dam. But spread across four packages I already owned were curved concrete meshes, a water system, some rocky terrain. Everything the dam needed. I'd had most of it for years and never once connected the pieces.
 
-Neither Unity nor Fab provides an open ownership API. Unity killed `/account/purchases`, and Fab has no public export endpoint. 
+That's what ~1,500 assets across two stores does to you. Almost all of it from bundles and sales, none of it remembered. And it's not just me — no AI assistant knows either. Ask one for help and it either builds everything from scratch or sends you shopping, while hundreds of dollars of exactly-the-right-thing sits on your disk.
 
-Quartermaster logs into your accounts via your own browser session (zero automation during auth to avoid bot flags), pulls down your ownership catalog via authenticated GraphQL session replay, and stores everything in a local SQLite database with semantic vector embeddings.
+Quartermaster indexes your entire Unity Asset Store and Fab library locally, and serves it to your coding agent over MCP. It's the tool I wished existed that day: ask about a dam, get told you already own curved concrete meshes.
 
-When your agent needs an asset, it queries Quartermaster over MCP.
+```
+you    →  "I want to build a dam — what do I have to work with?"
 
----
+agent  →  search_owned_assets(...)        finds the concrete meshes, water FX, terrain
+          validate_stack([...])           checks none of them fight each other
+          import_asset_to_project(...)    unpacks into Assets/, demos stripped
+```
 
-## Features
+Every result is something you already paid for. Nothing is invented.
 
-- **Local Semantic & Keyword Search (Hybrid FTS5 + ONNX):** Searches by exact title or natural language (e.g. *"modular sci-fi interior with airlocks"*). Vector embeddings are generated locally on CPU via FastEmbed; no data leaves your machine.
-- **Disk Cache Detection:** Automatically scans your local Unity Asset Store cache (`%APPDATA%/Unity/Asset Store-5.x/`) and Epic `VaultCache` (`FabLibrary/`). Your agent knows which assets are already downloaded and can prioritize zero-download workflows.
-- **Stack & Pipeline Linting:** Checks for role conflicts (e.g. two conflicting terrain systems or weather controllers) and catches pipeline mismatches (e.g. importing a URP-only shader into an HDRP project).
-- **Direct Unity Package Unpacking:** Extracts `.unitypackage` files directly into your project's `Assets/` directory, automatically stripping heavy demo scenes, samples, videos, and documentation to keep project compile times fast.
-- **Multiple Interfaces:**
-  - **MCP Server:** Native stdio JSON-RPC for Claude Desktop, Cursor, Antigravity, Windsurf.
-  - **Desktop HUD (`run_desktop.bat`):** Quick-access spotlight search (`Win + Alt + V`) and library browser.
-  - **Web Dashboard (`run_ui.bat`):** Local web UI at `http://localhost:7890`.
-  - **Unity Editor Bridge:** In-editor window (`Window > Quartermaster`) to search and import directly inside Unity.
+Why *Quartermaster*? It's the army officer in charge of supplies — the one who actually knows what's in inventory when everyone else forgot. Seemed fitting for a tool whose entire job is remembering what you own.
 
----
 
-## Quick Start
+## The part nobody tells you
 
-### 1. Installation
+Neither store will admit what you own.
 
-Requires Python 3.10+:
+Unity removed `/account/purchases` (404 since August 2026). Fab has no ownership API, no export button, nothing. Your purchase history exists only inside their private GraphQL, behind SSO, MFA, and bot detection.
+
+Getting at it took four attempts, three of them failures:
+
+1. **Playwright's bundled Chromium** — Epic's captcha refuses it outright ("enable JavaScript").
+2. **Playwright driving your real browser** — injects detectable hooks; Epic throws a second security wall after the password.
+3. **Debugger attached during sign-in** — same result. Anything touching the login flow gets flagged.
+4. **What actually works**: you sign in through a completely normal browser window. No debug port, no automation, nothing to see. Only *after* you're done does Quartermaster attach a debugger and replay the store's own paginated queries — with its own CSRF headers, its own chunking (42 IDs per request, because that's what Unity's client sends).
+
+That trick is most of this project. The rest — search, linting, unpacking — is honestly straightforward by comparison.
+
+Two hard-won rules baked into the design, if you ever hack on this yourself:
+
+- Browsers must close *gracefully* (`taskkill` without `/F`). An abrupt kill loses Unity's device-trust cookie and you'll get MFA-challenged on every future session.
+- Never run a library fetch headless. Headless triggers Unity's risk system even with valid cookies.
+
+
+## What you get
+
+**Search that understands intent.** This is the dam problem. SQLite FTS5 handles exact names; local ONNX embeddings catch meaning — *"concrete structures for holding back water"* surfaces meshes and shaders whose listings never mention dams. Both ranked together with reciprocal rank fusion, all computed on your CPU. No cloud API. I built this against my own ~1,500-asset vault, where brute-force cosine over a numpy matrix answers in milliseconds — which is why there's no vector database here. One less dependency for zero measurable gain.
+
+**Ground truth about your disk.** Scans `%APPDATA%/Unity/Asset Store-5.x/` and Epic's VaultCache so every result knows whether it's already downloaded or cloud-only. Agents prefer what's local — a zero-download import beats a 4 GB one.
+
+**A linter for stacks.** Two vegetation renderers will fight. A MicroSplat module without core MicroSplat silently does nothing. A URP-only shader in an HDRP project renders pink. Quartermaster catches these before you spend an afternoon on them.
+
+**Direct unpacking.** Extracts cached `.unitypackage` files straight into `Assets/`, dropping `/Demo/`, `/Samples/`, `/Documentation/` and PDFs on the way in — typically 60–80% less bloat per package. Every declared path is normalized and asserted inside `<project>/Assets/`; escapes are structurally impossible, not just filtered.
+
+
+## Install
+
+Needs **Python 3.10+**.
 
 ```bash
 git clone https://github.com/Tanshaydar/Quartermaster.git
@@ -44,88 +78,104 @@ cd Quartermaster
 pip install -r requirements.txt
 ```
 
-### 2. Harvest Your Library
-
-Run the interactive store login. This opens a plain browser window for you to sign in (handles 2FA/MFA normally), then saves your session cookies locally under `profiles/`:
+Seed your library:
 
 ```bash
-# Unity Asset Store
+# Opens your browser. YOU sign in — 2FA and captchas behave normally.
+# Close the window when done; the session persists locally.
 python -m src.store_client login unity
 python -m src.store_client fetch unity
 
-# Fab / Epic Games
+# Same dance for Fab:
 python -m src.store_client login fab
 python -m src.store_client fetch fab
-```
 
-*(Optional)* Run metadata enrichment to pull high-res preview screenshots, store URLs, and full descriptions:
-```bash
+# Pull descriptions and cover art (polite batched fetching):
 python -m src.store_client enrich
-```
 
-Build local vector embeddings for semantic search:
-```bash
+# Build the semantic index (local CPU embeddings):
 python -m src.semantic build
 ```
 
-### 3. Register MCP with Your Agent
+`semantic build` is what makes *"concrete structures for holding back water"* find a dam. Skip it and search still works, but only on exact keywords.
 
-Auto-configure your installed IDEs/clients (Claude Desktop, Cursor, Windsurf, Antigravity):
+Already have CSV exports from the stores? Skip the browser entirely:
 
 ```bash
-python -m src.register --all
+python -m src.ingest             # eats any CSVs in data/seed/
+python -m src.semantic build     # still needed — see the note above
 ```
 
-To preview changes before modifying config files:
+Connect your agents:
+
 ```bash
-python -m src.register --all --dry-run
+python -m src.register --all             # Claude Desktop, Cursor, Windsurf, Antigravity
+python -m src.register --all --dry-run   # look before you leap
 ```
 
----
+Registration merges into existing configs and backs them up first. It won't clobber your other servers.
 
-## MCP Tools Reference
 
-When connected, your agent has access to these tools:
+## Agent tools
 
-| Tool | Purpose |
+| Tool | Answers |
 | :--- | :--- |
-| `search_owned_assets(query, engine, pipeline, category, local_only)` | Hybrid keyword + vector search over your library. |
-| `get_asset_details(asset_id)` | Returns full description, usage notes, tags, render pipelines, and store links. |
-| `get_stack_recommendations(problem_description)` | Maps a game feature brief to complementary assets in your library. |
-| `validate_stack(asset_ids)` | Lints a list of assets for dependency issues and duplicate system roles. |
-| `list_stack_recipes()` | Lists curated, production-tested asset combinations matched to your library. |
-| `audit_project(project_dir)` | Detects engine version and active render pipeline (HDRP/URP/Built-in) of a project. |
-| `import_asset_to_project(asset_id, project_dir)` | Safely extracts a local `.unitypackage` into a Unity project with demo content stripped. |
+| `search_owned_assets(query, ...)` | What do I own that fits this? Hybrid keyword + semantic. |
+| `get_asset_details(asset_id)` | Full metadata, usage notes, gallery, store URL. |
+| `get_stack_recommendations(brief)` | Maps a feature brief onto owned packs. |
+| `validate_stack(asset_ids)` | Will these fight each other? Role conflicts, missing prerequisites. |
+| `list_stack_recipes()` | Curated production stacks resolved against *your* library. |
+| `audit_project(project_dir)` | Engine, version, render pipeline of a target project. |
+| `import_asset_to_project(asset_id, project_dir)` | Unpack a local package into `Assets/`. |
+| `list_asset_categories()` | Category breakdown and counts. |
+| `get_vault_stats()` | Totals by engine and category, local vs cloud. |
 
----
+Recipes live in `data/recipes.json` — edit it to teach Quartermaster your own stack patterns. No code changes needed.
 
-## How It Works Under the Hood
 
-1. **Authentication & Ingestion:** `store_client.py` uses Playwright CDP attachment *after* human sign-in to capture auth tokens and replay the store's internal GraphQL queries with proper CSRF headers.
-2. **Storage & FTS:** `assets.db` is a local SQLite database running in WAL mode with FTS5 tokenization and automated schema migrations.
-3. **Embeddings:** ONNX-based `fastembed` produces 384-dimensional vector embeddings, cached in memory with SQLite `PRAGMA data_version` invalidation tracking.
-4. **Sandboxed Unpacking:** `unpacker.py` inspects `.unitypackage` tar headers, strips traversal characters (`../`, absolute paths, control characters), and ensures all files resolve strictly within the project's `Assets/` tree.
+## Other ways in
 
----
+- **Desktop app** (`run_desktop.bat`) — PySide6 spotlight search with tray icon; press `Win+Alt+V` anywhere in Windows. Runs alongside your agent without getting in its way — the database runs in WAL mode, so the GUI writing while your agent searches never blocks either of them.
+- **Web UI** (`run_ui.bat`) — dark-mode dashboard at `http://localhost:7890`.
+- **In Unity** — import `editor_bridge/Quartermaster-Bridge.unitypackage`, then `Window > Quartermaster`. Search and import without leaving the editor. Small aside: that bridge package is generated by `src/build_bridge.py`, which writes the same tar format `unpacker.py` reads. Dogfooding on purpose.
 
-## Running Tests
 
-Quartermaster includes a built-in test suite covering sandbox traversal security, SQLite preservation, CSRF defenses, and concurrency:
+## Security
 
-```bash
-python run_tests.py -v
-```
+This thing holds store sessions and writes into your projects, so it takes the local API seriously:
 
----
+- Every state-changing endpoint requires a token (generated on first run, stored in `data/.auth_token`, mirrored for the Unity bridge). Send it as `X-Quartermaster-Token` or `Authorization: Bearer`; the web UI gets a `SameSite=Strict` cookie automatically.
+- Cross-origin requests are rejected even with a valid token.
+- The unpacker sandbox collapses `..` segments, strips drive letters and control characters, relocates anything outside `Assets/` under `Assets/_Quartermaster_Imported/`, and asserts the final path lands inside the project — enforced by tests, not vibes (`python run_tests.py -v`).
+- The image proxy is domain-allowlisted, blocks private ranges and metadata endpoints, re-validates every redirect hop, caps sizes, and prunes the oldest entries once the cache passes its file cap.
 
-## Limitations & Notes
+Nothing phones home. Your library, embeddings, disk paths, and store sessions stay on this machine.
 
-- **OS:** Windows-first for local cache path detection (`%APPDATA%/Unity/Asset Store-5.x/` and Epic `VaultCache`). MCP search and web UI are platform-agnostic.
-- **Single User:** Designed strictly for single-user local development. Everything lives on `localhost:7890` and `127.0.0.1`.
-- **Store Changes:** Since ingestion relies on internal store endpoints, major changes to Unity or Fab web interfaces may require updating the fetch parsers.
 
----
+## Configuration
+
+Optional keys in `config.json` (created on first run):
+
+| Key | Default | Purpose |
+| :--- | :--- | :--- |
+| `server_port` | `7890` | Web UI / API port. |
+| `embedding_model` | `BAAI/bge-small-en-v1.5` | Any fastembed-compatible model. Change it and rebuild the index. |
+| `fab_vault_dirs` | auto-detected | Override Fab VaultCache locations. |
+| `strip_dirs` / `strip_exts` | demos, docs, PDFs | What the unpacker discards. |
+| `enrich_batch_size` / `enrich_batch_pause` | `20` / `3s` | Politeness throttle for enrichment. |
+| `media_cache_enabled` | `true` | Disk cache for proxied cover art. |
+
+
+## Honest limitations
+
+- **Windows-first.** Cache scanning assumes Windows paths. MCP search works anywhere; local-import detection doesn't.
+- **One machine, one user.** No sync, no server mode. Deliberate.
+- **Harvesting is scraping.** Unity and Fab change their internals whenever they feel like it, and have — the chunk sizes, endpoints, and GraphQL shapes in here are correct as of the day I shipped, not forever. When a fetch comes back empty, `data/store_harvest.log` records every JSON response seen; that's where to start digging.
+- **Unpacking is Unity-only.** Fab assets are indexed and searchable, but `.unitypackage` extraction obviously doesn't apply.
+
+If you build something cool with this, I'd genuinely like to hear about it.
+
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).
