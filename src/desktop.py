@@ -815,20 +815,15 @@ class MainWindow(QMainWindow):
             try:
                 sig = inspect.signature(fn_builder)
                 p_count = len(sig.parameters)
-                if p_count >= 2:
-                    return fn_builder(self._cancel_event, prog_cb)
-                elif p_count == 1:
-                    return fn_builder(self._cancel_event)
-                else:
-                    return fn_builder()
-            except Exception:
-                try:
-                    return fn_builder(self._cancel_event, prog_cb)
-                except TypeError:
-                    try:
-                        return fn_builder(self._cancel_event)
-                    except TypeError:
-                        return fn_builder()
+            except (ValueError, TypeError):
+                p_count = 0
+
+            if p_count >= 2:
+                return fn_builder(self._cancel_event, prog_cb)
+            elif p_count == 1:
+                return fn_builder(self._cancel_event)
+            else:
+                return fn_builder()
 
         self.op = LongOp(_runner, label, success_text=success_text)
         if with_progress:

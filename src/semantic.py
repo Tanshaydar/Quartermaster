@@ -218,6 +218,7 @@ def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[s
     kw_ids = [r["id"] for r in kw]
 
     conn = get_connection(db_path)
+    _ensure_table(conn)
     total_assets = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
     total_vectors = conn.execute("SELECT COUNT(*) FROM asset_vectors").fetchone()[0]
     conn.close()

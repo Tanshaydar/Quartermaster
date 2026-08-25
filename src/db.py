@@ -5,6 +5,9 @@ from typing import List, Dict, Any, Optional
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "assets.db")
 
+import threading
+
+_DB_INIT_LOCK = threading.Lock()
 _DB_INITIALIZED = False
 
 
@@ -12,8 +15,10 @@ def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
     global _DB_INITIALIZED
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     if not _DB_INITIALIZED and db_path == DB_PATH:
-        _DB_INITIALIZED = True
-        init_db(db_path)
+        with _DB_INIT_LOCK:
+            if not _DB_INITIALIZED:
+                _DB_INITIALIZED = True
+                init_db(db_path)
     conn = sqlite3.connect(db_path, timeout=10)
     # WAL mode: concurrent readers (MCP agent) never block the writer (GUI)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -186,61 +191,74 @@ def search_assets(
 ) -> List[Dict[str, Any]]:
     conn = get_connection(db_path)
     cur = conn.cursor()
+    try:
+        try:
+            cur.execute("SELECT 1 FROM assets LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.close()
+            init_db(db_path)
+            conn = get_connection(db_path)
+            cur = conn.cursor()
 
-    params = []
-    if query and query.strip():
-        clean_q = query.replace('"', '""').strip()
-        terms = [f'"{t}"*' for t in clean_q.split() if t]
-        fts_expr = " AND ".join(terms)
-        sql = """
-        SELECT a.*, fts.rank
-        FROM assets_fts fts
-        JOIN assets a ON a.id = fts.id
-        WHERE assets_fts MATCH ?
-        """
-        params.append(fts_expr)
-    else:
-        sql = "SELECT a.*, 0 as rank FROM assets a WHERE 1=1"
+        params = []
+        if query and query.strip():
+            clean_q = query.replace('"', '""').strip()
+            terms = [f'"{t}"*' for t in clean_q.split() if t]
+            fts_expr = " AND ".join(terms)
+            sql = """
+            SELECT a.*, fts.rank
+            FROM assets_fts fts
+            JOIN assets a ON a.id = fts.id
+            WHERE assets_fts MATCH ?
+            """
+            params.append(fts_expr)
+        else:
+            sql = "SELECT a.*, 0 as rank FROM assets a WHERE 1=1"
 
-    if category and category.lower() != "all":
-        sql += " AND a.category = ?"
-        params.append(category)
+        if category and category.lower() != "all":
+            sql += " AND a.category = ?"
+            params.append(category)
 
-    if pipeline and pipeline.lower() != "all":
-        sql += " AND a.render_pipelines LIKE ?"
-        params.append(f"%{pipeline}%")
+        if pipeline and pipeline.lower() != "all":
+            sql += " AND a.render_pipelines LIKE ?"
+            params.append(f"%{pipeline}%")
 
-    if source and source.lower() != "all":
-        sql += " AND a.source = ?"
-        params.append(source)
+        if source and source.lower() != "all":
+            sql += " AND a.source = ?"
+            params.append(source)
 
-    if local == "local":
-        sql += " AND a.local_path != ''"
-    elif local == "cloud":
-        sql += " AND a.local_path = ''"
+        if local == "local":
+            sql += " AND a.local_path != ''"
+        elif local == "cloud":
+            sql += " AND a.local_path = ''"
 
-    if query and query.strip():
-        sql += " ORDER BY fts.rank ASC LIMIT ? OFFSET ?"
-    else:
-        sql += " ORDER BY a.claimed_date DESC, a.title ASC LIMIT ? OFFSET ?"
+        if query and query.strip():
+            sql += " ORDER BY fts.rank ASC LIMIT ? OFFSET ?"
+        else:
+            sql += " ORDER BY a.claimed_date DESC, a.title ASC LIMIT ? OFFSET ?"
 
-    params.extend([limit, offset])
+        params.extend([limit, offset])
 
-    cur.execute(sql, params)
-    rows = cur.fetchall()
+        cur.execute(sql, params)
+        rows = cur.fetchall()
 
-    results = []
-    for r in rows:
-        item = dict(r)
-        for k in ["render_pipelines", "tags", "gallery_images", "video_links", "formats"]:
-            try:
-                item[k] = json.loads(item.get(k) or "[]")
-            except:
-                item[k] = []
-        results.append(item)
-
-    conn.close()
-    return results
+        results = []
+        for r in rows:
+            item = dict(r)
+            for k in ["render_pipelines", "tags", "gallery_images", "video_links", "formats"]:
+                if item.get(k) and isinstance(item[k], str):
+                    try:
+                        item[k] = json.loads(item[k])
+                    except Exception:
+                        item[k] = []
+                elif not item.get(k):
+                    item[k] = []
+            results.append(item)
+        return results
+    except Exception:
+        return []
+    finally:
+        conn.close()
 
 def get_asset_by_id(asset_id: str, db_path: str = DB_PATH) -> Optional[Dict[str, Any]]:
     conn = get_connection(db_path)

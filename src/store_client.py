@@ -113,9 +113,11 @@ def _log(msg: str):
     line = f"[store] {msg}"
     print(line)
     try:
-        os.makedirs(os.path.join(ROOT_DIR, "data"), exist_ok=True)
-        with open(os.path.join(ROOT_DIR, "data", "store_harvest.log"), "a",
-                  encoding="utf-8") as f:
+        from .config import rotate_log_if_large
+        log_file = os.path.join(ROOT_DIR, "data", "store_harvest.log")
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        rotate_log_if_large(log_file)
+        with open(log_file, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:
         pass
