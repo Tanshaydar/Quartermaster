@@ -16,7 +16,7 @@ import os
 import sys
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QEvent, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap

@@ -13,8 +13,12 @@ import os
 import re
 from typing import Any, Dict, List
 
+from typing import Any, Dict, List, Optional
+
 try:
     from .db import get_connection, search_assets, DB_PATH
+except ImportError:
+    from db import get_connection, search_assets, DB_PATH
 except ImportError:
     from db import get_connection, search_assets, DB_PATH
 
