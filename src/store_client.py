@@ -50,12 +50,12 @@ try:
     from .db import (get_unenriched, mark_enriched, upsert_asset, DB_PATH,
                      get_connection)
     from .config import load_config
-    from .ingest import classify_asset
+    from .ingest import classify_asset, _stable_id
 except ImportError:
     from db import (get_unenriched, mark_enriched, upsert_asset, DB_PATH,
                     get_connection)
     from config import load_config
-    from ingest import classify_asset
+    from ingest import classify_asset, _stable_id
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -374,21 +374,49 @@ def _extract_media_images(item: dict) -> tuple:
     cover = ""
     gallery = []
 
-    # 1. Direct string fields
-    for k in ("thumbnailUrl", "thumbnail", "image", "imageUrl", "heroUrl", "coverUrl", "coverImage", "mainImage", "primaryImage"):
+    # 1. Fab's thumbnails structure (thumbnails: [{mediaUrl: "...", images: [{url: "...", width: ...}]}])
+    th_list = item.get("thumbnails")
+    if isinstance(th_list, list):
+        for th in th_list:
+            if isinstance(th, dict):
+                mu = th.get("mediaUrl")
+                if isinstance(mu, str) and mu.startswith("http"):
+                    if not cover:
+                        cover = mu
+                    if mu not in gallery:
+                        gallery.append(mu)
+                sub_imgs = th.get("images")
+                if isinstance(sub_imgs, list) and sub_imgs:
+                    sorted_sub = sorted([x for x in sub_imgs if isinstance(x, dict) and x.get("url")],
+                                        key=lambda x: x.get("width", 0), reverse=True)
+                    if sorted_sub:
+                        largest_url = sorted_sub[0]["url"]
+                        if not cover:
+                            cover = largest_url
+                        if largest_url not in gallery:
+                            gallery.append(largest_url)
+
+    # 2. Direct string fields
+    for k in ("thumbnailUrl", "thumbnail", "image", "imageUrl", "heroUrl", "coverUrl", "coverImage", "mainImage", "primaryImage", "mediaUrl"):
         v = item.get(k)
         if isinstance(v, str) and v.startswith("http"):
-            cover = v
+            if not cover:
+                cover = v
+            if v not in gallery:
+                gallery.append(v)
             break
         if isinstance(v, dict):
             for sub in ("url", "href", "src"):
                 if isinstance(v.get(sub), str) and v[sub].startswith("http"):
-                    cover = v[sub]
+                    if not cover:
+                        cover = v[sub]
+                    if v[sub] not in gallery:
+                        gallery.append(v[sub])
                     break
         if cover:
             break
 
-    # 2. Key Image dict
+    # 3. Key Image dict
     if not cover:
         for k in ("keyImage", "mainImage", "primaryImage", "cover"):
             ki = item.get(k)
@@ -396,12 +424,14 @@ def _extract_media_images(item: dict) -> tuple:
                 for sub in ("url", "href", "src"):
                     if isinstance(ki.get(sub), str) and ki[sub].startswith("http"):
                         cover = ki[sub]
+                        if cover not in gallery:
+                            gallery.append(cover)
                         break
             if cover:
                 break
 
-    # 3. Media / Screenshots array
-    for arr_key in ("media", "images", "thumbnails", "gallery", "screenshots"):
+    # 4. Media / Screenshots array
+    for arr_key in ("media", "images", "gallery", "screenshots"):
         arr = item.get(arr_key)
         if isinstance(arr, list):
             for elem in arr:
@@ -409,7 +439,7 @@ def _extract_media_images(item: dict) -> tuple:
                 if isinstance(elem, str) and elem.startswith("http"):
                     u = elem
                 elif isinstance(elem, dict):
-                    for sub in ("url", "src", "href", "imageUrl"):
+                    for sub in ("url", "src", "href", "imageUrl", "mediaUrl"):
                         if isinstance(elem.get(sub), str) and elem[sub].startswith("http"):
                             u = elem[sub]
                             break
@@ -422,7 +452,7 @@ def _extract_media_images(item: dict) -> tuple:
 
 
 def _extract_publisher(item: dict) -> str:
-    for k in ("sellerName", "publisher", "publisherLabel", "publisherName", "developer", "author", "user"):
+    for k in ("sellerName", "publisher", "publisherLabel", "publisherName", "developer", "author", "user", "studio"):
         p = _extract_string(item.get(k), "name", "label", "sellerName", "username", "displayName")
         if p:
             return p[:120]
@@ -545,12 +575,14 @@ def _fab_flatten(item: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def harvest_fab_library(page, known_titles: set) -> List[Dict[str, Any]]:
+def harvest_fab_library(page, known_titles: Optional[set] = None) -> List[Dict[str, Any]]:
     """Replay Fab's own library-search endpoint with pagination until exhausted.
     Real payload shape (verified live):
       {"aggregations": …, "cursors": {…}, "next": <full URL|null>,
        "previous": …, "results": [listing, …]} — follow top-level "next"."""
     from urllib.parse import quote
+    if known_titles is None:
+        known_titles = set()
     collected: List[Dict[str, Any]] = []
     url = f"{_FAB_LIBRARY_API}?sort_by=-createdAt&source=acquired&count=50"
     pages = 0
@@ -989,7 +1021,9 @@ def fetch_library(provider: str, cancel_event=None) -> int:
         # pagination — replay until exhausted for authoritative completeness.
         if provider == "fab" and not landed_on_login:
             try:
-                harvested.extend(harvest_fab_library(page, new_titles))
+                fab_items = harvest_fab_library(page)
+                harvested.extend(fab_items)
+                _log(f"  fab native harvest returned {len(fab_items)} items")
             except Exception as e:
                 _log(f"  fab native harvest failed: {e}")
 
@@ -1026,9 +1060,17 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             continue
         processed_titles.add(title)
 
-        pkg_id = str(item.get("id") or item.get("listingId") or item.get("packageId") or "").strip()
+        pkg_id = str(item.get("uid") or item.get("id") or item.get("listingId") or item.get("packageId") or "").strip()
         store_url = _extract_store_url(item, provider)
         publisher = _extract_publisher(item)
+
+        # Prefer the category-path URL scheme (verified working 2026-08):
+        # https://assetstore.unity.com/packages/<category>/<anything>-<id>
+        # The slug text is irrelevant; category + id resolve to the real page.
+        if provider == "unity" and pkg_id:
+            cat = str(item.get("category") or "").strip()
+            if cat and "/" in cat:
+                store_url = f"https://assetstore.unity.com/packages/{cat}/x-{pkg_id}"
 
         # Reject pure UI filter facet stubs (no package_id, no store_url, and no publisher)
         if not pkg_id and not store_url and not publisher:
@@ -1037,7 +1079,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
 
         cls = classify_asset(title)
         cover_img, gallery_imgs = _extract_media_images(item)
-        stable_id = f"{provider}_{pkg_id if pkg_id else hashlib.sha1(title.lower().strip().encode('utf-8')).hexdigest()[:16]}"
+        stable_id = _stable_id(provider, pkg_id, title)
         asset = {
             "id": stable_id,
             "source": provider,
@@ -1053,8 +1095,12 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             "video_links": [],
         }
         # prefer the store's real description over the heuristic one
+        tech_specs = ""
+        if isinstance(item.get("assetFormats"), list) and item["assetFormats"]:
+            tech_specs = item["assetFormats"][0].get("technicalSpecs", {}).get("technicalDetails", "")
         rich = re.sub(r"<[^>]+>", " ", str(item.get("description")
-                                          or item.get("aiDescription") or ""))
+                                          or item.get("aiDescription")
+                                          or tech_specs or ""))
         rich = re.sub(r"\s+", " ", rich).strip()
         if len(rich) > 60:
             asset["summary"] = rich[:800]
@@ -1081,6 +1127,14 @@ def fetch_library(provider: str, cancel_event=None) -> int:
 _OG_IMAGE_RE = re.compile(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', re.I)
 _YT_RE = re.compile(r'(?:youtube\.com/(?:watch\?v=|embed/)|youtu\.be/)([\w-]{11})')
 _VIDEO_HINTS = re.compile(r'"(https?://[^"]+\.(?:mp4|webm)[^"]*)"', re.I)
+
+# Structured media array embedded in listing pages:
+#   "images":[{"type":"screenshot","imageUrl":"//…cdn…/package-screenshot/<guid>_scaled.jpg",…}, …]
+# Far more reliable than sweeping every key-image ref on the page, which
+# includes recommendation cards for OTHER assets.
+_SCREENSHOT_RE = re.compile(
+    r'\{"type":"screenshot","imageUrl":"((?:https?:)?//[^" ]+?(?:package-screenshot|key-image)/[^"]+?)"', re.I)
+_YT_EMBED_RE = re.compile(r'"type":"youtube","imageUrl":"(?:https?:)?//www\.youtube\.com/embed/([\w-]{11})')
 
 # Unity soft-404 shells (dead listing URLs) expose only the site-wide logo
 # as og:image — storing it gives every asset the same useless "cover".
@@ -1131,11 +1185,25 @@ def _enrich_one(asset):
             image_url = m_key.group(0)
 
     gallery = []
-    for g in re.findall(r'https?://assetstorev1-prd-cdn\.unity3d\.com/(?:package-screenshot|key-image)/[0-9a-f-]+\.(?:png|jpg|jpeg|webp)', html, re.I):
+
+    def _norm_img(u: str) -> str:
+        return "https:" + u if u.startswith("//") else u
+
+    # Preferred: the page's own typed media array (screenshots only).
+    for u in _SCREENSHOT_RE.findall(html):
+        g = _norm_img(u)
         if g not in gallery:
             gallery.append(g)
-        if len(gallery) >= 8:
+        if len(gallery) >= 12:
             break
+
+    # Fallback: legacy CDN sweep (older cached pages / layout variants).
+    if not gallery:
+        for g in re.findall(r'https?://assetstorev1-prd-cdn\.unity3d\.com/(?:package-screenshot|key-image)/[0-9a-f-]+\.(?:png|jpg|jpeg|webp)', html, re.I):
+            if g not in gallery:
+                gallery.append(g)
+            if len(gallery) >= 8:
+                break
 
     videos = []
     for vid in _YT_RE.findall(html):

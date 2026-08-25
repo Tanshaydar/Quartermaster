@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QEvent, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
@@ -1025,6 +1026,23 @@ def main():
     app.setStyleSheet(STYLE)
     app.setQuitOnLastWindowClosed(False)
 
+    # ---- Single Instance Enforcement ----
+    server_name = "Quartermaster_Desktop_App_SingleInstance"
+    socket = QLocalSocket()
+    socket.connectToServer(server_name)
+    if socket.waitForConnected(400):
+        # An instance is already running -> tell it to show/activate and exit cleanly
+        socket.write(b"ACTIVATE\n")
+        socket.flush()
+        socket.waitForBytesWritten(1000)
+        socket.close()
+        sys.exit(0)
+
+    # Clean up any stale pipe/server from previous crashed sessions
+    QLocalServer.removeServer(server_name)
+    local_server = QLocalServer()
+    local_server.listen(server_name)
+
     # Set Window and Taskbar Icon
     app_icon = None
     if os.path.exists(ICON_PATH):
@@ -1040,6 +1058,27 @@ def main():
         win.setWindowIcon(app_icon)
     win._tray = win.make_tray_icon()
     win.show()
+
+    def _activate_window():
+        win.show()
+        win.setWindowState((win.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
+        win.raise_()
+        win.activateWindow()
+
+    def _on_new_connection():
+        client = local_server.nextPendingConnection()
+        if client:
+            client.readyRead.connect(lambda: _handle_client_msg(client))
+
+    def _handle_client_msg(client):
+        try:
+            msg = bytes(client.readAll()).decode("utf-8", errors="ignore")
+            if "ACTIVATE" in msg:
+                _activate_window()
+        finally:
+            client.close()
+
+    local_server.newConnection.connect(_on_new_connection)
 
     hotkey = WinHotkeyFilter(win.toggle_visible)
     hotkey.install()
