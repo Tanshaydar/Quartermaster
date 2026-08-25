@@ -584,11 +584,6 @@ class MainWindow(QMainWindow):
             cancellable=False))
         add_sync_btn("⟳ Fetch Fab", lambda: self._fetch_op("fab"))
         add_sync_btn("🖼 Enrich library", lambda: self._start_enrich_sweep())
-        add_sync_btn("🖼 Fab galleries", lambda: self._long_op(
-            lambda ev, cb: store_client.run_fab_deep_media(cancel_event=ev, progress=cb),
-            "Fab galleries",
-            pre_status="Visiting each Fab listing to pull full screenshot galleries…",
-            with_progress=True))
         add_sync_btn("⚡ Scan local", lambda: self._long_op(
             lambda ev: local_scan.scan_all(), "Disk scan"))
         sp.addWidget(self.sync_status, 1)
@@ -903,17 +898,50 @@ class MainWindow(QMainWindow):
         self.op.done.connect(finished)
         self.op.start()
 
+    def _fab_deep_pending(self) -> int:
+        """Fab rows whose gallery is still cover-only but whose canonical
+        listing URL is known — i.e. work the browser-based pass can do."""
+        from .db import get_connection
+        conn = get_connection()
+        n = 0
+        for (g, u) in conn.execute(
+                "SELECT gallery_images, store_url FROM assets WHERE source='fab'"):
+            if u and "/library/assets/" in u:
+                try:
+                    if len(json.loads(g or "[]")) <= 1:
+                        n += 1
+                except Exception:
+                    n += 1
+        conn.close()
+        return n
+
     def _start_enrich_sweep(self):
         pending = store_client.count_unenriched()
-        if pending == 0:
+        fab_pending = self._fab_deep_pending()
+        if pending == 0 and fab_pending == 0:
             self.sync_status.setText("Vault already fully enriched.")
             return
+
+        def auto_fab(msg, ok):
+            # Phase 2: after HTTP enrichment, sweep Fab listings in the
+            # authed browser for their full screenshot galleries.
+            left = self._fab_deep_pending()
+            if ok and left > 0:
+                self._long_op(
+                    lambda ev, cb: store_client.run_fab_deep_media(cancel_event=ev,
+                                                                   progress=cb),
+                    "Fab galleries",
+                    pre_status=f"HTTP pass done — visiting {left} Fab listings for full galleries…",
+                    with_progress=True)
+
         self._long_op(
             lambda ev, prog_cb: store_client.enrich_assets(progress=prog_cb,
                                                            cancel_event=ev),
             "Enrichment",
-            pre_status=f"Enriching {pending} assets in batches (pause between batches)…",
-            with_progress=True)
+            pre_status=(f"Enriching {pending} assets in batches…"
+                        + (f" then {fab_pending} Fab listing visits." if fab_pending else "")),
+            with_progress=True,
+            auto_follow=auto_fab)
 
     def _fetch_op(self, provider):
         if not store_client.has_saved_session(provider):
