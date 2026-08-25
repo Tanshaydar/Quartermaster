@@ -132,8 +132,61 @@ def has_saved_session(provider: str) -> bool:
     return os.path.isdir(_profile_dir(cfg, provider))
 
 
-def _close_browser_gracefully(proc: subprocess.Popen):
+def _is_pid_alive(pid: int) -> bool:
+    """Check if a given process ID is currently running on the system."""
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            SYNCHRONIZE = 0x00100000
+            handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
+def _acquire_profile_lock(prof_dir: str, provider: str) -> str:
+    """Ensure no other process is actively running a browser session on this profile."""
+    lock_file = os.path.join(prof_dir, ".profile_lock")
+    if os.path.exists(lock_file):
+        try:
+            with open(lock_file, "r", encoding="utf-8") as f:
+                old_pid = int(f.read().strip())
+            if _is_pid_alive(old_pid):
+                active_child = _active_procs.get(provider)
+                if not active_child or active_child.pid != old_pid:
+                    raise RuntimeError(
+                        f"A browser session for {provider} is already running in another process (PID {old_pid}). "
+                        f"Please close that browser window before starting a new session.")
+        except ValueError:
+            pass
+    return lock_file
+
+
+def _release_profile_lock(prof_dir: str):
+    lock_file = os.path.join(prof_dir, ".profile_lock")
+    if os.path.exists(lock_file):
+        try:
+            os.remove(lock_file)
+        except Exception:
+            pass
+
+
+def _close_browser_gracefully(proc: subprocess.Popen, prof_dir: Optional[str] = None):
     """WM_CLOSE first (flushes cookies/session trust), hard-kill as fallback."""
+    if prof_dir:
+        _release_profile_lock(prof_dir)
     if proc is None or proc.poll() is not None:
         return
     if sys.platform == "win32":
@@ -152,10 +205,14 @@ def _close_browser_gracefully(proc: subprocess.Popen):
 
 def kill_leftover(provider: str):
     old = _active_procs.get(provider)
+    cfg = load_config()
+    prof_dir = _profile_dir(cfg, provider)
     if old and old.poll() is None:
         _log(f"{provider}: terminating leftover browser (pid {old.pid})")
-        _close_browser_gracefully(old)
+        _close_browser_gracefully(old, prof_dir)
         time.sleep(1)
+    else:
+        _release_profile_lock(prof_dir)
     _active_procs[provider] = None
 
 
@@ -164,13 +221,15 @@ def _launch_browser(cfg, provider: str, start_url: Optional[str] = None,
     """Launch the user's real browser. cdp=False => ZERO automation (login).
     Returns (proc, port) — port is only meaningful when cdp=True."""
     kill_leftover(provider)
+    prof_dir = _profile_dir(cfg, provider)
+    lock_file = _acquire_profile_lock(prof_dir, provider)
     exe = _find_browser()
     if not exe:
         raise RuntimeError("No Chrome/Edge installation found.")
     url = start_url or LOGIN_URLS[provider]
     args = [
         exe,
-        f"--user-data-dir={_profile_dir(cfg, provider)}",
+        f"--user-data-dir={prof_dir}",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-sync",
@@ -186,6 +245,11 @@ def _launch_browser(cfg, provider: str, start_url: Optional[str] = None,
         args.insert(1, f"--remote-debugging-port={port}")
     proc = subprocess.Popen(args)
     _active_procs[provider] = proc
+    try:
+        with open(lock_file, "w", encoding="utf-8") as f:
+            f.write(str(proc.pid))
+    except Exception:
+        pass
     return proc, port
 
 
@@ -236,7 +300,9 @@ def interactive_login(provider: str, timeout_minutes: int = 15,
     if not closed_by_user:
         reason = "cancelled" if (cancel_event and cancel_event.is_set()) else "timed out"
         _log(f"{provider} login {reason}; closing window.")
-        _close_browser_gracefully(proc)
+        _close_browser_gracefully(proc, _profile_dir(cfg, provider))
+    else:
+        _release_profile_lock(_profile_dir(cfg, provider))
 
     ok = closed_by_user
     _log(f"{provider} login window {'closed by user' if ok else 'timed out'}. "
@@ -654,7 +720,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
 
         time.sleep(2)   # let final cookie writes flush before closing
     finally:
-        _close_browser_gracefully(proc)
+        _close_browser_gracefully(proc, _profile_dir(cfg, provider))
         if browser:
             try:
                 browser.close()

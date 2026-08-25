@@ -406,19 +406,31 @@ class DetailPanel(QScrollArea):
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         from .unpacker import import_asset_to_project
         a = self.current
+        if not a:
+            return
         proj = QFileDialog.getExistingDirectory(
             self, "Choose Unity project root", "",
             QFileDialog.Option.ShowDirsOnly)
         if not proj:
             return
-        try:
-            r = import_asset_to_project(a["id"], proj)
-            QMessageBox.information(
-                self, "Imported",
-                f"Unpacked '{r['title']}' into:\n{r['project']}\n\n"
-                f"Files written: {r['written']}  ·  skipped: {r['skipped']}")
-        except Exception as e:
-            QMessageBox.critical(self, "Import failed", str(e))
+        win = self.window()
+        if hasattr(win, "_long_op"):
+            win._long_op(
+                lambda ev: import_asset_to_project(a["id"], proj),
+                f"Unpack {a['title']}",
+                pre_status=f"Unpacking '{a['title']}' into project…",
+                success_text=f"✅ Unpacked '{a['title']}' into {proj}",
+                cancellable=False
+            )
+        else:
+            try:
+                r = import_asset_to_project(a["id"], proj)
+                QMessageBox.information(
+                    self, "Imported",
+                    f"Unpacked '{r['title']}' into:\n{r['project']}\n\n"
+                    f"Files written: {r['written']}  ·  skipped: {r['skipped']}")
+            except Exception as e:
+                QMessageBox.critical(self, "Import failed", str(e))
 
     @staticmethod
     def _set_cover(label: QLabel, data: bytes):
@@ -904,6 +916,14 @@ class MainWindow(QMainWindow):
             self.activateWindow()
             self.search.setFocus()
 
+    def _shutdown(self):
+        """Gracefully wait for any running background QThread before application teardown."""
+        if getattr(self, "_cancel_event", None):
+            self._cancel_event.set()
+        op = getattr(self, "op", None)
+        if op is not None and op.isRunning():
+            op.wait(5000)
+
     def closeEvent(self, ev):
         # minimize-to-tray instead of quitting (Quit is in the tray menu / Ctrl+Q)
         if getattr(self, "_tray", None) and getattr(self, "_really_quit", False) is not True \
@@ -913,6 +933,7 @@ class MainWindow(QMainWindow):
             self._tray.showMessage("Quartermaster", "Still running in the tray — Win+Alt+V to reopen.",
                                    QSystemTrayIcon.MessageIcon.Information, 2500)
             return
+        self._shutdown()
         ev.accept()
 
 
