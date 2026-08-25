@@ -77,6 +77,24 @@ LIBRARY_URLS = {
 
 _LOGIN_MARKERS = ("login", "sign-in", "signin", "id/")
 
+# Restrict passive network harvesting to the store's own origins. Without
+# this, the generic list detector happily mistakes Edge newsfeed cards,
+# Google autocomplete payloads, etc. for asset listings.
+_PROVIDER_HOSTS = {
+    "unity": ("unity.com", "unity3d.com"),
+    "fab": ("fab.com", "epicgames.com"),
+}
+
+
+def _url_host_in_provider(url: str, provider: str) -> bool:
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return any(host == d or host.endswith("." + d)
+               for d in _PROVIDER_HOSTS.get(provider, ()))
+
 # ---------------------------------------------------------------------------
 # Browser lifecycle (one instance per provider, graceful shutdown)
 # ---------------------------------------------------------------------------
@@ -404,6 +422,127 @@ _SCROLL_JS = """
 """
 
 
+# ---------------------------------------------------------------------------
+# Fab native harvest (/i/library/search — plain REST, cursor-paginated)
+#
+# Diagnostics from data/store_harvest.log showed Fab's authenticated library
+# feed is a simple REST endpoint (NOT GraphQL like Unity): each response
+# carries a page of acquired listings plus an opaque cursor for the next.
+# Replaying it from the page context gives authoritative completeness —
+# the property Unity gets from myAssets.
+# ---------------------------------------------------------------------------
+
+_FAB_LIBRARY_API = "https://www.fab.com/i/library/search"
+
+_FAB_FETCH_JS = """
+async (args) => {
+    const r = await fetch(args.url, {
+        credentials: 'include',
+        headers: {'Accept': 'application/json'}
+    });
+    if (!r.ok) return {"__http_status": r.status};
+    return await r.json();
+}
+"""
+
+
+def _fab_find_results(node, depth=0):
+    """Locate the listing array in a /i/library/search payload (schema-tolerant)."""
+    if depth > 4 or not isinstance(node, dict):
+        return None
+    for key in ("results", "elements", "content", "items", "listings", "data"):
+        v = node.get(key)
+        if isinstance(v, list) and v and isinstance(v[0], dict):
+            return v
+    for v in node.values():
+        if isinstance(v, dict):
+            found = _fab_find_results(v, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+def _fab_find_cursor(node, depth=0):
+    """Find the next-page cursor wherever the API hides it."""
+    if depth > 5 or not isinstance(node, dict):
+        return ""
+    for k, v in node.items():
+        if "cursor" in k.lower() and isinstance(v, str) and v:
+            return v
+        found = _fab_find_cursor(v, depth + 1)
+        if found:
+            return found
+    return ""
+
+
+def _fab_flatten(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Fab sometimes wraps listings in sub-objects ('listing', 'asset', …);
+    prefer the richest inner dict that actually carries a name-ish key."""
+    if any(k in item for k in _NAME_KEYS):
+        return item
+    best = None
+    for v in item.values():
+        if isinstance(v, dict) and any(k in v for k in _NAME_KEYS):
+            if best is None or len(v) > len(best):
+                best = v
+    return best if best is not None else item
+
+
+def harvest_fab_library(page, known_titles: set) -> List[Dict[str, Any]]:
+    """Replay Fab's own library-search endpoint with pagination until exhausted.
+    Real payload shape (verified live):
+      {"aggregations": …, "cursors": {…}, "next": <full URL|null>,
+       "previous": …, "results": [listing, …]} — follow top-level "next"."""
+    from urllib.parse import quote
+    collected: List[Dict[str, Any]] = []
+    url = f"{_FAB_LIBRARY_API}?sort_by=-createdAt&source=acquired&count=50"
+    pages = 0
+    while pages < 200:          # safety cap; real vaults paginate well below this
+        body = page.evaluate(_FAB_FETCH_JS, {"url": url})
+        if not isinstance(body, dict) or "__http_status" in body:
+            status = body.get("__http_status") if isinstance(body, dict) else type(body).__name__
+            _log(f"  fab harvest: bad response ({status}); stopping.")
+            break
+        items = _fab_find_results(body)
+        if items is None:
+            _log(f"  [fab diag] unrecognized payload shape: top-keys={list(body.keys())[:8]}")
+            break
+        new = 0
+        for raw in items:
+            item = _fab_flatten(raw)
+            title = str(item.get("name") or item.get("title") or "").strip()
+            if not title or title in known_titles:
+                continue
+            known_titles.add(title)
+            collected.append(item)
+            new += 1
+        pages += 1
+        _log(f"  fab harvest: page {pages} (+{new} this page, {len(collected)} total)")
+
+        # Follow Fab's documented pagination: top-level "next" carries the
+        # full next-page URL (null on the last page).
+        nxt = body.get("next")
+        if isinstance(nxt, str) and nxt.startswith("http"):
+            url = nxt
+            continue
+        # Defensive fallbacks in case the API shape shifts again.
+        tok = ""
+        cur = body.get("cursors")
+        if isinstance(cur, dict) and isinstance(cur.get("next"), str) and cur["next"]:
+            tok = cur["next"]
+        if not tok:
+            tok = _fab_find_cursor(body)
+        if tok:
+            url = (f"{_FAB_LIBRARY_API}?sort_by=-createdAt&source=acquired"
+                   f"&count=50&cursor={quote(tok, safe='')}")
+            continue
+        _log(f"  fab harvest complete: {len(collected)} listings across {pages} pages")
+        break
+    if not collected and pages == 0:
+        _log("  fab harvest produced nothing — see [fab diag] above for payload shape")
+    return collected
+
+
 def fetch_library(provider: str, cancel_event=None) -> int:
     """Open the store library page with the saved session (headed), intercept
     JSON responses, upsert discovered assets. Raises visible errors instead of
@@ -430,6 +569,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
     captured_headers: Dict[str, str] = {}
     landed_on_login = False
     owned_ids: set = set()
+    fab_diag = {"logged": False}
 
     def on_request(req):
         try:
@@ -451,6 +591,10 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             if "json" not in ctype:
                 return
             url = resp.url
+            # Ignore background chatter from non-store origins (restored tabs,
+            # newsfeeds): the generic list heuristic cannot tell them apart.
+            if not _url_host_in_provider(url, provider):
+                return
             if url not in seen_urls:
                 seen_urls.add(url)
                 all_json_urls.append(url)
@@ -464,6 +608,21 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             if body is None:
                 _log(f"  [diag] JSON parse failed @ {url[:90]}: {parse_err}")
                 return
+
+            # Fab library feed: log its structure once per run so the native
+            # harvester's field mappings stay verifiable against reality.
+            if "fab.com/i/library/search" in url and not fab_diag["logged"]:
+                fab_diag["logged"] = True
+                try:
+                    items = _fab_find_results(body)
+                    _log(f"  [fab diag] top-level keys={list(body.keys())[:8]}")
+                    if items:
+                        sample = _fab_flatten(items[0])
+                        _log(f"  [fab diag] item keys={sorted(str(k) for k in sample.keys())[:14]}")
+                        _log("  [fab diag] sample=" + json.dumps(
+                            {k: str(sample[k])[:48] for k in list(sample)[:10]}, ensure_ascii=False))
+                except Exception as e:
+                    _log(f"  [fab diag] error: {e}")
 
             # CurrentUser carries the AUTHORITATIVE owned-package id list
             try:
@@ -537,8 +696,25 @@ def fetch_library(provider: str, cancel_event=None) -> int:
         ctx.on("response", on_response)
         ctx.on("request", on_request)
 
-        pages = ctx.pages
-        page = pages[0] if pages else ctx.new_page()
+        # Prefer OUR about:blank tab (created by _launch_browser); restored
+        # session tabs would otherwise receive the navigation, leaving the
+        # blank tab dangling and feeding newsfeed noise into the interceptor.
+        target = None
+        for p in ctx.pages:
+            u = (p.url or "")
+            if u == "about:blank":
+                target = p
+                break
+        if target is None:
+            target = ctx.new_page()
+        else:
+            for p in ctx.pages:
+                if p is not target:
+                    try:
+                        p.close()
+                    except Exception:
+                        pass
+        page = target
         try:
             page.goto(first_url, wait_until="domcontentloaded", timeout=45000)
         except Exception as e:
@@ -720,6 +896,14 @@ def fetch_library(provider: str, cancel_event=None) -> int:
                     _log(f"  chunk harvest failed: {e}")
 
 
+        # ---- Fab native harvest: /i/library/search is plain REST with cursor
+        # pagination — replay until exhausted for authoritative completeness.
+        if provider == "fab" and not landed_on_login:
+            try:
+                harvested.extend(harvest_fab_library(page, new_titles))
+            except Exception as e:
+                _log(f"  fab native harvest failed: {e}")
+
         time.sleep(2)   # let final cookie writes flush before closing
     finally:
         _close_browser_gracefully(proc, _profile_dir(cfg, provider))
@@ -739,6 +923,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
 
     count = 0
     unknown = 0
+    processed_titles: set = set()
     for item in harvested:
         title = None
         for k in _NAME_KEYS:
@@ -748,6 +933,9 @@ def fetch_library(provider: str, cancel_event=None) -> int:
         if not title:
             unknown += 1
             continue
+        if title in processed_titles:
+            continue
+        processed_titles.add(title)
 
         pkg_id = str(item.get("id") or item.get("listingId") or item.get("packageId") or "").strip()
         store_url = _extract_store_url(item, provider)
