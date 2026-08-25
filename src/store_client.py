@@ -531,16 +531,18 @@ def _fab_find_cursor(node, depth=0):
 
 
 def _fab_flatten(item: Dict[str, Any]) -> Dict[str, Any]:
-    """Fab sometimes wraps listings in sub-objects ('listing', 'asset', …);
-    prefer the richest inner dict that actually carries a name-ish key."""
-    if any(k in item for k in _NAME_KEYS):
-        return item
-    best = None
-    for v in item.values():
-        if isinstance(v, dict) and any(k in v for k in _NAME_KEYS):
-            if best is None or len(v) > len(best):
-                best = v
-    return best if best is not None else item
+    """Fab wraps listing, seller, and media in sub-objects; merge all inner
+    dictionaries so thumbnails, screenshots, key images, and descriptions
+    are never dropped."""
+    if not isinstance(item, dict):
+        return {}
+    out = dict(item)
+    for k, v in item.items():
+        if isinstance(v, dict):
+            for subk, subv in v.items():
+                if subk not in out or not out[subk]:
+                    out[subk] = subv
+    return out
 
 
 def harvest_fab_library(page, known_titles: set) -> List[Dict[str, Any]]:
@@ -562,6 +564,11 @@ def harvest_fab_library(page, known_titles: set) -> List[Dict[str, Any]]:
         if items is None:
             _log(f"  [fab diag] unrecognized payload shape: top-keys={list(body.keys())[:8]}")
             break
+        if pages == 0 and items:
+            sample_flat = _fab_flatten(items[0])
+            _log(f"  [fab sample] keys={list(sample_flat.keys())[:12]}")
+            cover_sample, gallery_sample = _extract_media_images(sample_flat)
+            _log(f"  [fab sample] cover={cover_sample[:60] if cover_sample else 'none'} | gallery={len(gallery_sample)}")
         new = 0
         for raw in items:
             item = _fab_flatten(raw)
