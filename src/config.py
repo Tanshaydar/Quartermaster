@@ -64,10 +64,17 @@ ALL_TOKEN_PATHS = [
 ]
 
 
+_ACTIVE_AUTH_TOKEN: Optional[str] = None
+
+
 def get_or_create_auth_token() -> str:
     """Returns or generates the per-installation API token.
     Stored in data/.auth_token and actively mirrored to ~/.quartermaster/auth_token,
     %LOCALAPPDATA%/Quartermaster/token, and legacy VaultMCP paths for portable client discovery."""
+    global _ACTIVE_AUTH_TOKEN
+    if _ACTIVE_AUTH_TOKEN:
+        return _ACTIVE_AUTH_TOKEN
+
     cfg = load_config()
     tok = str(cfg.get("auth_token", "")).strip()
 
@@ -99,4 +106,5 @@ def get_or_create_auth_token() -> str:
         except Exception:
             pass
 
+    _ACTIVE_AUTH_TOKEN = tok
     return tok

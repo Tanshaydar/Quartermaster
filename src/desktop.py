@@ -95,11 +95,12 @@ class LongOp(QThread):
             try:
                 sig = inspect.signature(self.fn)
                 params = len(sig.parameters)
-                if params >= 1:
-                    result = self.fn(safe_progress)
-                else:
-                    result = self.fn()
-            except Exception:
+            except (ValueError, TypeError):
+                params = 0
+
+            if params >= 1:
+                result = self.fn(safe_progress)
+            else:
                 result = self.fn()
 
             if result is False:
@@ -421,19 +422,38 @@ class DetailPanel(QScrollArea):
 
     @staticmethod
     def _set_cover(label: QLabel, data: bytes):
-        pm = QPixmap()
-        if pm.loadFromData(data):
-            label.setPixmap(pm.scaled(label.width(), label.height(),
-                                      Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                      Qt.TransformationMode.SmoothTransformation))
+        try:
+            # Shiboken C++ liveness check against deleted QLabel widgets
+            try:
+                import shiboken6
+                if not shiboken6.isValid(label):
+                    return
+            except ImportError:
+                pass
+            pm = QPixmap()
+            if pm.loadFromData(data):
+                label.setPixmap(pm.scaled(label.width(), label.height(),
+                                          Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                          Qt.TransformationMode.SmoothTransformation))
+        except (RuntimeError, Exception):
+            pass
 
     @staticmethod
     def _set_thumb(label: QLabel, data: bytes):
-        pm = QPixmap()
-        if pm.loadFromData(data):
-            label.setPixmap(pm.scaled(label.size(),
-                                      Qt.AspectRatioMode.KeepAspectRatio,
-                                      Qt.TransformationMode.SmoothTransformation))
+        try:
+            try:
+                import shiboken6
+                if not shiboken6.isValid(label):
+                    return
+            except ImportError:
+                pass
+            pm = QPixmap()
+            if pm.loadFromData(data):
+                label.setPixmap(pm.scaled(label.size(),
+                                          Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation))
+        except (RuntimeError, Exception):
+            pass
 
     def _copy_context(self):
         a = self.current
@@ -579,6 +599,9 @@ class MainWindow(QMainWindow):
         self.refresh_stats()
         self.do_search()
 
+        # Graceful shutdown handler on application quit
+        QApplication.instance().aboutToQuit.connect(self._shutdown)
+
         # auto disk-scan at startup (background), then refresh
         self._long_op(lambda ev: local_scan.scan_all(), "Startup disk scan")
 
@@ -599,8 +622,9 @@ class MainWindow(QMainWindow):
         for item in shown:
             li = QListWidgetItem(self.list)
             li.setData(Qt.ItemDataRole.UserRole, item)
-            li.setSizeHint(AssetCard(item).sizeHint())
-            self.list.setItemWidget(li, AssetCard(item))
+            card = AssetCard(item)
+            li.setSizeHint(card.sizeHint())
+            self.list.setItemWidget(li, card)
         total = len(self.results)
         note = "" if total <= 300 else f" (showing first 300)"
         self.statusBar().showMessage(f"{total} matches{note}")
