@@ -20,7 +20,9 @@ try:
 except ImportError:
     from mcp.server.fastmcp import FastMCP                     # mcp SDK 1.x
 
-from .db import search_assets, get_asset_by_id, get_stats, DB_PATH
+from .db import init_db, search_assets, get_asset_by_id, get_stats, DB_PATH
+
+init_db()
 from .ingest import classify_asset
 from . import semantic, unpacker
 from . import project_audit

@@ -5,8 +5,15 @@ from typing import List, Dict, Any, Optional
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "assets.db")
 
+_DB_INITIALIZED = False
+
+
 def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
+    global _DB_INITIALIZED
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    if not _DB_INITIALIZED and db_path == DB_PATH:
+        _DB_INITIALIZED = True
+        init_db(db_path)
     conn = sqlite3.connect(db_path, timeout=10)
     # WAL mode: concurrent readers (MCP agent) never block the writer (GUI)
     conn.execute("PRAGMA journal_mode=WAL")

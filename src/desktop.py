@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 try:
-    from .db import search_assets, get_asset_by_id, get_stats, get_categories
+    from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
     from .config import load_config
     from . import store_client, local_scan
 except ImportError:
@@ -966,6 +966,7 @@ def _install_crash_logger():
 
 def main():
     _install_crash_logger()
+    init_db()
     
     # Register explicit Windows Application ID for native Taskbar Icon grouping
     if sys.platform == "win32":

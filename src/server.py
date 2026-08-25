@@ -28,13 +28,15 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 try:
-    from .db import search_assets, get_asset_by_id, get_stats, get_categories
+    from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
     from .config import load_config, get_or_create_auth_token, evict_image_cache, __version__
     from . import store_client, local_scan, unpacker, stack_rules
 except ImportError:
-    from db import search_assets, get_asset_by_id, get_stats, get_categories
+    from db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
     from config import load_config, get_or_create_auth_token, evict_image_cache, __version__
     import store_client, local_scan, unpacker, stack_rules
+
+init_db()
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.join(ROOT_DIR, "web")
