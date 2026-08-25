@@ -28,11 +28,11 @@ from PySide6.QtWidgets import (
 
 try:
     from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from .config import load_config
+    from .config import load_config, rotate_log_if_large, evict_image_cache, __version__
     from . import store_client, local_scan
 except ImportError:
-    from db import search_assets, get_asset_by_id, get_stats, get_categories
-    from config import load_config
+    from db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
+    from config import load_config, rotate_log_if_large, evict_image_cache, __version__
     import store_client, local_scan
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
