@@ -355,15 +355,70 @@ def _extract_store_url(item: dict, provider: str) -> str:
             if u.startswith("/"):
                 return f"https://assetstore.unity.com{u}" if provider == "unity" else f"https://www.fab.com{u}"
             return u
-    slug = item.get("slug") or item.get("packageSlug")
+    slug = item.get("slug") or item.get("packageSlug") or item.get("listingSlug")
     if slug and isinstance(slug, str):
         if provider == "unity":
             return f"https://assetstore.unity.com/packages/{slug.strip('/')}"
         return f"https://www.fab.com/listings/{slug.strip('/')}"
     pkg_id = item.get("id") or item.get("listingId") or item.get("packageId")
-    if pkg_id and str(pkg_id).isdigit() and provider == "unity":
-        return f"https://assetstore.unity.com/packages/slug/{pkg_id}"
+    if pkg_id:
+        if provider == "unity" and str(pkg_id).isdigit():
+            return f"https://assetstore.unity.com/packages/slug/{pkg_id}"
+        elif provider == "fab":
+            return f"https://www.fab.com/listings/{pkg_id}"
     return ""
+
+
+def _extract_media_images(item: dict) -> tuple:
+    """Extract primary cover art and gallery screenshots from any store payload format."""
+    cover = ""
+    gallery = []
+
+    # 1. Direct string fields
+    for k in ("thumbnailUrl", "thumbnail", "image", "imageUrl", "heroUrl", "coverUrl", "coverImage", "mainImage", "primaryImage"):
+        v = item.get(k)
+        if isinstance(v, str) and v.startswith("http"):
+            cover = v
+            break
+        if isinstance(v, dict):
+            for sub in ("url", "href", "src"):
+                if isinstance(v.get(sub), str) and v[sub].startswith("http"):
+                    cover = v[sub]
+                    break
+        if cover:
+            break
+
+    # 2. Key Image dict
+    if not cover:
+        for k in ("keyImage", "mainImage", "primaryImage", "cover"):
+            ki = item.get(k)
+            if isinstance(ki, dict):
+                for sub in ("url", "href", "src"):
+                    if isinstance(ki.get(sub), str) and ki[sub].startswith("http"):
+                        cover = ki[sub]
+                        break
+            if cover:
+                break
+
+    # 3. Media / Screenshots array
+    for arr_key in ("media", "images", "thumbnails", "gallery", "screenshots"):
+        arr = item.get(arr_key)
+        if isinstance(arr, list):
+            for elem in arr:
+                u = ""
+                if isinstance(elem, str) and elem.startswith("http"):
+                    u = elem
+                elif isinstance(elem, dict):
+                    for sub in ("url", "src", "href", "imageUrl"):
+                        if isinstance(elem.get(sub), str) and elem[sub].startswith("http"):
+                            u = elem[sub]
+                            break
+                if u and u not in gallery:
+                    gallery.append(u)
+                if not cover and u:
+                    cover = u
+
+    return cover, gallery[:8]
 
 
 def _extract_publisher(item: dict) -> str:
@@ -974,9 +1029,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             continue
 
         cls = classify_asset(title)
-        image = item.get("image") or item.get("thumbnail") or ""
-        if isinstance(item.get("keyImage"), dict):
-            image = item["keyImage"].get("url") or image
+        cover_img, gallery_imgs = _extract_media_images(item)
         stable_id = f"{provider}_{pkg_id if pkg_id else hashlib.sha1(title.lower().strip().encode('utf-8')).hexdigest()[:16]}"
         asset = {
             "id": stable_id,
@@ -987,9 +1040,9 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             "version": str(item.get("versionName") or item.get("version") or item.get("packageVersion") or ""),
             "claimed_date": (item.get("createdAt") or item.get("acquiredAt") or "")[:10],
             "store_url": store_url,
-            "image_url": image if isinstance(image, str) else "",
+            "image_url": cover_img,
             **cls,
-            "gallery_images": [],
+            "gallery_images": gallery_imgs,
             "video_links": [],
         }
         # prefer the store's real description over the heuristic one

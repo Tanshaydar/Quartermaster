@@ -242,6 +242,9 @@ def _row_from_fab(row: Dict[str, str]) -> Optional[Dict[str, Any]]:
     if not title:
         return None
     listing_id = (row.get("Listing ID") or "").strip()
+    store_url = (row.get("Store URL") or "").strip()
+    if not store_url and listing_id:
+        store_url = f"https://www.fab.com/listings/{listing_id}"
     formats = [f.strip() for f in (row.get("Formats") or "").split(",") if f.strip()]
     cls = classify_asset(title, row.get("Seller/Publisher", ""))
     cls["render_pipelines"] = []  # pipeline concept doesn't apply to Fab listings
@@ -257,7 +260,7 @@ def _row_from_fab(row: Dict[str, str]) -> Optional[Dict[str, Any]]:
         "size_mb": 0.0,
         "size_str": "",
         "claimed_date": (row.get("Acquired Date") or "").strip(),
-        "store_url": (row.get("Store URL") or "").strip(),
+        "store_url": store_url,
         "license": (row.get("License") or "").strip(),
         "formats": formats,
         **cls,
