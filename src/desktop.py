@@ -268,6 +268,7 @@ class DetailPanel(QScrollArea):
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.current: Optional[dict] = None
+        self._active_loaders: List[Any] = []
 
         inner = QWidget()
         self.lay = QVBoxLayout(inner)
@@ -277,10 +278,17 @@ class DetailPanel(QScrollArea):
         self.show_placeholder()
 
     def clear_layout(self, lay):
+        if lay is None:
+            return
         while lay.count():
             it = lay.takeAt(0)
             if it.widget():
-                it.widget().deleteLater()
+                w = it.widget()
+                w.setParent(None)
+                w.deleteLater()
+            elif it.layout():
+                self.clear_layout(it.layout())
+                it.layout().deleteLater()
 
     def show_placeholder(self):
         self.clear_layout(self.lay)
@@ -305,14 +313,17 @@ class DetailPanel(QScrollArea):
     def show_asset(self, item: dict):
         self.clear_layout(self.lay)
         self.current = item
+        self._active_loaders.clear()
 
-        cover = QLabel("  loading cover…  ")
+        img_url = (item.get("image_url") or "").strip()
+        cover = QLabel("  loading cover…  " if img_url else "No preview image available")
         cover.setFixedHeight(190)
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover.setStyleSheet(f"background:{CARD}; border-radius:8px; color:{MUTED};")
+        cover.setStyleSheet(f"background:{CARD}; border-radius:8px; color:{MUTED}; font-size:13px;")
         self.lay.addWidget(cover)
-        if item.get("image_url"):
-            loader = ImageLoader(item["image_url"], f"cover_{item['id']}")
+        if img_url:
+            loader = ImageLoader(img_url, f"cover_{item['id']}")
+            self._active_loaders.append(loader)
             loader.signals.fetched.connect(
                 lambda _k, pm, c=cover: self._set_cover(c, pm))
             QThreadPool.globalInstance().start(loader)
@@ -381,6 +392,7 @@ class DetailPanel(QScrollArea):
                 gl.setFixedSize(120, 68)
                 gl.setStyleSheet(f"background:{CARD}; border-radius:6px;")
                 loader = ImageLoader(g, f"g_{item['id']}_{i}")
+                self._active_loaders.append(loader)
                 loader.signals.fetched.connect(lambda _k, pm, l=gl: self._set_thumb(l, pm))
                 QThreadPool.globalInstance().start(loader)
                 row.addWidget(gl)
@@ -445,7 +457,9 @@ class DetailPanel(QScrollArea):
                 pass
             pm = QPixmap()
             if pm.loadFromData(data):
-                label.setPixmap(pm.scaled(label.width(), label.height(),
+                w = label.width() if label.width() > 20 else 460
+                h = label.height() if label.height() > 20 else 190
+                label.setPixmap(pm.scaled(w, h,
                                           Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                           Qt.TransformationMode.SmoothTransformation))
         except (RuntimeError, Exception):
@@ -462,8 +476,10 @@ class DetailPanel(QScrollArea):
                 pass
             pm = QPixmap()
             if pm.loadFromData(data):
-                label.setPixmap(pm.scaled(label.size(),
-                                          Qt.AspectRatioMode.KeepAspectRatio,
+                w = label.width() if label.width() > 20 else 120
+                h = label.height() if label.height() > 20 else 68
+                label.setPixmap(pm.scaled(w, h,
+                                          Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                           Qt.TransformationMode.SmoothTransformation))
         except (RuntimeError, Exception):
             pass
