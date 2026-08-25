@@ -17,8 +17,8 @@ def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
     if not _DB_INITIALIZED and db_path == DB_PATH:
         with _DB_INIT_LOCK:
             if not _DB_INITIALIZED:
-                _DB_INITIALIZED = True
                 init_db(db_path)
+                _DB_INITIALIZED = True
     conn = sqlite3.connect(db_path, timeout=10)
     # WAL mode: concurrent readers (MCP agent) never block the writer (GUI)
     conn.execute("PRAGMA journal_mode=WAL")
