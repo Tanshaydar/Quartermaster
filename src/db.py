@@ -376,7 +376,7 @@ def get_stats(db_path: str = DB_PATH) -> Dict[str, Any]:
 
 
 def reclassify_all_assets(db_path: str = DB_PATH) -> int:
-    """Reclassifies all assets using the word-boundary taxonomy and resyncs FTS5."""
+    """Reclassifies all assets using multimodal (vision + tags + title + summary) taxonomy and resyncs FTS5."""
     try:
         from .ingest import classify_asset
     except ImportError:
@@ -384,10 +384,22 @@ def reclassify_all_assets(db_path: str = DB_PATH) -> int:
 
     conn = get_connection(db_path)
     cur = conn.cursor()
-    rows = cur.execute("SELECT id, title, publisher, category FROM assets").fetchall()
+    rows = cur.execute("SELECT id, title, publisher, tags, vision_tags, summary, category FROM assets").fetchall()
     updated = 0
     for r in rows:
-        info = classify_asset(r["title"], r["publisher"] or "")
+        tags = []
+        if r["tags"]:
+            try:
+                tags = json.loads(r["tags"]) if isinstance(r["tags"], str) and r["tags"].startswith("[") else [r["tags"]]
+            except Exception:
+                tags = []
+        info = classify_asset(
+            title=r["title"],
+            publisher=r["publisher"] or "",
+            tags_list=tags,
+            vision_tags=r["vision_tags"] or "",
+            summary_text=r["summary"] or ""
+        )
         new_cat = info["category"]
         if new_cat != r["category"]:
             cur.execute("UPDATE assets SET category = ? WHERE id = ?", (new_cat, r["id"]))

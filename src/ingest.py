@@ -46,13 +46,29 @@ def _word_match(text: str, keywords: List[str]) -> bool:
     return False
 
 
-def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0) -> Dict[str, Any]:
+VISION_CONCEPT_MAP = {
+    "Terrain & Landscape": ["rocky terrain", "mountain", "canyon", "desert", "cave", "landscape", "cliffs", "dunes"],
+    "3D Environments & Props": ["interior", "exterior", "building", "ruins", "dungeon", "architecture", "props", "furniture", "urban", "sci-fi corridor", "castle", "temple"],
+    "Foliage & Nature": ["forest", "jungle", "trees", "grass", "foliage", "plant", "nature", "vegetation"],
+    "VFX & Particles": ["vfx", "fire", "smoke", "fluid", "explosion", "magic", "water splash", "electricity"],
+    "3D Models & Characters": ["character", "creature", "humanoid", "monster", "animal", "human face", "robot"],
+    "Weapons & Combat": ["weapon", "gun", "sword", "firearm", "armor", "shield"],
+    "Vehicles": ["vehicle", "car", "aircraft", "ship", "truck"],
+    "UI & Interface": ["ui", "hud", "game icons", "inventory interface"],
+    "Shaders & Rendering": ["stylized shader", "realistic shader", "pbr texture", "fog volume", "skybox"],
+}
+
+
+def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
+                   tags_list: List[str] = None, vision_tags: str = "", summary_text: str = "") -> Dict[str, Any]:
     t = title.lower()
+    all_text = f"{t} {' '.join(tags_list or []).lower()} {summary_text.lower()}"
+    v_tags = [v.strip().lower() for v in (vision_tags or "").split(",") if v.strip()]
 
     category = "Tools & Utilities"
     pipelines = ["HDRP", "URP", "Built-in"]
-    tags: List[str] = []
-    summary = ""
+    tags: List[str] = list(tags_list or [])
+    summary = summary_text
     usage_notes = ""
 
     # Render pipeline detection (Unity-specific)
@@ -68,128 +84,133 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0) -> Dic
     if _word_match(t, ["stampit", "heightmap", "heightmaps", "microsplat", "microverse", "terrain", "terrains",
                        "digger", "biome", "gaia", "infinitelands", "canyon", "canyons", "cliff", "cliffs",
                        "plateau", "plateaus", "landscape", "landscapes", "dune", "dunes", "mountain", "mountains",
-                       "rock", "rocks", "rocky", "boulder", "boulders", "desert", "stone", "stones"]):
+                       "rock", "rocks", "rocky", "boulder", "boulders", "desert", "stone", "stones", "isles", "isle", "caves", "cave"]):
         category = "Terrain & Landscape"
         tags.extend(["terrain", "heightmaps", "environment"])
-        if "stampit" in t or "stamp" in t:
-            tags.extend(["stamps", "procedural", "erosion"])
-            summary = "Heightmap stamps and splatmaps for terrain sculpting in MicroVerse, Gaia, or Unity Terrain."
-            usage_notes = "Use as non-destructive stamps in MicroVerse or Gaia. Pair with MicroSplat for procedural texturing."
-        elif "microsplat" in t:
-            tags.extend(["shader", "texturing", "blend", "triplanar"])
-            summary = "Advanced modular terrain shading system supporting high splat counts, triplanar and procedural features."
-            usage_notes = "Convert standard terrain shaders to MicroSplat. Core terrain pipeline foundation."
-        elif "microverse" in t:
-            tags.extend(["non-destructive", "stamps", "splines", "roads"])
-            summary = "Non-destructive real-time terrain generator based on live stamps and modifiers."
-            usage_notes = "Non-destructive authoring layer; adjust stamps without destructive baking."
-        else:
+        if not summary:
             summary = f"Terrain and landscape asset: {title}"
-            usage_notes = "Ideal for outdoor environment blockout and geological dressing."
+
+    elif _word_match(t, ["tree", "trees", "foliage", "vegetation", "grass", "forest", "forests", "plant",
+                         "plants", "fern", "ivy", "meadow", "speedtree", "nature renderer", "megaplants",
+                         "flower", "flowers", "bush", "bushes", "shrub", "shrubs", "wood", "woods", "flora"]):
+        category = "Foliage & Nature"
+        tags.extend(["foliage", "vegetation", "nature", "flora"])
+        if not summary:
+            summary = f"Foliage / scanned nature library: {title}"
+
+    elif _word_match(t, ["character", "characters", "creature", "creatures", "monster", "monsters",
+                         "animal", "animals", "insect", "insects", "humanoid", "humanoids", "npc", "npcs",
+                         "enemy", "enemies", "boss", "zombie", "zombies", "dinosaur", "dinosaurs", "dragon",
+                         "dragons", "bird", "birds", "fish", "human", "people", "hero", "villain"]):
+        category = "3D Models & Characters"
+        tags.extend(["characters", "creatures", "3d-models"])
+        if not summary:
+            summary = f"3D character or creature models: {title}"
+
+    elif _word_match(t, ["weapon", "weapons", "gun", "guns", "sword", "swords", "melee", "combat",
+                         "fps", "shooter", "bow", "bows", "shield", "shields", "axe", "axes", "lmg", "smg",
+                         "rifle", "rifles", "pistol", "pistols", "shotgun", "shotguns", "grenade", "dagger",
+                         "knife", "knives", "cannon", "artillery", "armory"]):
+        category = "Weapons & Combat"
+        tags.extend(["weapons", "combat", "gameplay"])
+        if not summary:
+            summary = f"Weapon / combat system or models: {title}"
+
+    elif _word_match(t, ["vehicle", "vehicles", "car", "cars", "truck", "trucks", "arcade vehicle",
+                         "wheel", "wheels", "boat", "boats", "ship", "ships", "plane", "planes",
+                         "aircraft", "helicopter", "tank", "tanks", "automobile"]):
+        category = "Vehicles"
+        tags.extend(["vehicles", "physics", "driving"])
+        if not summary:
+            summary = f"Vehicle system or models: {title}"
 
     elif _word_match(t, ["vfx", "fluid", "fluids", "blood", "fire", "shockwave", "shockwaves", "lightning",
                          "water splash", "explosion", "explosions", "particle", "particles", "aura", "spell",
                          "spells", "laser", "lasers", "projectile", "projectiles", "magic effect", "fx",
-                         "water", "ocean", "river", "rivers", "lake", "lakes", "reservoir"]):
+                         "lens flare", "lens flares", "glow", "sparks", "water", "ocean", "river", "rivers", "lake", "lakes"]):
         category = "VFX & Particles"
         tags.extend(["vfx", "particles", "effects"])
-        if "water" in t or "ocean" in t or "river" in t:
-            tags.extend(["water", "simulation"])
-            summary = "Water/ocean simulation and shading system."
-            usage_notes = "Configure reflection probes and planar reflections for high fidelity."
-        elif "blood" in t:
-            tags.extend(["combat", "gore", "decals"])
-            summary = "Blood splashes, mist, and dynamic fluid FX for combat feedback."
-        else:
-            summary = f"Visual effect system: {title}"
+        if not summary:
+            summary = f"Visual effect / simulation system: {title}"
 
-    elif _word_match(t, ["tree", "trees", "foliage", "vegetation", "grass", "forest", "forests", "plant",
-                         "plants", "fern", "ivy", "meadow", "speedtree", "nature renderer"]):
-        category = "Foliage & Nature"
-        tags.extend(["foliage", "vegetation", "nature", "flora"])
-        summary = f"Foliage / scanned nature library: {title}"
-        usage_notes = "Check wind vertex displacement and subsurface settings for realism."
+    elif _word_match(t, ["environment", "environments", "interior", "interiors", "exterior", "exteriors",
+                         "cathedral", "castle", "temple", "dungeon", "dungeons", "village", "city", "warehouse",
+                         "factory", "saloon", "hospital", "bunker", "street", "megapack", "modular", "abandoned",
+                         "ruins", "ruin", "house", "building", "buildings", "props", "prop", "synty", "polygon",
+                         "trench", "trenches", "corridor", "corridors", "room", "rooms", "kitchen", "restaurant",
+                         "food", "furniture", "table", "chair", "tavern"]):
+        category = "3D Environments & Props"
+        tags.extend(["3d-models", "environment", "modular", "props", "architecture"])
+        if not summary:
+            summary = f"Modular 3D environment kit: {title}"
 
-    elif _word_match(t, ["sound", "sounds", "audio", "music", "sfx", "footstep", "footsteps", "speech",
-                         "stinger", "ambience", "ambiance", "foley", "soundtrack"]):
-        category = "Audio & SFX"
-        tags.extend(["audio", "sound-effects", "foley", "music"])
-        summary = f"Audio asset collection: {title}"
-        usage_notes = "Import as WAV/Vorbis clips; key for diegetic atmosphere."
-
-    elif _word_match(t, ["ui", "gui", "hud", "menu", "menus", "dialogue", "inventory", "icon", "icons",
-                         "loading screen", "scroller", "fantasy interface", "canvas", "crosshair"]):
-        category = "UI & Interface"
-        tags.extend(["ui", "gui", "hud", "interface", "canvas"])
-        summary = f"User interface system or graphics pack: {title}"
-        usage_notes = "Adaptable to uGUI, TextMeshPro, UMG (Unreal) or UI Toolkit."
-
-    elif _word_match(t, ["character", "characters", "creature", "creatures", "monster", "monsters",
-                         "animal", "animals", "insect", "insects", "humanoid", "humanoids", "npc", "npcs",
-                         "enemy", "enemies", "boss", "zombie", "zombies"]):
-        category = "3D Models & Characters"
-        tags.extend(["characters", "creatures", "3d-models"])
-        summary = f"3D character or creature models: {title}"
+    elif _word_match(t, ["shader", "shaders", "skybox", "skyboxes", "pixelize", "outline", "lut",
+                         "htrace", "beautify", "upscaling", "dlss", "xess", "fsr", "fog volume",
+                         "post processing", "lighting box", "material", "materials", "auto material",
+                         "texture", "textures", "pbr", "decal", "decals"]):
+        category = "Shaders & Rendering"
+        tags.extend(["shader", "rendering", "graphics"])
+        if not summary:
+            summary = f"Rendering enhancement / shader tool: {title}"
 
     elif _word_match(t, ["anim", "animation", "animations", "animator", "mocap", "locomotion",
                          "movement", "character controller", "climb", "parkour", "rig", "rigs", "rigging", "skeleton"]):
         category = "Animation & Rigging"
         tags.extend(["animation", "locomotion", "character"])
-        if "motion matching" in t:
-            tags.extend(["next-gen", "procedural"])
-            summary = "Motion matching animation controller for fluid character movement."
-            usage_notes = "Requires pose trajectory databases; very fluid locomotion."
-        else:
+        if not summary:
             summary = f"Animation pack or character locomotion system: {title}"
 
-    elif _word_match(t, ["shader", "shaders", "skybox", "skyboxes", "pixelize", "outline", "lut",
-                         "htrace", "beautify", "upscaling", "dlss", "xess", "fsr", "fog volume",
-                         "post processing", "lighting box", "material", "materials", "auto material",
-                         "texture", "textures", "pbr"]):
-        category = "Shaders & Rendering"
-        tags.extend(["shader", "rendering", "graphics"])
-        if "htrace" in t:
-            tags.extend(["raytracing", "rtgi", "ambient-occlusion"])
-            summary = "Ray-traced world-space global illumination and AO."
-            usage_notes = "Calculates off-screen bounce and shadowing; great for canyon/valley geometry."
-        elif "dlss" in t or "xess" in t or "fsr" in t:
-            tags.extend(["upscaler", "super-resolution", "performance"])
-            summary = "Temporal super-resolution upscaler integration."
-        else:
-            summary = f"Rendering enhancement / shader tool: {title}"
+    elif _word_match(t, ["sound", "sounds", "audio", "music", "sfx", "footstep", "footsteps", "speech",
+                         "stinger", "ambience", "ambiance", "foley", "soundtrack", "voice"]):
+        category = "Audio & SFX"
+        tags.extend(["audio", "sound-effects", "foley", "music"])
+        if not summary:
+            summary = f"Audio asset collection: {title}"
 
-    elif _word_match(t, ["environment", "environments", "interior", "interiors", "exterior", "exteriors",
-                         "cathedral", "castle", "temple", "dungeon", "dungeons", "village", "city", "warehouse",
-                         "factory", "saloon", "hospital", "bunker", "street", "megapack", "modular", "abandoned",
-                         "ruins", "ruin", "house", "building", "buildings", "props", "prop", "synty", "polygon"]):
-        category = "3D Environments & Props"
-        tags.extend(["3d-models", "environment", "modular", "props", "architecture"])
-        summary = f"Modular 3D environment kit: {title}"
-        usage_notes = "Extract period-neutral props or use modular pieces for level assembly."
+    elif _word_match(t, ["ui", "gui", "hud", "menu", "menus", "dialogue", "inventory", "icon", "icons",
+                         "loading screen", "scroller", "fantasy interface", "canvas", "crosshair"]):
+        category = "UI & Interface"
+        tags.extend(["ui", "gui", "hud", "interface", "canvas"])
+        if not summary:
+            summary = f"User interface system or graphics pack: {title}"
 
     elif _word_match(t, ["ai", "assistant", "whisper", "speech recognition", "dialogue system",
                          "flowcanvas", "nodecanvas", "playmaker", "behavior", "behavior tree", "state machine"]):
         category = "AI & Visual Scripting"
         tags.extend(["ai", "logic", "scripting", "behavior"])
-        summary = f"AI reasoning, behavior tree, or visual scripting framework: {title}"
-        usage_notes = "Enables node-based state machines, dialogue trees, or LLM-driven interactions."
+        if not summary:
+            summary = f"AI reasoning, behavior tree, or visual scripting framework: {title}"
 
-    elif _word_match(t, ["weapon", "weapons", "gun", "guns", "sword", "swords", "melee", "combat",
-                         "fps", "shooter", "bow", "bows", "shield", "shields", "axe", "axes"]):
+    # 2. Vision Concept Inference from zero-shot CLIP tags
+    elif v_tags:
+        for cat, concepts in VISION_CONCEPT_MAP.items():
+            if any(c in v_tags for c in concepts):
+                category = cat
+                break
+
+    # 3. Store tags & summary keyword fallback
+    elif _word_match(all_text, ["plants", "trees", "foliage", "vegetation", "grass"]):
+        category = "Foliage & Nature"
+    elif _word_match(all_text, ["props", "furniture", "architecture", "interior", "exterior", "modular building"]):
+        category = "3D Environments & Props"
+    elif _word_match(all_text, ["guns", "weapons", "firearms", "swords"]):
         category = "Weapons & Combat"
-        tags.extend(["weapons", "combat", "gameplay"])
-        summary = f"Weapon / combat system or models: {title}"
+    elif _word_match(all_text, ["monsters", "characters", "creatures", "animals"]):
+        category = "3D Models & Characters"
+    elif _word_match(all_text, ["shaders", "materials", "textures"]):
+        category = "Shaders & Rendering"
 
-    elif _word_match(t, ["vehicle", "vehicles", "car", "cars", "truck", "trucks", "arcade vehicle",
-                         "wheel", "wheels", "boat", "boats", "ship", "ships", "plane", "planes"]):
-        category = "Vehicles"
-        tags.extend(["vehicles", "physics", "driving"])
-        summary = f"Vehicle system or models: {title}"
+    # 4. Canonical tools check (inspect title for genuine tool keywords)
+    elif _word_match(t, ["tool", "tools", "utility", "utilities", "editor", "inspector", "baker",
+                         "generator", "importer", "exporter", "converter", "debugger", "profiler",
+                         "package", "sdk", "framework", "system", "helper", "brush", "extension"]):
+        category = "Tools & Utilities"
 
     else:
         category = "Tools & Utilities"
         tags.extend(["utility", "editor"])
-        summary = f"Developer utility / general asset pack: {title}"
+        if not summary:
+            summary = f"Developer utility / general asset pack: {title}"
 
     return {
         "category": category,
