@@ -129,12 +129,13 @@ def _load_concepts():
         return [], 2.0
 
 
-def _mine_concepts(all_vecs, asset_map, concepts, threshold_z, text_model=None):
-    """Score every stored vector against every concept; calibrate on corpus.
-
-    all_vecs:  {url: np.ndarray}   — normalized vectors
-    asset_map: {url: set(asset_id)}
-    Returns {asset_id: sorted tag list}.
+def _mine_concepts(all_vecs, asset_map, concepts, threshold_z=2.2, min_cosine=0.24, max_tags_per_asset=3, text_model=None):
+    """Score every stored vector against concepts using dual cosine & Z-score calibration.
+    
+    Filters out background statistical noise by requiring:
+      1. Absolute CLIP cosine similarity >= min_cosine (0.24)
+      2. Relative outlier Z-score >= threshold_z (2.2)
+      3. Capped to at most `max_tags_per_asset` (3) highest-scoring concepts per asset.
     """
     from fastembed import TextEmbedding
     if text_model is None:
@@ -154,22 +155,33 @@ def _mine_concepts(all_vecs, asset_map, concepts, threshold_z, text_model=None):
               f"corpus is larger (calibration needs volume)")
         return {}
 
-    tags_by_asset = {}
-    misses = 0
-    for k, concept in enumerate(concepts):
+    # Calculate column-wise Z-scores
+    Z = np.zeros_like(S)
+    for k in range(S.shape[1]):
         col = S[:, k]
         mu, sigma = float(col.mean()), float(col.std())
-        if sigma < 1e-6:
-            continue
-        z = (col - mu) / sigma
-        hit_rows = np.where(z >= threshold_z)[0]
-        for row in hit_rows:
-            url = urls[row]
-            for aid in asset_map.get(url, ()):          # a URL may serve several assets
-                tags_by_asset.setdefault(aid, set()).add(concept)
-        misses += int((z < threshold_z).sum())
-    _ = misses
-    return {aid: sorted(t) for aid, t in tags_by_asset.items()}
+        if sigma > 1e-6:
+            Z[:, k] = (col - mu) / sigma
+
+    asset_concept_scores = {}
+    for row_idx, url in enumerate(urls):
+        for aid in asset_map.get(url, ()):
+            for k, concept in enumerate(concepts):
+                cos_val = S[row_idx, k]
+                z_val = Z[row_idx, k]
+                if cos_val >= min_cosine and z_val >= threshold_z:
+                    score = cos_val * z_val
+                    curr = asset_concept_scores.setdefault(aid, {}).get(concept, 0)
+                    if score > curr:
+                        asset_concept_scores[aid][concept] = score
+
+    # Pick top K concepts per asset
+    final_tags = {}
+    for aid, c_scores in asset_concept_scores.items():
+        sorted_concepts = sorted(c_scores.items(), key=lambda x: -x[1])[:max_tags_per_asset]
+        final_tags[aid] = sorted([c for c, _ in sorted_concepts])
+
+    return final_tags
 
 
 # ------------------------------------------------------------------ build ---
