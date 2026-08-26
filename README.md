@@ -33,7 +33,7 @@ agent  →  search_owned_assets(...)        finds the concrete meshes, water FX,
 
 Every result is something you already paid for. Nothing is invented.
 
-Why *Quartermaster*? It's the army officer in charge of supplies — the one who actually knows what's in inventory when everyone else forgot. Seemed fitting for a tool whose entire job is remembering what you own.
+Why *Quartermaster*? A quartermaster's job was never remembering what's in stores — it's making sure you're equipped when it's time to move. That's nearer the real problem than forgetting is. I hadn't lost anything; I knew I owned *stuff*. What I couldn't do was get from "I want to prototype a dam" to "open these four packages" without an hour of digging first — and *maybe more if it worked out* doesn't survive an hour of digging. Ideas that arrive that way don't get rejected. They just quietly don't happen, and you never find out whether they would have.
 
 
 ## The part nobody tells you
