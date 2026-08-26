@@ -47,7 +47,7 @@ Getting at it took four attempts, three of them failures:
 1. **Playwright's bundled Chromium** — Epic's captcha refuses it outright ("enable JavaScript").
 2. **Playwright driving your real browser** — injects detectable hooks; Epic throws a second security wall after the password.
 3. **Debugger attached during sign-in** — same result. Anything touching the login flow gets flagged.
-4. **What actually works**: you sign in through a completely normal browser window. No debug port, no automation, nothing to see. Only *after* you're done does Quartermaster attach a debugger and replay the store's own paginated queries — with its own CSRF headers, its own chunking (42 IDs per request, because that's what Unity's client sends).
+4. **What actually works**: stop automating the sign-in entirely. You log in through an ordinary browser window — no debug port, nothing between you and the store — because the automation was itself what tripped the risk systems. Only *after* you're done, on a session you established yourself, does Quartermaster attach a debugger and replay the store's own paginated queries — with its own CSRF headers, its own chunking (42 IDs per request, because that's what Unity's client sends).
 
 That trick is most of this project. The rest — search, linting, unpacking — is honestly straightforward by comparison.
 
@@ -63,7 +63,9 @@ Two hard-won rules baked into the design, if you ever hack on this yourself:
 - **Exact keywords** via SQLite FTS5.
 - **Natural language intent** via local ONNX text embeddings (`BAAI/bge-small-en-v1.5`) — *"concrete structures for holding back water"* surfaces meshes and shaders whose listings never mention dams.
 - **Cross-modal visual understanding** via ONNX CLIP embeddings (`Qdrant/clip-ViT-B-32`) — searching *"gothic cathedral"* literally scores your screenshots and promo renders, finding assets even when their text descriptions are completely silent.
-All three signals are fused with **3-way Reciprocal Rank Fusion (RRF)** in $\sim 3\text{ ms}$ on your CPU. No vector database dependency. No cloud API.
+All three signals are fused with **3-way Reciprocal Rank Fusion (RRF)** on your CPU. No GPU, no vector database process, no cloud API — ONNX Runtime and a numpy matrix, in the same process as everything else.
+
+Measured on a ~1,800-asset vault: **~480 MB peak RAM** with both models resident, **~1.5 s for the first query** (loading BGE and CLIP), **~110 ms warm** after that. The models load lazily, so an agent that never searches never pays for them.
 
 **Ground truth about your disk.** Scans `%APPDATA%/Unity/Asset Store-5.x/` and Epic's VaultCache so every result knows whether it's already downloaded or cloud-only. Agents prefer what's local — a zero-download import beats a 4 GB one.
 
@@ -90,31 +92,29 @@ pip install -r requirements.txt
 
 Seed your library:
 
+**1. Sign in.** The one step that needs you. A normal browser window opens; 2FA and captchas behave exactly
+as they always do. Close it when you're done and the session persists locally.
+
 ```bash
-# Opens your browser. YOU sign in — 2FA and captchas behave normally.
-# Close the window when done; the session persists locally.
 python -m src.store_client login unity
-python -m src.store_client fetch unity
-
-# Same dance for Fab:
 python -m src.store_client login fab
+```
+
+**2. Harvest and enrich.** Long-running, resumable, safe to re-run — each picks up where it stopped.
+
+```bash
+python -m src.store_client fetch unity
 python -m src.store_client fetch fab
+python -m src.store_client enrich            # descriptions and cover art, politely batched
+python -m src.store_client fab-deep-media    # Fab only: plain HTTP is 403'd, galleries need the authed browser
+```
 
-# Pull descriptions and cover art (polite batched fetching):
-python -m src.store_client enrich
+**3. Build the local indexes, then scan your disk.**
 
-# Fab only: plain HTTP gets 403'd, so full galleries need the authed browser.
-# Long, resumable, safe to re-run — it picks up where it stopped.
-python -m src.store_client fab-deep-media
-
-# Build the semantic index (local CPU text embeddings):
-python -m src.semantic build
-
-# Build the visual index (local CPU screenshot embeddings + concept tagging):
-python -m src.vision build
-
-# Find which of them are already downloaded to this machine:
-python -m src.local_scan
+```bash
+python -m src.semantic build     # text embeddings
+python -m src.vision build       # screenshot embeddings + concept tagging
+python -m src.local_scan         # which of them are already downloaded here
 ```
 
 `semantic build` and `vision build` are what make *"concrete structures for holding back water"* and visual concept queries find your assets. Skip them and search still works, but only on exact keywords.
@@ -137,6 +137,22 @@ python -m src.register --all --dry-run   # look before you leap
 ```
 
 Registration merges into existing configs and backs them up first. It won't clobber your other servers.
+
+Prefer to paste it yourself? Every client takes the same block — there's a copy at [`mcp_config.json`](mcp_config.json):
+
+```json
+{
+  "mcpServers": {
+    "quartermaster": {
+      "command": "python",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "C:/path/to/Quartermaster"
+    }
+  }
+}
+```
+
+Claude Desktop reads `%APPDATA%/Claude/claude_desktop_config.json`, Cursor `~/.cursor/mcp.json`, Windsurf `~/.codeium/windsurf/mcp_config.json`.
 
 
 ## Agent tools
@@ -203,6 +219,17 @@ Optional keys in `config.json` (created on first run):
 - **Unpacking is Unity-only.** Fab assets are indexed and searchable, but `.unitypackage` extraction obviously doesn't apply.
 
 If you build something cool with this, I'd genuinely like to hear about it.
+
+
+## A note on the stores
+
+Quartermaster reads **your own account, from your own machine, in a browser you signed into yourself**. It holds
+no credentials, ships nothing to any server of mine, and has no telemetry — the session lives in a local browser
+profile and the library in a local SQLite file. There is no shared backend to leak.
+
+It is not affiliated with, endorsed by, or connected to Unity Technologies or Epic Games. Unity, the Unity Asset
+Store, Fab and Unreal Engine are trademarks of their respective owners. Automating access to any service is your
+call to make against that service's terms, and this tool doesn't make it for you.
 
 
 ## License
