@@ -708,7 +708,7 @@ def _ensure_fab_scan_marker(conn):
     conn.commit()
 
 
-def run_fab_deep_media(cancel_event=None, progress=None) -> int:
+def run_fab_deep_media(limit: Optional[int] = None, cancel_event=None, progress=None) -> int:
     """SEPARATE long-running pass (like enrichment, NOT part of fetch):
     visits each Fab listing's canonical page once and pulls its full
     'medias' gallery + description. Progress is tracked per-row via the
@@ -727,9 +727,13 @@ def run_fab_deep_media(cancel_event=None, progress=None) -> int:
         "AND store_url LIKE '%/library/assets/%' "
         "AND COALESCE(fab_deep_scanned, 0) = 0").fetchall()
     pending = [(r["id"], r["title"], r["store_url"]) for r in rows]
+    if limit is not None and limit > 0:
+        pending = pending[:limit]
     n_total_rows = conn.execute(
         "SELECT COUNT(*) FROM assets WHERE source='fab' "
         "AND store_url LIKE '%/library/assets/%'").fetchone()[0]
+
+    conn.close()
 
     already_done = n_total_rows - len(pending)
     if already_done > 0:
@@ -818,17 +822,17 @@ def run_fab_deep_media(cancel_event=None, progress=None) -> int:
 
             sets = ["gallery_images = ?", "image_url = CASE WHEN image_url = '' THEN ? ELSE image_url END",
                     "fab_deep_scanned = 1"]
-            params: List[Any] = [json.dumps(gallery), gallery[0]]
-            if videos or description:
-                pass
+            params: List[Any] = [json.dumps(gallery), gallery[0] if gallery else ""]
             if description:
                 sets.append("summary = CASE WHEN summary = '' OR summary LIKE '%' || ': ' || title "
                             "OR lower(summary) = lower(title) THEN ? ELSE summary END")
                 params.append(description)
             params.append(aid)
-            conn.execute(f"UPDATE assets SET {', '.join(sets)} WHERE id = ?", params)
-            conn.commit()
-            conn.close()
+
+            item_conn = get_connection()
+            item_conn.execute(f"UPDATE assets SET {', '.join(sets)} WHERE id = ?", params)
+            item_conn.commit()
+            item_conn.close()
 
             enriched += 1
             if progress:
