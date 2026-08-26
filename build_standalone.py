@@ -22,6 +22,8 @@ cmd = [
     "--onedir",
     "--windowed",
     "--name=Quartermaster",
+    f"--paths={os.path.join(BASE_DIR, 'src')}",
+    f"--paths={BASE_DIR}",
     f"--icon={os.path.join(BASE_DIR, 'assets', 'icon.ico')}",
     f"--add-data={os.path.join(BASE_DIR, 'assets')}{os.pathsep}assets",
     f"--add-data={os.path.join(BASE_DIR, 'web')}{os.pathsep}web",
@@ -33,7 +35,17 @@ cmd = [
     "--hidden-import=PIL",
     "--hidden-import=sqlite3",
     "--hidden-import=httpx",
-    os.path.join(BASE_DIR, "src", "desktop.py")
+    "--hidden-import=src",
+    "--hidden-import=src.db",
+    "--hidden-import=src.config",
+    "--hidden-import=src.desktop",
+    "--hidden-import=src.store_client",
+    "--hidden-import=src.local_scan",
+    "--hidden-import=src.vision",
+    "--hidden-import=src.semantic",
+    "--hidden-import=src.unpacker",
+    "--hidden-import=src.stack_rules",
+    os.path.join(BASE_DIR, "run_app.py")
 ]
 
 print("Running command:", " ".join(cmd))
