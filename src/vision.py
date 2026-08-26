@@ -38,17 +38,13 @@ import numpy as np
 
 try:
     from .db import get_connection, DB_PATH
-    from .config import load_config
+    from .config import load_config, CONCEPTS_PATH, is_safe_image_url, MAX_IMAGE_BYTES
 except ImportError:
     from db import get_connection, DB_PATH
-    from config import load_config
-
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONCEPTS_PATH = os.path.join(ROOT_DIR, "data", "concepts.json")
+    from config import load_config, CONCEPTS_PATH, is_safe_image_url, MAX_IMAGE_BYTES
 
 VISION_MODEL = "Qdrant/clip-ViT-B-32-vision"
 CLIP_TEXT_MODEL = "Qdrant/clip-ViT-B-32-text"
-MAX_IMAGE_BYTES = 15 * 1024 * 1024
 
 
 # ---------------------------------------------------------------- schema ----
@@ -105,8 +101,11 @@ def _norm_url(u: str) -> str:
 def _download_worker(client, url: str, cancel_event=None):
     if cancel_event is not None and cancel_event.is_set():
         return None
+    normalized = _norm_url(url)
+    if not is_safe_image_url(normalized):
+        return None
     try:
-        r = client.get(_norm_url(url))
+        r = client.get(normalized)
         if r.status_code != 200 or len(r.content) > MAX_IMAGE_BYTES:
             return None
         return r.content
@@ -117,11 +116,17 @@ def _download_worker(client, url: str, cancel_event=None):
 # ------------------------------------------------------- concept tagging ----
 
 def _load_concepts():
-    with open(CONCEPTS_PATH, encoding="utf-8") as f:
-        data = json.load(f)
-    concepts = [c.strip() for c in data.get("concepts", []) if c.strip()]
-    threshold_z = float(data.get("threshold_z", 2.0))
-    return concepts, threshold_z
+    if not os.path.exists(CONCEPTS_PATH):
+        return [], 2.0
+    try:
+        with open(CONCEPTS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        concepts = [c.strip() for c in data.get("concepts", []) if c.strip()]
+        threshold_z = float(data.get("threshold_z", 2.0))
+        return concepts, threshold_z
+    except Exception as e:
+        print(f"[warn] Failed to load visual concepts from {CONCEPTS_PATH}: {e}")
+        return [], 2.0
 
 
 def _mine_concepts(all_vecs, asset_map, concepts, threshold_z, text_model=None):

@@ -20,12 +20,10 @@ from typing import Dict, Any, List, Optional
 
 try:
     from .db import init_db, upsert_asset
+    from .config import SEED_DIR
 except ImportError:
     from db import init_db, upsert_asset
-
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(ROOT_DIR, "data")
-SEED_DIR = os.path.join(DATA_DIR, "seed")
+    from config import SEED_DIR
 
 
 # ---------------------------------------------------------------------------

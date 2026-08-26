@@ -3,7 +3,10 @@ import json
 import os
 from typing import List, Dict, Any, Optional
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "assets.db")
+try:
+    from .config import DB_PATH
+except ImportError:
+    from config import DB_PATH
 
 import threading
 

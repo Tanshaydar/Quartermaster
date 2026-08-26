@@ -49,15 +49,13 @@ import httpx
 try:
     from .db import (get_unenriched, mark_enriched, upsert_asset, DB_PATH,
                      get_connection)
-    from .config import load_config
+    from .config import load_config, HARVEST_LOG_PATH
     from .ingest import classify_asset, _stable_id
 except ImportError:
     from db import (get_unenriched, mark_enriched, upsert_asset, DB_PATH,
                     get_connection)
-    from config import load_config
+    from config import load_config, HARVEST_LOG_PATH
     from ingest import classify_asset, _stable_id
-
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 LOGIN_URLS = {
     # Login THROUGH the Asset Store's own redirect flow so that
@@ -132,7 +130,7 @@ def _log(msg: str):
     print(line)
     try:
         from .config import rotate_log_if_large
-        log_file = os.path.join(ROOT_DIR, "data", "store_harvest.log")
+        log_file = HARVEST_LOG_PATH
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
         rotate_log_if_large(log_file)
         with open(log_file, "a", encoding="utf-8") as f:
@@ -1599,4 +1597,5 @@ if __name__ == "__main__":
     else:
         print("Usage:\n  python -m src.store_client login <unity|fab>\n"
               "  python -m src.store_client fetch <unity|fab>\n"
-              "  python -m src.store_client enrich [limit]")
+              "  python -m src.store_client enrich [limit]\n"
+              "  python -m src.store_client fab-deep-media [limit]")

@@ -17,18 +17,21 @@ from typing import Any, Dict, List, Optional
 
 try:
     from .db import get_connection, search_assets, DB_PATH
+    from .config import RECIPES_PATH
 except ImportError:
     from db import get_connection, search_assets, DB_PATH
-except ImportError:
-    from db import get_connection, search_assets, DB_PATH
-
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RECIPES_PATH = os.path.join(ROOT_DIR, "data", "recipes.json")
+    from config import RECIPES_PATH
 
 
 def load_rules() -> Dict[str, Any]:
-    with open(RECIPES_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    if not os.path.exists(RECIPES_PATH):
+        return {"roles": {}, "recipes": []}
+    try:
+        with open(RECIPES_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[warn] Failed to load recipes from {RECIPES_PATH}: {e}")
+        return {"roles": {}, "recipes": []}
 
 
 def _title_matches(title: str, pattern: str) -> bool:

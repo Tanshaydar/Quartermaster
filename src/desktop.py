@@ -29,16 +29,15 @@ from PySide6.QtWidgets import (
 
 try:
     from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from .config import load_config, rotate_log_if_large, evict_image_cache, __version__
+    from .config import load_config, rotate_log_if_large, evict_image_cache, __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH
     from . import store_client, local_scan, vision
 except ImportError:
     from db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from config import load_config, rotate_log_if_large, evict_image_cache, __version__
+    from config import load_config, rotate_log_if_large, evict_image_cache, __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH
     import store_client, local_scan, vision
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ICON_PATH = os.path.join(ROOT_DIR, "assets", "icon.ico")
-ICON_PNG = os.path.join(ROOT_DIR, "assets", "icon.png")
+ICON_PATH = ICON_ICO_PATH
+ICON_PNG = ICON_PNG_PATH
 
 ACCENT = "#4f8cff"
 GREEN = "#3fb950"
@@ -1038,7 +1037,7 @@ class MainWindow(QMainWindow):
 
 def _install_crash_logger():
     """All uncaught exceptions (main + threads) go to data/crash.log."""
-    log_path = os.path.join(ROOT_DIR, "data", "crash.log")
+    log_path = CRASH_LOG_PATH
     rotate_log_if_large(log_path)
 
     def _write(header, exc):

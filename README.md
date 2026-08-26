@@ -11,7 +11,7 @@
 [![Vectors](https://img.shields.io/badge/vectors-FastEmbed%20CPU%20(BGE%20%2B%20CLIP)-purple)](https://github.com/qdrant/fastembed)
 [![GUI](https://img.shields.io/badge/desktop-PySide6-green)](https://doc.qt.io/qtforpython/)
 [![Telemetry](https://img.shields.io/badge/telemetry-none-success)]()
-[![Tests](https://img.shields.io/badge/tests-16%20passing-brightgreen)](run_tests.py)
+[![Tests](https://github.com/Tanshaydar/Quartermaster/actions/workflows/tests.yml/badge.svg)](https://github.com/Tanshaydar/Quartermaster/actions/workflows/tests.yml)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)]()
 [![Inspired by](https://img.shields.io/badge/inspired%20by-a%20dam-4f8cff)](#this-project-started-because-i-wanted-to-prototype-a-dam)
 

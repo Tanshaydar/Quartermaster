@@ -24,6 +24,7 @@ cmd = [
     "--name=Quartermaster",
     f"--icon={os.path.join(BASE_DIR, 'assets', 'icon.ico')}",
     f"--add-data={os.path.join(BASE_DIR, 'assets')}{os.pathsep}assets",
+    f"--add-data={os.path.join(BASE_DIR, 'web')}{os.pathsep}web",
     f"--add-data={os.path.join(BASE_DIR, 'data', 'recipes.json')}{os.pathsep}data",
     f"--add-data={os.path.join(BASE_DIR, 'data', 'concepts.json')}{os.pathsep}data",
     "--hidden-import=PySide6.QtNetwork",
@@ -42,7 +43,7 @@ if res.returncode != 0:
     sys.exit(res.returncode)
 
 # Copy additional supporting assets and readme
-for item in ["README.md", "LICENSE", "run_desktop.bat", "run_mcp.bat"]:
+for item in ["README.md", "LICENSE"]:
     src_path = os.path.join(BASE_DIR, item)
     if os.path.exists(src_path):
         shutil.copy2(src_path, APP_OUT_DIR)

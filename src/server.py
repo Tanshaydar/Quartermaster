@@ -29,17 +29,14 @@ from fastapi.staticfiles import StaticFiles
 
 try:
     from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from .config import load_config, get_or_create_auth_token, evict_image_cache, __version__
+    from .config import load_config, get_or_create_auth_token, evict_image_cache, __version__, WEB_DIR, is_safe_image_url, MAX_IMAGE_BYTES
     from . import store_client, local_scan, unpacker, stack_rules
 except ImportError:
     from db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from config import load_config, get_or_create_auth_token, evict_image_cache, __version__
+    from config import load_config, get_or_create_auth_token, evict_image_cache, __version__, WEB_DIR, is_safe_image_url, MAX_IMAGE_BYTES
     import store_client, local_scan, unpacker, stack_rules
 
 init_db()
-
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WEB_DIR = os.path.join(ROOT_DIR, "web")
 
 app = FastAPI(title="Quartermaster", docs_url="/api/docs")
 
@@ -142,7 +139,11 @@ def api_stats():
 
 @app.get("/api/recipes")
 def api_recipes():
-    return {"recipes": stack_rules.list_recipes()}
+    try:
+        return {"recipes": stack_rules.list_recipes()}
+    except Exception as e:
+        print(f"[warn] /api/recipes error: {e}")
+        return {"recipes": []}
 
 
 @app.get("/api/categories")
