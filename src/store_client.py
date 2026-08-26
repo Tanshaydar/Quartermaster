@@ -379,22 +379,22 @@ def _extract_media_images(item: dict) -> tuple:
     if isinstance(th_list, list):
         for th in th_list:
             if isinstance(th, dict):
+                best_thumb = ""
                 mu = th.get("mediaUrl")
                 if isinstance(mu, str) and mu.startswith("http"):
+                    best_thumb = mu
+                else:
+                    sub_imgs = th.get("images")
+                    if isinstance(sub_imgs, list) and sub_imgs:
+                        sorted_sub = sorted([x for x in sub_imgs if isinstance(x, dict) and x.get("url")],
+                                            key=lambda x: x.get("width", 0), reverse=True)
+                        if sorted_sub:
+                            best_thumb = sorted_sub[0]["url"]
+                if best_thumb:
                     if not cover:
-                        cover = mu
-                    if mu not in gallery:
-                        gallery.append(mu)
-                sub_imgs = th.get("images")
-                if isinstance(sub_imgs, list) and sub_imgs:
-                    sorted_sub = sorted([x for x in sub_imgs if isinstance(x, dict) and x.get("url")],
-                                        key=lambda x: x.get("width", 0), reverse=True)
-                    if sorted_sub:
-                        largest_url = sorted_sub[0]["url"]
-                        if not cover:
-                            cover = largest_url
-                        if largest_url not in gallery:
-                            gallery.append(largest_url)
+                        cover = best_thumb
+                    if best_thumb not in gallery:
+                        gallery.append(best_thumb)
 
     # 2. Direct string fields
     for k in ("thumbnailUrl", "thumbnail", "image", "imageUrl", "heroUrl", "coverUrl", "coverImage", "mainImage", "primaryImage", "mediaUrl"):

@@ -382,13 +382,20 @@ class DetailPanel(QScrollArea):
             b.setText("<br>".join(f"<a href='{v}'>{v}</a>" for v in videos))
 
         gallery = item.get("gallery_images") or []
-        if gallery:
+        distinct_gallery = []
+        for g in gallery:
+            if g and g not in distinct_gallery:
+                distinct_gallery.append(g)
+        if len(distinct_gallery) == 1 and distinct_gallery[0] == img_url:
+            distinct_gallery = []
+
+        if distinct_gallery:
             head = QLabel("GALLERY")
             head.setStyleSheet(f"color:{ACCENT}; font-size:11px; font-weight:700;")
             self.lay.addWidget(head)
             row = QHBoxLayout()
             row.setSpacing(6)
-            for i, g in enumerate(gallery[:6]):
+            for i, g in enumerate(distinct_gallery[:6]):
                 gl = QLabel("…")
                 gl.setFixedSize(120, 68)
                 gl.setStyleSheet(f"background:{CARD}; border-radius:6px;")
