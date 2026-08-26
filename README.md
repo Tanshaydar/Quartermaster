@@ -74,7 +74,13 @@ All three signals are fused with **3-way Reciprocal Rank Fusion (RRF)** in $\sim
 
 ## Install
 
-Needs **Python 3.10+**.
+Two ways in, and they don't get you the same thing.
+
+**The standalone app** — download `Quartermaster-windows-x64.zip` from [Releases](https://github.com/Tanshaydar/Quartermaster/releases), unzip, run `Quartermaster.exe`. No Python required. Your library lives in `%LOCALAPPDATA%\Quartermaster`, so upgrades are drop-in folder replacements and nothing is lost. This gets you the desktop app: search, the `Win+Alt+V` spotlight, disk scanning, and direct unpacking.
+
+It does **not** get you the MCP server — the standalone is the GUI only, and agent integration needs a real Python install to launch the server from. If the point is grounding your coding agent, take the second route.
+
+**From source** — needs **Python 3.10+**.
 
 ```bash
 git clone https://github.com/Tanshaydar/Quartermaster.git
