@@ -113,58 +113,67 @@ def list_asset_categories() -> str:
 @mcp.tool()
 def get_stack_recommendations(problem_description: str, limit_per_category: int = 5) -> str:
     """Given a game/feature description (e.g. 'third-person fantasy open world with
-    magic combat and a village'), sweep the vault and recommend which owned packages
-    fit which aspect of the problem."""
+    magic combat and a village'), sweep the vault using 3-way hybrid search (FTS + BGE + CLIP)
+    and recommend which owned packages fit which aspect of the problem."""
     text = problem_description.lower()
     words = set(__import__("re").findall(r"[a-z]{3,}", text))
 
-    # Map problem vocabulary to vault categories
+    # Map problem vocabulary to vault categories/aspects
     aspect_map = {
         "Terrain & Landscape": ["terrain", "mountain", "canyon", "valley", "island", "open world",
-                                "landscape", "cliff", "hill", "desert", "dune", "cave", "ground"],
+                                "landscape", "cliff", "hill", "desert", "dune", "cave", "ground", "rock", "rocky"],
         "3D Environments & Props": ["village", "city", "town", "castle", "dungeon", "house",
                                     "interior", "exterior", "building", "environment", "level",
-                                    "street", "temple", "ruins", "warehouse"],
-        "Foliage & Nature": ["forest", "tree", "jungle", "grass", "nature", "garden", "plant", "woods"],
+                                    "street", "temple", "ruins", "warehouse", "dam", "concrete", "structure"],
+        "Foliage & Nature": ["forest", "tree", "jungle", "grass", "nature", "garden", "plant", "woods", "vegetation"],
         "VFX & Particles": ["magic", "spell", "fire", "explosion", "effect", "particle", "water",
-                            "smoke", "lightning", "blood", "combat effect", "ability"],
-        "Weapons & Combat": ["weapon", "gun", "sword", "melee", "combat", "shooter", "fps", "battle"],
-        "Characters & Creatures": ["character", "creature", "enemy", "npc", "animal", "monster", "boss"],
+                            "river", "ocean", "reservoir", "smoke", "fog", "lightning", "fluid", "blood", "ability"],
+        "Weapons & Combat": ["weapon", "gun", "sword", "melee", "combat", "shooter", "fps", "battle", "shield", "bow"],
+        "Characters & Creatures": ["character", "creature", "enemy", "npc", "animal", "monster", "boss", "humanoid"],
         "Animation & Rigging": ["animation", "locomotion", "movement", "climb", "parkour", "controller"],
         "UI & Interface": ["ui", "hud", "menu", "inventory", "dialogue", "icon", "interface"],
-        "Audio & SFX": ["sound", "music", "audio", "footstep", "ambience", "sfx"],
+        "Audio & SFX": ["sound", "music", "audio", "footstep", "ambience", "sfx", "soundtrack"],
         "Shaders & Rendering": ["shader", "graphics", "lighting", "post processing", "stylized",
-                                "realistic rendering", "fog", "outline"],
+                                "realistic rendering", "fog", "atmosphere", "water shader"],
         "AI & Visual Scripting": ["ai", "behavior tree", "dialogue system", "npc logic", "state machine"],
-        "Vehicles": ["vehicle", "car", "driving", "racing", "truck"],
+        "Vehicles": ["vehicle", "car", "driving", "racing", "truck", "boat", "ship", "plane"],
     }
 
-    # Also match creature/character keywords against titles directly
-    scored_categories = []
-    prob_lower = problem_description.lower()
-    for cat, keywords in aspect_map.items():
-        score = sum(1 for kw in keywords if (kw in prob_lower if " " in kw else kw in words))
-        if score:
-            scored_categories.append((cat, score))
-    scored_categories.sort(key=lambda x: -x[1])
+    active_aspects: dict[str, list[str]] = {}
+    for aspect, kws in aspect_map.items():
+        matched_kws = [kw for kw in kws if (kw in text if " " in kw else kw in words)]
+        if matched_kws:
+            active_aspects[aspect] = matched_kws
+
+    # Fallback if no specific aspect matched
+    if not active_aspects:
+        active_aspects["General Matching Packages"] = list(words)[:5]
 
     recommendations: dict[str, list] = {}
-    seen_cats = set()
-    for cat, _score in scored_categories[:6]:
-        hits = search_assets(query=None, category=cat, limit=limit_per_category)
-        # rank within category: prefer title/tag keyword overlap
-        def rel(h):
-            hay = (h["title"] + " " + " ".join(h.get("tags", []))).lower()
-            return sum(1 for w in words if w in hay)
-        hits.sort(key=rel, reverse=True)
-        recommendations[cat] = [_slim(h) for h in hits[:limit_per_category]]
-        seen_cats.add(cat)
+    seen_ids = set()
+
+    for aspect, matched_kws in list(active_aspects.items())[:6]:
+        aspect_query = f"{' '.join(matched_kws)} {problem_description}"
+        aspect_res = semantic.hybrid_search(aspect_query, limit=max(limit_per_category * 3, 15)).get("results", [])
+
+        aspect_hits = []
+        for h in aspect_res:
+            cat = h.get("category", "")
+            h_text = (h.get("title", "") + " " + (h.get("summary") or "") + " " + " ".join(h.get("tags") or [])).lower()
+            if any(kw in h_text for kw in matched_kws) or (cat in aspect or aspect in cat):
+                if h["id"] not in seen_ids:
+                    aspect_hits.append(_slim(h))
+                    seen_ids.add(h["id"])
+                    if len(aspect_hits) >= limit_per_category:
+                        break
+        if aspect_hits:
+            recommendations[aspect] = aspect_hits
 
     return json.dumps({
         "problem": problem_description,
-        "matched_aspects": [c for c, _ in scored_categories],
+        "matched_aspects": list(recommendations.keys()),
         "recommendations": recommendations,
-        "note": "All recommended items are already owned by the user.",
+        "note": "All recommended items are already owned by the user and scored via 3-way hybrid search (FTS5 + BGE semantic + CLIP vision).",
     }, ensure_ascii=False)
 
 
