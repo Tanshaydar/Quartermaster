@@ -595,7 +595,7 @@ class MainWindow(QMainWindow):
         add_sync_btn("⟳ Fetch Fab", lambda: self._fetch_op("fab"))
         add_sync_btn("🖼 Enrich library", lambda: self._start_enrich_sweep())
         add_sync_btn("👁 Vision pass", lambda: self._long_op(
-            lambda ev, cb: vision.build(cancel_event=ev, progress=cb), "Vision pass"))
+            lambda ev, cb: vision.build(cancel_event=ev, progress=cb), "Vision pass", with_progress=True))
         add_sync_btn("⚡ Scan local", lambda: self._long_op(
             lambda ev: local_scan.scan_all(), "Disk scan"))
         sp.addWidget(self.sync_status, 1)

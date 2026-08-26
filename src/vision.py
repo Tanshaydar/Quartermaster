@@ -72,8 +72,8 @@ def _ensure_schema(conn):
 
 # ------------------------------------------------------------- work list ----
 
-def _collect_work():
-    """Map every unique gallery/cover URL -> list of asset ids using it."""
+def _collect_work(max_per_asset: int = 4):
+    """Map unique gallery/cover URLs (cover + top hero screenshots) -> asset ids."""
     work = {}
     conn = get_connection()
     for aid, cover, gjson in conn.execute(
@@ -83,10 +83,13 @@ def _collect_work():
         if cover:
             urls.append(cover)
         try:
-            urls.extend(json.loads(gjson or "[]"))
+            gallery = json.loads(gjson or "[]")
+            for g in gallery:
+                if g and g != cover and g not in urls:
+                    urls.append(g)
         except Exception:
             pass
-        for u in urls:
+        for u in urls[:max_per_asset]:
             if isinstance(u, str) and u.startswith("http"):
                 work.setdefault(u, set()).add(aid)
     conn.close()
@@ -99,10 +102,9 @@ def _norm_url(u: str) -> str:
 
 # ------------------------------------------------------------ downloads -----
 
-def _download(url: str):
-    import httpx
+def _download_worker(client, url: str):
     try:
-        r = httpx.get(_norm_url(url), headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        r = client.get(_norm_url(url))
         if r.status_code != 200 or len(r.content) > MAX_IMAGE_BYTES:
             return None
         return r.content
@@ -167,12 +169,15 @@ def _mine_concepts(all_vecs, asset_map, concepts, threshold_z, text_model=None):
 
 def build(limit=None, cancel_event=None, progress=None) -> dict:
     """Incremental: download+encode missing images, then re-mine all tags."""
+    import httpx
     from PIL import Image
     from fastembed import ImageEmbedding
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     cfg = load_config()
-    batch_size = max(1, int(cfg.get("vision_batch_size", 8)))
-    concurrency = max(1, int(cfg.get("vision_concurrency", 6)))
+    batch_size = max(1, int(cfg.get("vision_batch_size", 16)))
+    concurrency = max(1, int(cfg.get("vision_concurrency", 10)))
+    max_per_asset = max(1, int(cfg.get("vision_max_images_per_asset", 4)))
 
     conn = get_connection()
     _ensure_schema(conn)
@@ -186,7 +191,7 @@ def build(limit=None, cancel_event=None, progress=None) -> dict:
     conn.commit()
 
     done_urls = {r[0] for r in conn.execute("SELECT image_url FROM image_vectors")}
-    work = _collect_work()
+    work = _collect_work(max_per_asset=max_per_asset)
     pending = [(u, aids) for u, aids in work.items() if u not in done_urls]
     if limit:
         pending = pending[:limit]
@@ -197,66 +202,78 @@ def build(limit=None, cancel_event=None, progress=None) -> dict:
     conn.close()
 
     if progress:
-        progress(0, total_new, f"Downloading & encoding {total_new} new images…")
-    print(f"[vision] {len(work)} unique images known, {total_new} new to encode")
+        progress(0, total_new, f"Vision pass: 0/{total_new} images (0%)")
+    print(f"[vision] {len(work)} unique images selected, {total_new} new to encode")
 
     if pending:
         img_model = ImageEmbedding(VISION_MODEL)
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
+        all_vecs, asset_map = {}, {}
         inserted_this_run = []
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = {pool.submit(_download, u): (u, aids) for u, aids in pending}
-            batch_bufs, batch_meta = [], []
+        batch_bufs, batch_meta = [], []
 
-            def flush():
-                nonlocal inserted_this_run
-                if not batch_bufs:
-                    return
-                vecs = list(img_model.embed(list(batch_bufs)))
-                conn = get_connection()
-                for (u, aids), v in zip(batch_meta, vecs):
-                    v = np.asarray(v, dtype=np.float32)
-                    v /= (np.linalg.norm(v) + 1e-9)
-                    uid = "img_" + hashlib.sha1(u.encode()).hexdigest()
-                    conn.execute(
-                        "INSERT OR REPLACE INTO image_vectors "
-                        "(id, asset_id, image_url, vector) VALUES (?,?,?,?)",
-                        (uid, ";".join(sorted(aids))[:200], u, v.tobytes()))
-                    all_vecs[u] = v / (np.linalg.norm(v) + 1e-9)
-                    asset_map.update({u: aids})
-                    inserted_this_run.append(u)
-                conn.commit()
-                conn.close()
-                batch_bufs.clear(); batch_meta.clear()
+        def flush():
+            nonlocal inserted_this_run
+            if not batch_bufs:
+                return
+            vecs = list(img_model.embed(list(batch_bufs)))
+            conn = get_connection()
+            for (u, aids), v in zip(batch_meta, vecs):
+                v = np.asarray(v, dtype=np.float32)
+                v /= (np.linalg.norm(v) + 1e-9)
+                uid = "img_" + hashlib.sha1(u.encode()).hexdigest()
+                conn.execute(
+                    "INSERT OR REPLACE INTO image_vectors "
+                    "(id, asset_id, image_url, vector) VALUES (?,?,?,?)",
+                    (uid, ";".join(sorted(aids))[:200], u, v.tobytes()))
+                all_vecs[u] = v
+                asset_map.update({u: aids})
+                inserted_this_run.append(u)
+            conn.commit()
+            conn.close()
+            batch_bufs.clear(); batch_meta.clear()
 
-            # these two dicts feed both encoding and the tagging phase
-            all_vecs, asset_map = {}, {}
+        limits = httpx.Limits(max_connections=concurrency * 2, max_keepalive_connections=concurrency)
+        with httpx.Client(headers={"User-Agent": "Mozilla/5.0"}, timeout=15, limits=limits) as client:
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                # Stream submission in chunks of 128 to prevent socket/memory explosion
+                CHUNK_SIZE = 128
+                done = 0
+                for c_start in range(0, len(pending), CHUNK_SIZE):
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
+                    chunk = pending[c_start:c_start + CHUNK_SIZE]
+                    futures = {pool.submit(_download_worker, client, u): (u, aids) for u, aids in chunk}
 
-            done = 0
-            for fut in as_completed(futures):
-                u, aids = futures[fut]
-                data = fut.result()
-                done += 1
-                if cancel_event is not None and cancel_event.is_set():
-                    break
-                if not data:
-                    stats["download_failed"] += 1
-                else:
-                    try:
-                        pil = Image.open(io.BytesIO(data)).convert("RGB")
-                        buf = io.BytesIO(); pil.save(buf, format="PNG"); buf.seek(0)
-                        batch_bufs.append(buf)
-                        batch_meta.append((u, aids))
-                        if len(batch_bufs) >= batch_size:
-                            flush()
-                    except Exception:
-                        stats["download_failed"] += 1
-                        continue
-                if progress and done % 10 == 0:
-                    progress(done, total_new, f"Encoded {done}/{total_new} new images…")
-            flush()  # remainder
-            stats["images_indexed"] = len(inserted_this_run)
+                    for fut in as_completed(futures):
+                        u, aids = futures[fut]
+                        data = fut.result()
+                        done += 1
+                        if cancel_event is not None and cancel_event.is_set():
+                            break
+                        if not data:
+                            stats["download_failed"] += 1
+                        else:
+                            try:
+                                pil = Image.open(io.BytesIO(data)).convert("RGB")
+                                buf = io.BytesIO()
+                                pil.save(buf, format="PNG")
+                                buf.seek(0)
+                                batch_bufs.append(buf)
+                                batch_meta.append((u, aids))
+                                if len(batch_bufs) >= batch_size:
+                                    flush()
+                            except Exception:
+                                stats["download_failed"] += 1
+                                continue
+                        if progress and (done % 4 == 0 or done == total_new):
+                            pct = int(done / max(total_new, 1) * 100)
+                            progress(done, total_new, f"Vision pass: {done}/{total_new} images ({pct}%)")
+
+                flush()  # remainder
+        stats["images_indexed"] = len(inserted_this_run)
+
+    if progress:
+        progress(total_new, total_new, "Mining visual taxonomy concepts (Z-score calibration)…")
 
     # ---- concept mining over the FULL corpus (new + previously indexed) ----
     all_vecs, asset_map = {}, {}
