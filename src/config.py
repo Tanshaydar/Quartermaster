@@ -21,9 +21,12 @@ else:
 ROOT_DIR = DATA_DIR
 
 # Ensure writable data directory and subfolders exist
-os.makedirs(os.path.join(DATA_DIR, "data"), exist_ok=True)
-os.makedirs(os.path.join(DATA_DIR, "cache", "images"), exist_ok=True)
-os.makedirs(os.path.join(DATA_DIR, "profiles"), exist_ok=True)
+try:
+    os.makedirs(os.path.join(DATA_DIR, "data"), exist_ok=True)
+    os.makedirs(os.path.join(DATA_DIR, "cache", "images"), exist_ok=True)
+    os.makedirs(os.path.join(DATA_DIR, "profiles"), exist_ok=True)
+except Exception:
+    pass
 
 # Read-only bundled asset paths (resolve against BUNDLE_DIR)
 RECIPES_PATH = os.path.join(BUNDLE_DIR, "data", "recipes.json")
