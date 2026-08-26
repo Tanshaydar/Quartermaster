@@ -102,7 +102,9 @@ def _norm_url(u: str) -> str:
 
 # ------------------------------------------------------------ downloads -----
 
-def _download_worker(client, url: str):
+def _download_worker(client, url: str, cancel_event=None):
+    if cancel_event is not None and cancel_event.is_set():
+        return None
     try:
         r = client.get(_norm_url(url))
         if r.status_code != 200 or len(r.content) > MAX_IMAGE_BYTES:
@@ -235,20 +237,21 @@ def build(limit=None, cancel_event=None, progress=None) -> dict:
         limits = httpx.Limits(max_connections=concurrency * 2, max_keepalive_connections=concurrency)
         with httpx.Client(headers={"User-Agent": "Mozilla/5.0"}, timeout=15, limits=limits) as client:
             with ThreadPoolExecutor(max_workers=concurrency) as pool:
-                # Stream submission in chunks of 128 to prevent socket/memory explosion
                 CHUNK_SIZE = 128
                 done = 0
                 for c_start in range(0, len(pending), CHUNK_SIZE):
                     if cancel_event is not None and cancel_event.is_set():
+                        pool.shutdown(wait=False, cancel_futures=True)
                         break
                     chunk = pending[c_start:c_start + CHUNK_SIZE]
-                    futures = {pool.submit(_download_worker, client, u): (u, aids) for u, aids in chunk}
+                    futures = {pool.submit(_download_worker, client, u, cancel_event): (u, aids) for u, aids in chunk}
 
                     for fut in as_completed(futures):
                         u, aids = futures[fut]
                         data = fut.result()
                         done += 1
                         if cancel_event is not None and cancel_event.is_set():
+                            pool.shutdown(wait=False, cancel_futures=True)
                             break
                         if not data:
                             stats["download_failed"] += 1
@@ -269,8 +272,14 @@ def build(limit=None, cancel_event=None, progress=None) -> dict:
                             pct = int(done / max(total_new, 1) * 100)
                             progress(done, total_new, f"Vision pass: {done}/{total_new} images ({pct}%)")
 
-                flush()  # remainder
+                if not (cancel_event is not None and cancel_event.is_set()):
+                    flush()  # remainder
         stats["images_indexed"] = len(inserted_this_run)
+
+    if cancel_event is not None and cancel_event.is_set():
+        invalidate_vision_cache()
+        print("[vision] pass cancelled by user.")
+        return stats
 
     if progress:
         progress(total_new, total_new, "Mining visual taxonomy concepts (Z-score calibration)…")
