@@ -76,11 +76,11 @@ Measured on a ~1,800-asset vault: **~480 MB peak RAM** with both models resident
 
 ## Install
 
-Two ways in, and they don't get you the same thing.
+**The standalone bundle** — download `Quartermaster-windows-x64.zip` from [Releases](https://github.com/Tanshaydar/Quartermaster/releases), unzip anywhere. **No Python required.**
+- `Quartermaster.exe` — Desktop GUI with `Win+Alt+V` spotlight search, store harvesting, library browsing, and direct unpacking.
+- `Quartermaster-mcp.exe` — Standalone MCP stdio server for Claude Desktop, Cursor, Antigravity, and Windsurf.
 
-**The standalone app** — download `Quartermaster-windows-x64.zip` from [Releases](https://github.com/Tanshaydar/Quartermaster/releases), unzip, run `Quartermaster.exe`. No Python required. Your library lives in `%LOCALAPPDATA%\Quartermaster`, so upgrades are drop-in folder replacements and nothing is lost. This gets you the desktop app: search, the `Win+Alt+V` spotlight, disk scanning, and direct unpacking.
-
-It does **not** get you the MCP server — the standalone is the GUI only, and agent integration needs a real Python install to launch the server from. If the point is grounding your coding agent, take the second route.
+Your library data lives safely in `%LOCALAPPDATA%\Quartermaster`, so upgrades are simple folder replacements with zero data loss.
 
 **From source** — needs **Python 3.10+**.
 
