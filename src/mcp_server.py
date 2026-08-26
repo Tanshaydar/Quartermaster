@@ -145,29 +145,52 @@ def get_stack_recommendations(problem_description: str, limit_per_category: int 
         if matched_kws:
             active_aspects[aspect] = matched_kws
 
-    # Fallback if no specific aspect matched
     if not active_aspects:
         active_aspects["General Matching Packages"] = list(words)[:5]
 
-    recommendations: dict[str, list] = {}
-    seen_ids = set()
-
+    # Gather candidate hits from hybrid search for each active aspect
+    candidates = {}
     for aspect, matched_kws in list(active_aspects.items())[:6]:
         aspect_query = f"{' '.join(matched_kws)} {problem_description}"
-        aspect_res = semantic.hybrid_search(aspect_query, limit=max(limit_per_category * 3, 15)).get("results", [])
+        hits = semantic.hybrid_search(aspect_query, limit=max(limit_per_category * 3, 15)).get("results", [])
+        for h in hits:
+            candidates[h["id"]] = h
 
-        aspect_hits = []
-        for h in aspect_res:
-            cat = h.get("category", "")
-            h_text = (h.get("title", "") + " " + (h.get("summary") or "") + " " + " ".join(h.get("tags") or [])).lower()
-            if any(kw in h_text for kw in matched_kws) or (cat in aspect or aspect in cat):
-                if h["id"] not in seen_ids:
-                    aspect_hits.append(_slim(h))
-                    seen_ids.add(h["id"])
-                    if len(aspect_hits) >= limit_per_category:
-                        break
-        if aspect_hits:
-            recommendations[aspect] = aspect_hits
+    # Assign candidates to highest-affinity aspect bucket
+    aspect_buckets = {aspect: [] for aspect in active_aspects}
+
+    def calc_affinity(h, aspect_name, kws):
+        score = 0.0
+        cat = (h.get("category") or "").lower()
+        title = (h.get("title") or "").lower()
+        summary = (h.get("summary") or "").lower()
+        tags = [t.lower() for t in (h.get("tags") or [])]
+        if cat in aspect_name.lower() or aspect_name.lower() in cat:
+            score += 10.0
+        for kw in kws:
+            if kw in title:
+                score += 6.0
+            if any(kw in t for t in tags):
+                score += 3.0
+            if kw in summary:
+                score += 1.0
+        return score
+
+    for aid, h in candidates.items():
+        best_aspect, best_score = None, 0.0
+        for aspect_name, kws in active_aspects.items():
+            aff = calc_affinity(h, aspect_name, kws)
+            if aff > best_score:
+                best_score = aff
+                best_aspect = aspect_name
+        if best_aspect and best_score >= 2.0:
+            aspect_buckets[best_aspect].append((h, best_score, float(h.get("relevance", 0.0))))
+
+    recommendations: dict[str, list] = {}
+    for aspect_name, scored_list in aspect_buckets.items():
+        if scored_list:
+            scored_list.sort(key=lambda x: (x[1], x[2]), reverse=True)
+            recommendations[aspect_name] = [_slim(item[0]) for item in scored_list[:limit_per_category]]
 
     return json.dumps({
         "problem": problem_description,
