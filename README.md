@@ -7,11 +7,11 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%2011%20%7C%20cross--platform-lightgrey)]()
 
 [![MCP Ready](https://img.shields.io/badge/MCP-protocol%20ready-success)](https://modelcontextprotocol.io)
-[![Search](https://img.shields.io/badge/search-SQLite%20FTS5-informational)](https://www.sqlite.org/fts5.html)
-[![Vectors](https://img.shields.io/badge/vectors-FastEmbed%20CPU%2C%20offline-purple)](https://github.com/qdrant/fastembed)
+[![Search](https://img.shields.io/badge/search-SQLite%20FTS5%20%2B%203--Way%20RRF-informational)](https://www.sqlite.org/fts5.html)
+[![Vectors](https://img.shields.io/badge/vectors-FastEmbed%20CPU%20(BGE%20%2B%20CLIP)-purple)](https://github.com/qdrant/fastembed)
 [![GUI](https://img.shields.io/badge/desktop-PySide6-green)](https://doc.qt.io/qtforpython/)
 [![Telemetry](https://img.shields.io/badge/telemetry-none-success)]()
-[![Tests](https://img.shields.io/badge/tests-13%20passing-brightgreen)](run_tests.py)
+[![Tests](https://img.shields.io/badge/tests-16%20passing-brightgreen)](run_tests.py)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)]()
 [![Inspired by](https://img.shields.io/badge/inspired%20by-a%20dam-4f8cff)](#this-project-started-because-i-wanted-to-prototype-a-dam)
 
@@ -59,7 +59,11 @@ Two hard-won rules baked into the design, if you ever hack on this yourself:
 
 ## What you get
 
-**Search that understands intent.** This is the dam problem. SQLite FTS5 handles exact names; local ONNX embeddings catch meaning — *"concrete structures for holding back water"* surfaces meshes and shaders whose listings never mention dams. Both ranked together with reciprocal rank fusion, all computed on your CPU. No cloud API. I built this against my own ~1,500-asset vault, where brute-force cosine over a numpy matrix answers in milliseconds — which is why there's no vector database here. One less dependency for zero measurable gain.
+**Search that understands intent & vision.** This is the dam problem. 
+- **Exact keywords** via SQLite FTS5.
+- **Natural language intent** via local ONNX text embeddings (`BAAI/bge-small-en-v1.5`) — *"concrete structures for holding back water"* surfaces meshes and shaders whose listings never mention dams.
+- **Cross-modal visual understanding** via ONNX CLIP embeddings (`Qdrant/clip-ViT-B-32`) — searching *"gothic cathedral"* literally scores your screenshots and promo renders, finding assets even when their text descriptions are completely silent.
+All three signals are fused with **3-way Reciprocal Rank Fusion (RRF)** in $\sim 3\text{ ms}$ on your CPU. No vector database dependency. No cloud API.
 
 **Ground truth about your disk.** Scans `%APPDATA%/Unity/Asset Store-5.x/` and Epic's VaultCache so every result knows whether it's already downloaded or cloud-only. Agents prefer what's local — a zero-download import beats a 4 GB one.
 
@@ -97,14 +101,17 @@ python -m src.store_client enrich
 # Long, resumable, safe to re-run — it picks up where it stopped.
 python -m src.store_client fab-deep-media
 
-# Build the semantic index (local CPU embeddings):
+# Build the semantic index (local CPU text embeddings):
 python -m src.semantic build
+
+# Build the visual index (local CPU screenshot embeddings + concept tagging):
+python -m src.vision build
 
 # Find which of them are already downloaded to this machine:
 python -m src.local_scan
 ```
 
-`semantic build` is what makes *"concrete structures for holding back water"* find a dam. Skip it and search still works, but only on exact keywords.
+`semantic build` and `vision build` are what make *"concrete structures for holding back water"* and visual concept queries find your assets. Skip them and search still works, but only on exact keywords.
 
 Run `local_scan` *after* you have a catalog, not before. Scanned against an empty vault it has nothing to match filenames against, so it files every cached package as its own bare entry. Harmless — the next scan reconciles them against the real catalog — but you'll see doubles until then.
 
