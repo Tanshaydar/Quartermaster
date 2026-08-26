@@ -662,20 +662,27 @@ def _balanced_json_array(html: str, from_pos: int):
     i = html.find("[", from_pos)
     if i == -1:
         return ""
-    depth, j = 0, i
-    while j < len(html):
+    depth = 0
+    in_str = False
+    escape = False
+    for j in range(i, len(html)):
         c = html[j]
+        if escape:
+            escape = False
+            continue
+        if c == '\\':
+            escape = True
+            continue
         if c == '"':
-            j = html.find('"', j + 1)
-            if j == -1:
-                return ""
-        elif c == "[":
-            depth += 1
-        elif c == "]":
-            depth -= 1
-            if depth == 0:
-                return html[i:j + 1]
-        j += 1
+            in_str = not in_str
+            continue
+        if not in_str:
+            if c == '[':
+                depth += 1
+            elif c == ']':
+                depth -= 1
+                if depth == 0:
+                    return html[i:j + 1]
     return ""
 
 
@@ -694,7 +701,7 @@ def run_fab_deep_media(cancel_event=None, progress=None) -> int:
 
     conn = get_connection()
     rows = conn.execute(
-        "SELECT id, title, store_url FROM assets WHERE source='fab' "
+        "SELECT id, title, store_url, gallery_images FROM assets WHERE source='fab' "
         "AND store_url LIKE '%/library/assets/%'").fetchall()
     pending = []
     for r in rows:
