@@ -15,37 +15,11 @@ shutil.rmtree(DIST_DIR, ignore_errors=True)
 shutil.rmtree(BUILD_DIR, ignore_errors=True)
 os.makedirs(APP_OUT_DIR, exist_ok=True)
 
-# PyInstaller command
+# PyInstaller command using multi-binary spec
 cmd = [
     sys.executable, "-m", "PyInstaller",
     "--noconfirm",
-    "--onedir",
-    "--windowed",
-    "--name=Quartermaster",
-    f"--paths={os.path.join(BASE_DIR, 'src')}",
-    f"--paths={BASE_DIR}",
-    f"--icon={os.path.join(BASE_DIR, 'assets', 'icon.ico')}",
-    f"--add-data={os.path.join(BASE_DIR, 'assets')}{os.pathsep}assets",
-    f"--add-data={os.path.join(BASE_DIR, 'web')}{os.pathsep}web",
-    f"--add-data={os.path.join(BASE_DIR, 'data', 'recipes.json')}{os.pathsep}data",
-    f"--add-data={os.path.join(BASE_DIR, 'data', 'concepts.json')}{os.pathsep}data",
-    "--hidden-import=PySide6.QtNetwork",
-    "--hidden-import=fastembed",
-    "--hidden-import=onnxruntime",
-    "--hidden-import=PIL",
-    "--hidden-import=sqlite3",
-    "--hidden-import=httpx",
-    "--hidden-import=src",
-    "--hidden-import=src.db",
-    "--hidden-import=src.config",
-    "--hidden-import=src.desktop",
-    "--hidden-import=src.store_client",
-    "--hidden-import=src.local_scan",
-    "--hidden-import=src.vision",
-    "--hidden-import=src.semantic",
-    "--hidden-import=src.unpacker",
-    "--hidden-import=src.stack_rules",
-    os.path.join(BASE_DIR, "run_app.py")
+    os.path.join(BASE_DIR, "Quartermaster.spec")
 ]
 
 print("Running command:", " ".join(cmd))

@@ -265,5 +265,9 @@ def get_vault_stats() -> str:
     return json.dumps(stats, ensure_ascii=False)
 
 
-if __name__ == "__main__":
+def main():
     mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()
