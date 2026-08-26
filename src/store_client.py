@@ -687,66 +687,61 @@ def _balanced_json_array(html: str, from_pos: int):
 
 
 
+
 def fab_deep_media_pending() -> int:
-    """Count Fab listings the browser pass can still improve: cover-only
-    galleries OR heuristic placeholder descriptions."""
+    """Count canonical Fab listings not yet visited by the deep-media pass."""
     conn = get_connection()
-    rows = conn.execute(
-        "SELECT id, title, store_url, summary, gallery_images FROM assets WHERE source='fab' "
-        "AND store_url LIKE '%/library/assets/%'").fetchall()
+    _ensure_fab_scan_marker(conn)
+    n = conn.execute(
+        "SELECT COUNT(*) FROM assets WHERE source='fab' "
+        "AND store_url LIKE '%/library/assets/%' "
+        "AND COALESCE(fab_deep_scanned, 0) = 0").fetchone()[0]
     conn.close()
-    n = 0
-    for r in rows:
-        try:
-            n_imgs = len(json.loads(r["gallery_images"] or "[]"))
-        except Exception:
-            n_imgs = 0
-        summary = (r["summary"] or "").strip()
-        title = (r["title"] or "").strip()
-        needs_desc = not summary or summary.lower().endswith(f": {title.lower()}")
-        if n_imgs <= 1 or needs_desc:
-            n += 1
     return n
+
+
+def _ensure_fab_scan_marker(conn):
+    """Add fab_deep_scanned tracking column if absent (0 = not yet visited)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(assets)")]
+    if "fab_deep_scanned" not in cols:
+        conn.execute("ALTER TABLE assets ADD COLUMN fab_deep_scanned INTEGER DEFAULT 0")
+    conn.commit()
 
 
 def run_fab_deep_media(cancel_event=None, progress=None) -> int:
     """SEPARATE long-running pass (like enrichment, NOT part of fetch):
-    visits each Fab listing's canonical page in the authed browser and pulls
-    its full 'medias' gallery + description.
+    visits each Fab listing's canonical page once and pulls its full
+    'medias' gallery + description. Progress is tracked per-row via the
+    fab_deep_scanned column, so re-runs resume where the last stopped.
 
-    Work list = fab rows whose store_url is a canonical /library/assets/ URL
-    whose gallery is still cover-only OR whose description is still the
-    heuristic placeholder — so re-runs pick up both gaps. Plain HTTP gets
-    403'd by Fab's bot wall; this rides the authed browser. Images/CSS/fonts
-    aborted during navigation for speed. Returns listings enriched."""
+    Plain HTTP gets 403'd by Fab's bot wall; this rides the authed browser.
+    Images/CSS/fonts aborted during navigation for speed."""
     from .db import get_connection
 
     conn = get_connection()
-    rows = conn.execute(
-        "SELECT id, title, store_url, summary, gallery_images FROM assets WHERE source='fab' "
-        "AND store_url LIKE '%/library/assets/%'").fetchall()
-    pending = []
-    for r in rows:
-        try:
-            n_imgs = len(json.loads(r["gallery_images"] or "[]"))
-        except Exception:
-            n_imgs = 0
-        summary = (r["summary"] or "").strip()
-        title = (r["title"] or "").strip()
-        # heuristic summaries from classify_asset() end with ": <title>"
-        needs_desc = not summary or summary.lower().endswith(f": {title.lower()}")
-        if n_imgs <= 1 or needs_desc:
-            pending.append((r["id"], r["title"], r["store_url"]))
-            pending.append((r["id"], r["title"], r["store_url"]))
-    conn.close()
+    _ensure_fab_scan_marker(conn)
 
+    # Every canonical fab row not yet visited by this pass
+    rows = conn.execute(
+        "SELECT id, title, store_url FROM assets WHERE source='fab' "
+        "AND store_url LIKE '%/library/assets/%' "
+        "AND COALESCE(fab_deep_scanned, 0) = 0").fetchall()
+    pending = [(r["id"], r["title"], r["store_url"]) for r in rows]
+    n_total_rows = conn.execute(
+        "SELECT COUNT(*) FROM assets WHERE source='fab' "
+        "AND store_url LIKE '%/library/assets/%'").fetchone()[0]
+
+    already_done = n_total_rows - len(pending)
+    if already_done > 0:
+        _log(f"fab deep-media: {already_done} listings previously scanned; "
+             f"{len(pending)} remaining")
     if not pending:
         if progress:
-            progress(0, 0, "Fab deep-media: nothing to do — galleries and descriptions populated.")
+            progress(0, 0, "Fab galleries: nothing to do — every listing visited.")
         return 0
 
     total = len(pending)
-    _log(f"fab deep-media: {total} listings to scan")
+    _log(f"fab deep-media: {total} listings to visit")
 
     cfg = load_config()
     proc, port = _launch_browser(cfg, "fab", start_url="about:blank", cdp=True)
@@ -804,6 +799,7 @@ def run_fab_deep_media(cancel_event=None, progress=None) -> int:
                 continue
 
             gallery = []
+            videos = []
             for med in medias[:12]:
                 imgs = [x for x in med.get("images", [])
                         if isinstance(x, dict) and x.get("url")]
@@ -813,25 +809,21 @@ def run_fab_deep_media(cancel_event=None, progress=None) -> int:
                     g = "https:" + u if u.startswith("//") else u
                     if g not in gallery:
                         gallery.append(g)
-            if not gallery:
-                continue
 
             description = ""
             md = re.search(r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']{30,400})',
                            html, re.I)
             if md:
                 description = md.group(1).replace("&amp;", "&")
-            conn = get_connection()
-            sets = ["gallery_images = ?"]
-            params: List[Any] = [json.dumps(gallery)]
-            sets.append("image_url = CASE WHEN image_url = '' THEN ? ELSE image_url END")
-            params.append(gallery[0])
+
+            sets = ["gallery_images = ?", "image_url = CASE WHEN image_url = '' THEN ? ELSE image_url END",
+                    "fab_deep_scanned = 1"]
+            params: List[Any] = [json.dumps(gallery), gallery[0]]
+            if videos or description:
+                pass
             if description:
-                # heuristic summaries end with ": <title>" — replace those too
-                sets.append("summary = CASE WHEN summary = '' "
-                            "OR lower(summary) = lower(title) "
-                            "OR summary LIKE '%' || ': ' || title THEN ? "
-                            "ELSE summary END")
+                sets.append("summary = CASE WHEN summary = '' OR summary LIKE '%' || ': ' || title "
+                            "OR lower(summary) = lower(title) THEN ? ELSE summary END")
                 params.append(description)
             params.append(aid)
             conn.execute(f"UPDATE assets SET {', '.join(sets)} WHERE id = ?", params)
@@ -841,7 +833,7 @@ def run_fab_deep_media(cancel_event=None, progress=None) -> int:
             enriched += 1
             if progress:
                 progress(idx + 1, total,
-                         f"Fab deep-media {idx + 1}/{total} — {title[:40]}")
+                         f"Fab galleries {idx + 1}/{total} — {title[:40]}")
             if (idx + 1) % 10 == 0:
                 _log(f"  fab deep-media: {idx + 1}/{total} ({enriched} galleries pulled)")
     finally:
@@ -857,7 +849,7 @@ def run_fab_deep_media(cancel_event=None, progress=None) -> int:
         if pw:
             pw.stop()
 
-    _log(f"fab deep-media done: {enriched}/{total} galleries populated.")
+    _log(f"fab deep-media done: {enriched}/{total} galleries pulled.")
     return enriched
 
 
