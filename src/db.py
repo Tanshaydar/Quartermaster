@@ -260,7 +260,7 @@ def search_assets(
         results = []
         for r in rows:
             item = dict(r)
-            for k in ["render_pipelines", "tags", "gallery_images", "video_links", "formats"]:
+            for k in ["render_pipelines", "tags", "gallery_images", "video_links", "formats", "vision_tags"]:
                 if item.get(k) and isinstance(item[k], str):
                     try:
                         item[k] = json.loads(item[k])
@@ -284,7 +284,7 @@ def get_asset_by_id(asset_id: str, db_path: str = DB_PATH) -> Optional[Dict[str,
     if not row:
         return None
     item = dict(row)
-    for key in ["render_pipelines", "tags", "gallery_images", "video_links", "formats"]:
+    for key in ["render_pipelines", "tags", "gallery_images", "video_links", "formats", "vision_tags"]:
         try:
             item[key] = json.loads(item.get(key) or "[]")
         except:

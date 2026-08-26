@@ -177,8 +177,12 @@ def build(limit=None, cancel_event=None, progress=None) -> dict:
     conn = get_connection()
     _ensure_schema(conn)
 
-    # orphan cleanup: vectors whose asset vanished
-    conn.execute("DELETE FROM image_vectors WHERE asset_id NOT IN (SELECT id FROM assets)")
+    # orphan cleanup: vectors whose referenced assets have all vanished
+    all_asset_ids = {r[0] for r in conn.execute("SELECT id FROM assets")}
+    for uid, aid in conn.execute("SELECT id, asset_id FROM image_vectors").fetchall():
+        refs = {a.strip() for a in (aid or "").split(";") if a.strip()}
+        if not refs or not (refs & all_asset_ids):
+            conn.execute("DELETE FROM image_vectors WHERE id = ?", (uid,))
     conn.commit()
 
     done_urls = {r[0] for r in conn.execute("SELECT image_url FROM image_vectors")}
