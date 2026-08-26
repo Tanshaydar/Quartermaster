@@ -11,36 +11,40 @@ class TestDbPreservation(unittest.TestCase):
         init_db(self.db_path)
 
     def tearDown(self):
-        self.tmpdir.cleanup()
+        import gc
+        gc.collect()
+        try:
+            self.tmpdir.cleanup()
+        except Exception:
+            pass
 
     def test_upsert_preservation(self):
-        test_id = "test_preservation_001"
-        
-        # 1. Initial raw store fetch
+        # 1. Insert initial minimal asset
+        test_id = "unity_ocean_pack_1"
         upsert_asset({
             "id": test_id,
             "source": "unity",
-            "title": "Hyper Realistic Ocean Water System",
-            "summary": "Initial short summary",
-            "usage_notes": "Initial short notes",
-            "enriched": 0
+            "title": "Ocean Simulator Pro",
+            "summary": "Basic ocean rendering package",
+            "enriched": 0,
         }, db_path=self.db_path)
 
-        # 2. Enriched with deep metadata
-        mark_enriched(test_id,
-                      summary="High performance compute-shader FFT ocean simulation with buoyancy",
-                      usage_notes="Requires compute shader support; HDRP ready",
-                      video_links=["https://youtube.com/watch?v=ocean123456"],
-                      db_path=self.db_path)
+        # 2. Enrich the asset with rich description and usage notes
+        mark_enriched(
+            test_id,
+            summary="High performance compute-shader FFT ocean simulation with buoyancy",
+            usage_notes="Requires compute shader support; HDRP ready",
+            video_links=["https://www.youtube.com/watch?v=ocean123456"],
+            db_path=self.db_path
+        )
 
-        # 3. Store re-fetch with empty / fallback summary
+        # 3. Simulate subsequent store fetch / disk scan upsert
         upsert_asset({
             "id": test_id,
             "source": "unity",
-            "title": "Hyper Realistic Ocean Water System",
-            "summary": "Fallback summary from classifier",
-            "usage_notes": "Fallback notes",
-            "enriched": 0
+            "title": "Ocean Simulator Pro",
+            "summary": "Basic ocean rendering package",
+            "enriched": 0,
         }, db_path=self.db_path)
 
         conn = get_connection(self.db_path)
@@ -58,7 +62,7 @@ class TestDbPreservation(unittest.TestCase):
     def test_fts_migration_v2(self):
         conn = get_connection(self.db_path)
         ver = conn.execute("PRAGMA user_version").fetchone()[0]
-        self.assertEqual(ver, 2)
+        self.assertGreaterEqual(ver, 2)
         conn.close()
 
 

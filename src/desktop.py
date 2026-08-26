@@ -30,11 +30,11 @@ from PySide6.QtWidgets import (
 try:
     from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
     from .config import load_config, rotate_log_if_large, evict_image_cache, __version__
-    from . import store_client, local_scan
+    from . import store_client, local_scan, vision
 except ImportError:
     from db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
     from config import load_config, rotate_log_if_large, evict_image_cache, __version__
-    import store_client, local_scan
+    import store_client, local_scan, vision
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ICON_PATH = os.path.join(ROOT_DIR, "assets", "icon.ico")
@@ -374,6 +374,9 @@ class DetailPanel(QScrollArea):
         if item.get("tags"):
             _, b = self.section("Tags")
             b.setText("  ".join("#" + t for t in item["tags"]))
+        if item.get("vision_tags"):
+            _, b = self.section("Visual concepts")
+            b.setText("  ".join("👁 " + t for t in item["vision_tags"]))
 
         videos = [v for v in (item.get("video_links") or [])]
         if videos:
@@ -591,6 +594,8 @@ class MainWindow(QMainWindow):
             cancellable=False))
         add_sync_btn("⟳ Fetch Fab", lambda: self._fetch_op("fab"))
         add_sync_btn("🖼 Enrich library", lambda: self._start_enrich_sweep())
+        add_sync_btn("👁 Vision pass", lambda: self._long_op(
+            lambda ev, cb: vision.build(cancel_event=ev, progress=cb), "Vision pass"))
         add_sync_btn("⚡ Scan local", lambda: self._long_op(
             lambda ev: local_scan.scan_all(), "Disk scan"))
         sp.addWidget(self.sync_status, 1)

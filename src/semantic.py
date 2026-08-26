@@ -211,46 +211,83 @@ def semantic_search(query: str, k: int = 40, db_path: str = DB_PATH) -> List[Dic
 
 def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[str, Any]:
     """
-    RRF-fused keyword + semantic search.
-    Returns items plus per-item match info so agents can see WHY something hit.
+    3-Way RRF-fused search: Keyword (FTS5) + Text Semantic (BGE) + Visual Search (CLIP).
+    Returns items plus per-item match info so agents and UI can see WHY something hit.
     """
     kw = search_assets(query=query, limit=50, db_path=db_path)
-    kw_ids = [r["id"] for r in kw]
 
     conn = get_connection(db_path)
     _ensure_table(conn)
     total_assets = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
-    total_vectors = conn.execute("SELECT COUNT(*) FROM asset_vectors").fetchone()[0]
+    total_text_vectors = conn.execute("SELECT COUNT(*) FROM asset_vectors").fetchone()[0]
+    try:
+        total_img_vectors = conn.execute("SELECT COUNT(*) FROM image_vectors").fetchone()[0]
+    except Exception:
+        total_img_vectors = 0
     conn.close()
 
-    if total_vectors == 0:
+    # 1. Text Semantic Search (BGE)
+    sem = []
+    if total_text_vectors > 0:
+        try:
+            sem = semantic_search(query, k=50, db_path=db_path)
+        except Exception:
+            sem = []
+
+    # 2. Visual Semantic Search (CLIP)
+    vis = []
+    if total_img_vectors > 0:
+        try:
+            from .vision import vision_search
+        except ImportError:
+            try:
+                from vision import vision_search
+            except ImportError:
+                vision_search = None
+        if vision_search is not None:
+            try:
+                vis = vision_search(query, k=50, db_path=db_path)
+            except Exception:
+                vis = []
+
+    if total_text_vectors == 0 and total_img_vectors == 0:
         return {
             "count": len(kw[:limit]),
             "search_mode": "keyword-only",
             "results": kw[:limit],
-            "note": "Semantic index is unbuilt (0 vectors). Run 'python -m src.semantic build' to enable AI vector search."
+            "note": "AI vector indexes unbuilt. Run 'python -m src.semantic build' and 'python -m src.vision build' to enable neural semantic + visual search."
         }
-
-    try:
-        sem = semantic_search(query, k=50, db_path=db_path)
-    except Exception as e:
-        return {"count": len(kw[:limit]), "search_mode": "keyword-only", "results": kw[:limit],
-                "note": f"semantic index unavailable: {e}"}
 
     K = 60
     fused: Dict[str, float] = {}
-    why: Dict[str, str] = {}
+    signals: Dict[str, set] = {}
+    sem_map: Dict[str, float] = {}
+    vis_map: Dict[str, float] = {}
+    vis_img_map: Dict[str, str] = {}
+
     for rank, r in enumerate(kw):
-        fused[r["id"]] = fused.get(r["id"], 0) + 1 / (K + rank + 1)
-        why[r["id"]] = "keyword"
-    sem_map = {}
+        aid = r["id"]
+        fused[aid] = fused.get(aid, 0.0) + 1.0 / (K + rank + 1)
+        signals.setdefault(aid, set()).add("keyword")
+
     for rank, s in enumerate(sem):
-        fused[s["id"]] = fused.get(s["id"], 0) + 1 / (K + rank + 1)
-        sem_map[s["id"]] = s["score"]
-        why[s["id"]] = "both" if s["id"] in why else "semantic"
+        aid = s["id"]
+        fused[aid] = fused.get(aid, 0.0) + 1.0 / (K + rank + 1)
+        signals.setdefault(aid, set()).add("semantic")
+        sem_map[aid] = s["score"]
+
+    for rank, v in enumerate(vis):
+        aid = v["id"]
+        # Visual weight: 0.9 for balanced cross-modal precision
+        fused[aid] = fused.get(aid, 0.0) + 0.9 / (K + rank + 1)
+        signals.setdefault(aid, set()).add("vision")
+        vis_map[aid] = v["score"]
+        if v.get("image_url"):
+            vis_img_map[aid] = v["image_url"]
+
     ordered = sorted(fused.items(), key=lambda x: -x[1])[:limit]
 
-    # hydrate
+    # hydrate missing
     by_id = {r["id"]: r for r in kw}
     missing = [i for i, _ in ordered if i not in by_id]
     if missing:
@@ -258,7 +295,7 @@ def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[s
         qmarks = ",".join("?" * len(missing))
         for row in conn.execute(f"SELECT * FROM assets WHERE id IN ({qmarks})", missing):
             item = dict(row)
-            for k2 in ("render_pipelines", "tags", "gallery_images", "video_links", "formats"):
+            for k2 in ("render_pipelines", "tags", "gallery_images", "video_links", "formats", "vision_tags"):
                 try:
                     item[k2] = json.loads(item.get(k2) or "[]")
                 except Exception:
@@ -267,20 +304,29 @@ def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[s
         conn.close()
 
     results = []
-    for i, score in ordered:
-        if i not in by_id:
+    for aid, score in ordered:
+        if aid not in by_id:
             continue
-        item = dict(by_id[i])
-        item["match"] = why[i]
+        item = dict(by_id[aid])
+        item_sigs = signals.get(aid, set())
+        if len(item_sigs) > 1:
+            item["match"] = "+".join(sorted(item_sigs))
+        else:
+            item["match"] = next(iter(item_sigs), "keyword")
         item["relevance"] = round(score, 4)
-        if why[i] in ("semantic", "both"):
-            item["sem_score"] = round(sem_map.get(i, 0.0), 4)
+        if "semantic" in item_sigs:
+            item["sem_score"] = round(sem_map.get(aid, 0.0), 4)
+        if "vision" in item_sigs:
+            item["vis_score"] = round(vis_map.get(aid, 0.0), 4)
+            if aid in vis_img_map:
+                item["best_visual_image"] = vis_img_map[aid]
         results.append(item)
 
-    mode = "hybrid" if any(why[i] != "keyword" for i, _ in ordered) else "keyword"
+    has_non_kw = any(any(s != "keyword" for s in signals.get(aid, set())) for aid, _ in ordered)
+    mode = "3-way-hybrid" if (total_text_vectors > 0 and total_img_vectors > 0) else ("hybrid" if has_non_kw else "keyword")
     ret = {"count": len(results), "search_mode": mode, "results": results}
-    if total_vectors < total_assets:
-        ret["note"] = f"Partial vector coverage ({total_vectors}/{total_assets} indexed). Run 'python -m src.semantic build' to index recent additions."
+    if total_text_vectors < total_assets:
+        ret["note"] = f"Partial vector coverage ({total_text_vectors}/{total_assets} indexed). Run 'python -m src.semantic build' and 'python -m src.vision build' to index recent additions."
     return ret
 
 

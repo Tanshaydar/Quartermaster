@@ -49,10 +49,14 @@ def _slim(item: dict) -> dict:
         "usage_notes": (item.get("usage_notes") or "")[:180],
         "store_url": item.get("store_url"),
     }
+    if item.get("vision_tags"):
+        out["vision_tags"] = item["vision_tags"]
     # hybrid-search provenance (why this item matched)
     if item.get("match"):
         out["match"] = item["match"]
         out["relevance"] = item.get("relevance")
+        if item.get("best_visual_image"):
+            out["best_visual_image"] = item["best_visual_image"]
     return out
 
 

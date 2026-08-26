@@ -285,11 +285,119 @@ def build(limit=None, cancel_event=None, progress=None) -> dict:
         conn.close()
         stats["assets_tagged"] = len(tags_by_asset)
 
+    invalidate_vision_cache()
     print(f"[vision] done: +{stats['images_indexed']} encoded, "
           f"{stats['download_failed']} failed downloads, "
           f"{stats['assets_tagged']} assets tagged, "
           f"{stats['already_indexed']} already indexed")
     return stats
+
+
+import threading
+
+_VISION_CACHE_LOCK = threading.Lock()
+_VISION_MATRIX_CACHE: dict = {
+    "db_path": None,
+    "data_version": -1,
+    "size": -1,
+    "urls": None,
+    "asset_map": None,
+    "mat": None,
+}
+_clip_text_model_instance = None
+
+
+def _get_clip_text_model():
+    global _clip_text_model_instance
+    if _clip_text_model_instance is None:
+        from fastembed import TextEmbedding
+        _clip_text_model_instance = TextEmbedding(CLIP_TEXT_MODEL)
+    return _clip_text_model_instance
+
+
+def invalidate_vision_cache():
+    with _VISION_CACHE_LOCK:
+        _VISION_MATRIX_CACHE["data_version"] = -1
+        _VISION_MATRIX_CACHE["size"] = -1
+        _VISION_MATRIX_CACHE["urls"] = None
+        _VISION_MATRIX_CACHE["asset_map"] = None
+        _VISION_MATRIX_CACHE["mat"] = None
+
+
+def _load_vision_matrix(db_path: str = DB_PATH):
+    import sqlite3
+    with _VISION_CACHE_LOCK:
+        conn = sqlite3.connect(db_path, isolation_level=None, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        try:
+            try:
+                data_ver = conn.execute("PRAGMA data_version").fetchone()[0]
+                cur_size = conn.execute("SELECT COUNT(*) FROM image_vectors").fetchone()[0]
+            except Exception:
+                _ensure_schema(conn)
+                data_ver = conn.execute("PRAGMA data_version").fetchone()[0]
+                cur_size = conn.execute("SELECT COUNT(*) FROM image_vectors").fetchone()[0]
+
+            if (_VISION_MATRIX_CACHE["urls"] is not None and
+                _VISION_MATRIX_CACHE["db_path"] == db_path and
+                _VISION_MATRIX_CACHE["data_version"] == data_ver and
+                _VISION_MATRIX_CACHE["size"] == cur_size):
+                return _VISION_MATRIX_CACHE["urls"], _VISION_MATRIX_CACHE["asset_map"], _VISION_MATRIX_CACHE["mat"]
+
+            urls, asset_map, blobs = [], {}, []
+            for uid, aid, u, blob in conn.execute("SELECT id, asset_id, image_url, vector FROM image_vectors ORDER BY id"):
+                urls.append(u)
+                asset_map[u] = [a.strip() for a in (aid or "").split(";") if a.strip()]
+                blobs.append(blob)
+
+            if not urls:
+                return None, None, None
+
+            mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(urls), -1).copy()
+            mat /= (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-9)
+
+            _VISION_MATRIX_CACHE["db_path"] = db_path
+            _VISION_MATRIX_CACHE["data_version"] = data_ver
+            _VISION_MATRIX_CACHE["size"] = len(urls)
+            _VISION_MATRIX_CACHE["urls"] = urls
+            _VISION_MATRIX_CACHE["asset_map"] = asset_map
+            _VISION_MATRIX_CACHE["mat"] = mat
+            return urls, asset_map, mat
+        finally:
+            conn.close()
+
+
+def vision_search(query: str, k: int = 40, db_path: str = DB_PATH) -> list:
+    """Cross-modal text-to-image search: scores natural language query against
+    all screenshot vectors using CLIP, returning top-k assets with their best-matching screenshot."""
+    urls, asset_map, mat = _load_vision_matrix(db_path)
+    if urls is None or mat is None or not urls:
+        return []
+
+    try:
+        model = _get_clip_text_model()
+        qv = np.array(list(model.embed([query]))[0], dtype=np.float32)
+        qv /= (np.linalg.norm(qv) + 1e-9)
+
+        scores = mat @ qv  # (N_images,) dot product
+
+        # Aggregate max score per asset_id
+        best_scores = {}
+        best_images = {}
+        for idx, s in enumerate(scores):
+            u = urls[idx]
+            aids = asset_map.get(u, [])
+            for aid in aids:
+                if aid not in best_scores or s > best_scores[aid]:
+                    best_scores[aid] = float(s)
+                    best_images[aid] = u
+
+        top_aids = sorted(best_scores.keys(), key=lambda a: -best_scores[a])[:k]
+        return [{"id": a, "score": round(best_scores[a], 4), "image_url": best_images[a]} for a in top_aids]
+    except Exception as e:
+        print(f"[vision] search failed: {e}")
+        return []
 
 
 def status():
@@ -324,5 +432,10 @@ if __name__ == "__main__":
         build(limit=lim)
     elif cmd == "status":
         status()
+    elif cmd == "query" and len(sys.argv) > 2:
+        res = vision_search(sys.argv[2])
+        print(f"Found {len(res)} visual matches for '{sys.argv[2]}':")
+        for r in res[:10]:
+            print(f"  {r['id']} (score: {r['score']}) -> {r['image_url']}")
     else:
-        print("Usage:\n  python -m src.vision build [--limit N]\n  python -m src.vision status")
+        print("Usage:\n  python -m src.vision build [--limit N]\n  python -m src.vision query <text>\n  python -m src.vision status")

@@ -62,6 +62,7 @@ def init_db(db_path: str = DB_PATH):
         enriched INTEGER DEFAULT 0,
         enriched_at TIMESTAMP,
         local_path TEXT,
+        vision_tags TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
@@ -76,21 +77,40 @@ def init_db(db_path: str = DB_PATH):
         summary,
         usage_notes,
         render_pipelines,
+        vision_tags,
         tokenize = 'unicode61 remove_diacritics 2'
     );
     """)
 
-    # Schema & FTS data migration: user_version 2 ensures FTS is fully rebuilt from assets table
+    # Schema & FTS data migration: user_version 3 ensures FTS includes vision_tags and is fully rebuilt
     ver = cur.execute("PRAGMA user_version").fetchone()[0]
-    if ver < 2:
+    if ver < 3:
+        cols = [r[1] for r in cur.execute("PRAGMA table_info(assets)")]
+        if "vision_tags" not in cols:
+            cur.execute("ALTER TABLE assets ADD COLUMN vision_tags TEXT DEFAULT ''")
+
         has_assets = cur.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+        cur.execute("DROP TABLE IF EXISTS assets_fts")
+        cur.execute("""
+            CREATE VIRTUAL TABLE assets_fts USING fts5(
+                id UNINDEXED,
+                title,
+                publisher,
+                category,
+                tags,
+                summary,
+                usage_notes,
+                render_pipelines,
+                vision_tags,
+                tokenize = 'unicode61 remove_diacritics 2'
+            );
+        """)
         if has_assets > 0:
-            cur.execute("DELETE FROM assets_fts")
             cur.execute("""
-                INSERT INTO assets_fts (id, title, publisher, category, tags, summary, usage_notes, render_pipelines)
-                SELECT id, title, publisher, category, tags, summary, usage_notes, render_pipelines FROM assets
+                INSERT INTO assets_fts (id, title, publisher, category, tags, summary, usage_notes, render_pipelines, vision_tags)
+                SELECT id, title, publisher, category, tags, summary, usage_notes, render_pipelines, COALESCE(vision_tags, '') FROM assets
             """)
-        cur.execute("PRAGMA user_version = 2")
+        cur.execute("PRAGMA user_version = 3")
 
     conn.commit()
     conn.close()
@@ -99,8 +119,8 @@ def _sync_fts(cur: sqlite3.Cursor, asset_id: str):
     """Centralized FTS sync to ensure assets_fts never drifts."""
     cur.execute("DELETE FROM assets_fts WHERE id = ?", (asset_id,))
     cur.execute("""
-        INSERT INTO assets_fts (id, title, publisher, category, tags, summary, usage_notes, render_pipelines)
-        SELECT id, title, publisher, category, tags, summary, usage_notes, render_pipelines
+        INSERT INTO assets_fts (id, title, publisher, category, tags, summary, usage_notes, render_pipelines, vision_tags)
+        SELECT id, title, publisher, category, tags, summary, usage_notes, render_pipelines, COALESCE(vision_tags, '')
         FROM assets WHERE id = ?
     """, (asset_id,))
 
@@ -114,6 +134,7 @@ def upsert_asset(asset: Dict[str, Any], db_path: str = DB_PATH):
     gallery_images = json.dumps(asset.get("gallery_images", [])) if isinstance(asset.get("gallery_images"), list) else asset.get("gallery_images", "[]")
     video_links = json.dumps(asset.get("video_links", [])) if isinstance(asset.get("video_links"), list) else asset.get("video_links", "[]")
     formats = json.dumps(asset.get("formats", [])) if isinstance(asset.get("formats"), list) else asset.get("formats", "")
+    vision_tags = json.dumps(asset.get("vision_tags", [])) if isinstance(asset.get("vision_tags"), list) else (asset.get("vision_tags") or "[]")
     enriched = 1 if asset.get("enriched") else 0
 
     cur.execute("""
@@ -121,12 +142,12 @@ def upsert_asset(asset: Dict[str, Any], db_path: str = DB_PATH):
         id, source, package_id, product_id, title, publisher, publisher_id,
         version, size_mb, size_str, claimed_date, store_url, category,
         render_pipelines, tags, summary, usage_notes, image_url, gallery_images,
-        video_links, formats, license, enriched, local_path
+        video_links, formats, license, enriched, local_path, vision_tags
     ) VALUES (
         :id, :source, :package_id, :product_id, :title, :publisher, :publisher_id,
         :version, :size_mb, :size_str, :claimed_date, :store_url, :category,
         :render_pipelines, :tags, :summary, :usage_notes, :image_url, :gallery_images,
-        :video_links, :formats, :license, :enriched, :local_path
+        :video_links, :formats, :license, :enriched, :local_path, :vision_tags
     )
     ON CONFLICT(id) DO UPDATE SET
         title=excluded.title,
@@ -139,6 +160,7 @@ def upsert_asset(asset: Dict[str, Any], db_path: str = DB_PATH):
         category=excluded.category,
         render_pipelines=excluded.render_pipelines,
         tags=excluded.tags,
+        vision_tags=CASE WHEN excluded.vision_tags != '[]' AND excluded.vision_tags != '' THEN excluded.vision_tags ELSE assets.vision_tags END,
         summary=CASE WHEN assets.enriched = 1 AND excluded.enriched = 0 THEN assets.summary ELSE (CASE WHEN excluded.summary != '' THEN excluded.summary ELSE assets.summary END) END,
         usage_notes=CASE WHEN assets.enriched = 1 AND excluded.enriched = 0 THEN assets.usage_notes ELSE (CASE WHEN excluded.usage_notes != '' THEN excluded.usage_notes ELSE assets.usage_notes END) END,
         image_url=CASE WHEN excluded.image_url != '' THEN excluded.image_url ELSE assets.image_url END,
@@ -172,7 +194,8 @@ def upsert_asset(asset: Dict[str, Any], db_path: str = DB_PATH):
         "formats": formats,
         "license": asset.get("license", ""),
         "enriched": enriched,
-        "local_path": asset.get("local_path", "")
+        "local_path": asset.get("local_path", ""),
+        "vision_tags": vision_tags,
     })
 
     _sync_fts(cur, asset["id"])
