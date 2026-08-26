@@ -755,12 +755,25 @@ class MainWindow(QMainWindow):
         self.overlay_status.setStyleSheet(f"color: {MUTED}; font-size: 13px; line-height: 1.4; background: transparent; border: none;")
 
         self.overlay_bar = QProgressBar()
-        self.overlay_bar.setFixedHeight(12)
+        self.overlay_bar.setFixedHeight(18)
         self.overlay_bar.setRange(0, 0)   # busy pulse until totals known
-        self.overlay_bar.setTextVisible(False)
+        self.overlay_bar.setTextVisible(True)
+        self.overlay_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.overlay_bar.setFormat("%p%")
         self.overlay_bar.setStyleSheet(f"""
-            QProgressBar {{ background: #21262d; border: none; border-radius: 6px; }}
-            QProgressBar::chunk {{ background: {ACCENT}; border-radius: 6px; }}
+            QProgressBar {{
+                background: #21262d;
+                border: 1px solid {BORDER};
+                border-radius: 6px;
+                text-align: center;
+                color: #ffffff;
+                font-size: 11px;
+                font-weight: 700;
+            }}
+            QProgressBar::chunk {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {ACCENT}, stop:1 {GREEN});
+                border-radius: 5px;
+            }}
         """)
 
         self.overlay_cancel = QPushButton("Cancel")
@@ -821,15 +834,20 @@ class MainWindow(QMainWindow):
             if isinstance(args[0], str):
                 text = args[0]
         if not self.overlay.isHidden():
-            if done is not None and total:
+            if done is not None and total and total > 0:
                 self.overlay_bar.setRange(0, total)
                 self.overlay_bar.setValue(min(done, total))
+                pct = int((min(done, total) / total) * 100)
+                self.overlay_bar.setFormat(f"{pct}% ({done}/{total})")
                 # ETA from observed rate
                 elapsed = max(time.time() - getattr(self, "_op_t0", time.time()), 0.1)
                 if done > 0 and done <= total:
                     eta = elapsed / done * (total - done)
                     if text:
                         text = f"{text}  ·  ~{int(eta // 60)}m {int(eta % 60):02d}s left"
+            elif total == 0:
+                self.overlay_bar.setRange(0, 0)
+                self.overlay_bar.setFormat("Starting…")
             if text:
                 self.overlay_status.setText(text)
         self.sync_status.setText(text or "")
