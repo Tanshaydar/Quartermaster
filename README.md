@@ -93,17 +93,27 @@ python -m src.store_client fetch fab
 # Pull descriptions and cover art (polite batched fetching):
 python -m src.store_client enrich
 
+# Fab only: plain HTTP gets 403'd, so full galleries need the authed browser.
+# Long, resumable, safe to re-run — it picks up where it stopped.
+python -m src.store_client fab-deep-media
+
 # Build the semantic index (local CPU embeddings):
 python -m src.semantic build
+
+# Find which of them are already downloaded to this machine:
+python -m src.local_scan
 ```
 
 `semantic build` is what makes *"concrete structures for holding back water"* find a dam. Skip it and search still works, but only on exact keywords.
+
+Run `local_scan` *after* you have a catalog, not before. Scanned against an empty vault it has nothing to match filenames against, so it files every cached package as its own bare entry. Harmless — the next scan reconciles them against the real catalog — but you'll see doubles until then.
 
 Already have CSV exports from the stores? Skip the browser entirely:
 
 ```bash
 python -m src.ingest             # eats any CSVs in data/seed/
 python -m src.semantic build     # still needed — see the note above
+python -m src.local_scan         # then find what's already on disk
 ```
 
 Connect your agents:
