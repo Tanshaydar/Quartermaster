@@ -1,0 +1,324 @@
+"""
+Vision pass: CLIP image embeddings + zero-shot concept mining for galleries.
+
+Downloads each unique gallery/cover image once, encodes it with fastembed's
+ONNX CLIP vision model, stores per-image vectors, then mines user-editable
+visual concepts (data/concepts.json) against the whole corpus. Concept tags
+that clear the corpus-calibrated threshold are written to the asset's
+vision_tags column — a separate column so fetch/enrichment can never clobber
+them.
+
+Design decisions (from the architecture review):
+  - Vectors are per-IMAGE, not per-asset: "gothic church in shot 7" stays
+    attributable; the table is still tiny (~25MB at vault scale).
+  - Thresholds self-calibrate: every build scores the ENTIRE stored corpus
+    against all concepts and computes per-concept mean/std, so no magic
+    numbers live in code or config.
+  - Re-runs resume: URLs already present in image_vectors are skipped.
+  - Plain HTTP works for both CDNs (media.fab.com and Unity's CDN serve
+    images publicly) — no browser session needed for this pass.
+  - Additive only: creates its own table/column; upsert_asset never touches
+    vision_tags, so nothing existing changes behavior.
+
+CLI:
+  python -m src.vision build [--limit N]   # incremental encode + tag
+  python -m src.vision status              # coverage report
+
+Config keys (optional):
+  vision_batch_size   (default 8)     images per ONNX batch
+  vision_concurrency  (default 6)     parallel downloads
+"""
+import io
+import json
+import os
+import sys
+import hashlib
+
+import numpy as np
+
+try:
+    from .db import get_connection, DB_PATH
+    from .config import load_config
+except ImportError:
+    from db import get_connection, DB_PATH
+    from config import load_config
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONCEPTS_PATH = os.path.join(ROOT_DIR, "data", "concepts.json")
+
+VISION_MODEL = "Qdrant/clip-ViT-B-32-vision"
+CLIP_TEXT_MODEL = "Qdrant/clip-ViT-B-32-text"
+MAX_IMAGE_BYTES = 15 * 1024 * 1024
+
+
+# ---------------------------------------------------------------- schema ----
+
+def _ensure_schema(conn):
+    """Create the vision tables/columns this module owns. Idempotent."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS image_vectors (
+            id TEXT PRIMARY KEY,
+            asset_id TEXT NOT NULL,
+            image_url TEXT NOT NULL,
+            vector BLOB NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_img_vec_asset ON image_vectors(asset_id)")
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(assets)")]
+    if "vision_tags" not in cols:
+        conn.execute("ALTER TABLE assets ADD COLUMN vision_tags TEXT DEFAULT ''")
+    conn.commit()
+
+
+# ------------------------------------------------------------- work list ----
+
+def _collect_work():
+    """Map every unique gallery/cover URL -> list of asset ids using it."""
+    work = {}
+    conn = get_connection()
+    for aid, cover, gjson in conn.execute(
+            "SELECT id, image_url, gallery_images FROM assets "
+            "WHERE source IN ('unity','fab')"):
+        urls = []
+        if cover:
+            urls.append(cover)
+        try:
+            urls.extend(json.loads(gjson or "[]"))
+        except Exception:
+            pass
+        for u in urls:
+            if isinstance(u, str) and u.startswith("http"):
+                work.setdefault(u, set()).add(aid)
+    conn.close()
+    return work
+
+
+def _norm_url(u: str) -> str:
+    return "https:" + u if u.startswith("//") else u
+
+
+# ------------------------------------------------------------ downloads -----
+
+def _download(url: str):
+    import httpx
+    try:
+        r = httpx.get(_norm_url(url), headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        if r.status_code != 200 or len(r.content) > MAX_IMAGE_BYTES:
+            return None
+        return r.content
+    except Exception:
+        return None
+
+
+# ------------------------------------------------------- concept tagging ----
+
+def _load_concepts():
+    with open(CONCEPTS_PATH, encoding="utf-8") as f:
+        data = json.load(f)
+    concepts = [c.strip() for c in data.get("concepts", []) if c.strip()]
+    threshold_z = float(data.get("threshold_z", 2.0))
+    return concepts, threshold_z
+
+
+def _mine_concepts(all_vecs, asset_map, concepts, threshold_z, text_model=None):
+    """Score every stored vector against every concept; calibrate on corpus.
+
+    all_vecs:  {url: np.ndarray}   — normalized vectors
+    asset_map: {url: set(asset_id)}
+    Returns {asset_id: sorted tag list}.
+    """
+    from fastembed import TextEmbedding
+    if text_model is None:
+        text_model = TextEmbedding(CLIP_TEXT_MODEL)
+
+    C = np.array([np.array(list(text_model.embed([c]))[0], dtype=np.float32)
+                  for c in concepts])
+    C /= (np.linalg.norm(C, axis=1, keepdims=True) + 1e-9)
+
+    urls = list(all_vecs.keys())
+    V = np.array([all_vecs[u] for u in urls], dtype=np.float32)
+    S = V @ C.T                                   # (N images, K concepts)
+
+    N = S.shape[0]
+    if N < 50:
+        print(f"[vision] only {N} vectors indexed — skipping tagging until "
+              f"corpus is larger (calibration needs volume)")
+        return {}
+
+    tags_by_asset = {}
+    misses = 0
+    for k, concept in enumerate(concepts):
+        col = S[:, k]
+        mu, sigma = float(col.mean()), float(col.std())
+        if sigma < 1e-6:
+            continue
+        z = (col - mu) / sigma
+        hit_rows = np.where(z >= threshold_z)[0]
+        for row in hit_rows:
+            url = urls[row]
+            for aid in asset_map.get(url, ()):          # a URL may serve several assets
+                tags_by_asset.setdefault(aid, set()).add(concept)
+        misses += int((z < threshold_z).sum())
+    _ = misses
+    return {aid: sorted(t) for aid, t in tags_by_asset.items()}
+
+
+# ------------------------------------------------------------------ build ---
+
+def build(limit=None, cancel_event=None, progress=None) -> dict:
+    """Incremental: download+encode missing images, then re-mine all tags."""
+    from PIL import Image
+    from fastembed import ImageEmbedding
+
+    cfg = load_config()
+    batch_size = max(1, int(cfg.get("vision_batch_size", 8)))
+    concurrency = max(1, int(cfg.get("vision_concurrency", 6)))
+
+    conn = get_connection()
+    _ensure_schema(conn)
+
+    # orphan cleanup: vectors whose asset vanished
+    conn.execute("DELETE FROM image_vectors WHERE asset_id NOT IN (SELECT id FROM assets)")
+    conn.commit()
+
+    done_urls = {r[0] for r in conn.execute("SELECT image_url FROM image_vectors")}
+    work = _collect_work()
+    pending = [(u, aids) for u, aids in work.items() if u not in done_urls]
+    if limit:
+        pending = pending[:limit]
+
+    total_new = len(pending)
+    stats = {"images_indexed": 0, "download_failed": 0,
+             "assets_tagged": 0, "already_indexed": len(work) - total_new}
+    conn.close()
+
+    if progress:
+        progress(0, total_new, f"Downloading & encoding {total_new} new images…")
+    print(f"[vision] {len(work)} unique images known, {total_new} new to encode")
+
+    if pending:
+        img_model = ImageEmbedding(VISION_MODEL)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        inserted_this_run = []
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = {pool.submit(_download, u): (u, aids) for u, aids in pending}
+            batch_bufs, batch_meta = [], []
+
+            def flush():
+                nonlocal inserted_this_run
+                if not batch_bufs:
+                    return
+                vecs = list(img_model.embed(list(batch_bufs)))
+                conn = get_connection()
+                for (u, aids), v in zip(batch_meta, vecs):
+                    v = np.asarray(v, dtype=np.float32)
+                    v /= (np.linalg.norm(v) + 1e-9)
+                    uid = "img_" + hashlib.sha1(u.encode()).hexdigest()
+                    conn.execute(
+                        "INSERT OR REPLACE INTO image_vectors "
+                        "(id, asset_id, image_url, vector) VALUES (?,?,?,?)",
+                        (uid, ";".join(sorted(aids))[:200], u, v.tobytes()))
+                    all_vecs[u] = v / (np.linalg.norm(v) + 1e-9)
+                    asset_map.update({u: aids})
+                    inserted_this_run.append(u)
+                conn.commit()
+                conn.close()
+                batch_bufs.clear(); batch_meta.clear()
+
+            # these two dicts feed both encoding and the tagging phase
+            all_vecs, asset_map = {}, {}
+
+            done = 0
+            for fut in as_completed(futures):
+                u, aids = futures[fut]
+                data = fut.result()
+                done += 1
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                if not data:
+                    stats["download_failed"] += 1
+                else:
+                    try:
+                        pil = Image.open(io.BytesIO(data)).convert("RGB")
+                        buf = io.BytesIO(); pil.save(buf, format="PNG"); buf.seek(0)
+                        batch_bufs.append(buf)
+                        batch_meta.append((u, aids))
+                        if len(batch_bufs) >= batch_size:
+                            flush()
+                    except Exception:
+                        stats["download_failed"] += 1
+                        continue
+                if progress and done % 10 == 0:
+                    progress(done, total_new, f"Encoded {done}/{total_new} new images…")
+            flush()  # remainder
+            stats["images_indexed"] = len(inserted_this_run)
+
+    # ---- concept mining over the FULL corpus (new + previously indexed) ----
+    all_vecs, asset_map = {}, {}
+    conn = get_connection()
+    for uid, aid, u, blob in conn.execute(
+            "SELECT id, asset_id, image_url, vector FROM image_vectors"):
+        v = np.frombuffer(blob, dtype=np.float32)
+        n = float(np.linalg.norm(v)) + 1e-9
+        all_vecs[u] = v / n
+        for a in (aid or "").split(";"):
+            asset_map.setdefault(u, set()).add(a)
+    conn.close()
+
+    concepts, threshold_z = _load_concepts()
+    if concepts:
+        tags_by_asset = _mine_concepts(all_vecs, asset_map, concepts, threshold_z)
+        conn = get_connection()
+        all_ids = {r[0] for r in conn.execute(
+            "SELECT id FROM assets WHERE source IN ('unity','fab')")}
+        tagged_ids = set(tags_by_asset)
+        for aid in (all_ids | tagged_ids):
+            tags = tags_by_asset.get(aid, [])
+            conn.execute("UPDATE assets SET vision_tags = ? WHERE id = ?",
+                         (json.dumps(tags), aid))
+        conn.commit()
+        conn.close()
+        stats["assets_tagged"] = len(tags_by_asset)
+
+    print(f"[vision] done: +{stats['images_indexed']} encoded, "
+          f"{stats['download_failed']} failed downloads, "
+          f"{stats['assets_tagged']} assets tagged, "
+          f"{stats['already_indexed']} already indexed")
+    return stats
+
+
+def status():
+    conn = get_connection()
+    total_assets = conn.execute(
+        "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab')").fetchone()[0]
+    with_covers = conn.execute(
+        "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab') AND image_url != ''").fetchone()[0]
+    try:
+        vecs = conn.execute("SELECT COUNT(*) FROM image_vectors").fetchone()[0]
+    except Exception:
+        vecs = 0
+    tagged = 0
+    try:
+        tagged = conn.execute(
+            "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab') AND "
+            "vision_tags IS NOT NULL AND vision_tags != '' AND vision_tags != '[]'").fetchone()[0]
+    except Exception:
+        pass
+    conn.close()
+    print(f"assets={total_assets}  with_cover={with_covers}  "
+          f"image_vectors={vecs}  assets_with_vision_tags={tagged}")
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    lim = None
+    if "--limit" in sys.argv:
+        lim = int(sys.argv[sys.argv.index("--limit") + 1])
+
+    if cmd == "build":
+        build(limit=lim)
+    elif cmd == "status":
+        status()
+    else:
+        print("Usage:\n  python -m src.vision build [--limit N]\n  python -m src.vision status")
