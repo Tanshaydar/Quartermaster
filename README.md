@@ -131,15 +131,34 @@ python -m src.local_scan         # then find what's already on disk
 
 Connect your agents:
 
+**Option A: Auto-registration (one command)**
 ```bash
+# Standalone binary users:
+Quartermaster-mcp.exe --register --all
+
+# Source users:
 python -m src.register --all             # Claude Desktop, Cursor, Windsurf, Antigravity
 python -m src.register --all --dry-run   # look before you leap
 ```
 
-Registration merges into existing configs and backs them up first. It won't clobber your other servers.
+Registration merges into existing client configs and creates a `.quartermaster-backup` first. It won't clobber your other servers.
 
-Prefer to paste it yourself? Every client takes the same block — there's a copy at [`mcp_config.json`](mcp_config.json):
+**Option B: Manual config**
+Paste the server block into your client configuration:
 
+*Standalone binary:*
+```json
+{
+  "mcpServers": {
+    "quartermaster": {
+      "command": "C:/path/to/Quartermaster/Quartermaster-mcp.exe",
+      "args": []
+    }
+  }
+}
+```
+
+*From source:*
 ```json
 {
   "mcpServers": {
@@ -153,6 +172,9 @@ Prefer to paste it yourself? Every client takes the same block — there's a cop
 ```
 
 Claude Desktop reads `%APPDATA%/Claude/claude_desktop_config.json`, Cursor `~/.cursor/mcp.json`, Windsurf `~/.codeium/windsurf/mcp_config.json`.
+
+> [!NOTE]
+> **First-run model warm-up:** On the very first natural language or vision search, the embedding models (`BAAI/bge-small-en-v1.5` and `clip-ViT-B-32`) are downloaded and cached locally by ONNX Runtime (~150 MB). The first query may take 3–5 seconds while loading into memory; every subsequent query executes in ~100 ms.
 
 
 ## Agent tools

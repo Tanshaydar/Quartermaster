@@ -147,7 +147,10 @@ def main(argv):
     if "--all" in argv or not targets:
         targets = list(CLIENTS.keys())
 
-    print(f"VaultMCP server: python -m src.mcp_server @ {ROOT_DIR}")
+    if getattr(sys, "frozen", False):
+        print(f"Quartermaster MCP server: {_server_entry()['command']}")
+    else:
+        print(f"Quartermaster MCP server: python -m src.mcp_server @ {ROOT_DIR}")
     for t in targets:
         t = t.lower().strip("-")
         if t not in CLIENTS:

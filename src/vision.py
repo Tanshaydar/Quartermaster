@@ -125,7 +125,7 @@ def _load_concepts():
         threshold_z = float(data.get("threshold_z", 2.0))
         return concepts, threshold_z
     except Exception as e:
-        print(f"[warn] Failed to load visual concepts from {CONCEPTS_PATH}: {e}")
+        print(f"[warn] Failed to load visual concepts from {CONCEPTS_PATH}: {e}", file=sys.stderr)
         return [], 2.0
 
 

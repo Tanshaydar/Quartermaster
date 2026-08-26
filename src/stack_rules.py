@@ -30,7 +30,7 @@ def load_rules() -> Dict[str, Any]:
         with open(RECIPES_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        print(f"[warn] Failed to load recipes from {RECIPES_PATH}: {e}")
+        print(f"[warn] Failed to load recipes from {RECIPES_PATH}: {e}", file=sys.stderr)
         return {"roles": {}, "recipes": []}
 
 

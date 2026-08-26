@@ -171,7 +171,7 @@ def _load_matrix(db_path: str = DB_PATH):
             import numpy as np
             if len(set(dims)) > 1:
                 # Mixed dimensions detected (e.g. model switched in config)
-                print("[semantic] Mixed vector dimensions detected in database; re-indexing required.")
+                print("[semantic] Mixed vector dimensions detected in database; re-indexing required.", file=sys.stderr)
                 return None, None, None
             mat = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(ids), dims[0]).copy()
             mat /= (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-9)

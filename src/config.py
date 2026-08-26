@@ -140,7 +140,7 @@ def load_config() -> dict:
                 user_cfg = json.load(f)
             cfg.update({k: v for k, v in user_cfg.items()})
         except Exception as e:
-            print(f"[warn] Could not parse {CONFIG_PATH}: {e}. Using defaults.")
+            print(f"[warn] Could not parse {CONFIG_PATH}: {e}. Using defaults.", file=sys.stderr)
     # resolve relative dirs against writable data root
     for key in ("media_cache_dir", "profiles_dir"):
         if not os.path.isabs(cfg[key]):
