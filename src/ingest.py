@@ -47,23 +47,63 @@ def _word_match(text: str, keywords: List[str]) -> bool:
 
 
 VISION_CONCEPT_MAP = {
-    "Terrain & Landscape": ["rocky terrain", "mountain", "canyon", "desert", "cave", "landscape", "cliffs", "dunes"],
-    "3D Environments & Props": ["interior", "exterior", "building", "ruins", "dungeon", "architecture", "props", "furniture", "urban", "sci-fi corridor", "castle", "temple"],
-    "Foliage & Nature": ["forest", "jungle", "trees", "grass", "foliage", "plant", "nature", "vegetation"],
-    "VFX & Particles": ["vfx", "fire", "smoke", "fluid", "explosion", "magic", "water splash", "electricity"],
-    "3D Models & Characters": ["character", "creature", "humanoid", "monster", "animal", "human face", "robot"],
-    "Weapons & Combat": ["weapon", "gun", "sword", "firearm", "armor", "shield"],
-    "Vehicles": ["vehicle", "car", "aircraft", "ship", "truck"],
-    "UI & Interface": ["ui", "hud", "game icons", "inventory interface"],
-    "Shaders & Rendering": ["stylized shader", "realistic shader", "pbr texture", "fog volume", "skybox"],
+    "Terrain & Landscape": [
+        "rocky terrain", "mountain", "canyon", "desert", "cave", "landscape", "cliffs", "dunes",
+        "desert dunes", "snowy mountains", "alien planet landscape", "waterfall river water", "ocean waves coastline"
+    ],
+    "3D Environments & Props": [
+        "interior", "exterior", "building", "ruins", "dungeon", "architecture", "props", "furniture", "urban",
+        "sci-fi corridor", "castle", "temple", "gothic architecture", "medieval village", "castle fortress",
+        "ancient temple ruins", "cyberpunk city", "modern city street", "fantasy tavern interior", "dungeon prison",
+        "abandoned industrial factory", "modular building kit pieces", "furniture interior props", "food and kitchen items",
+        "medical laboratory equipment"
+    ],
+    "Foliage & Nature": [
+        "forest", "jungle", "trees", "grass", "foliage", "plant", "nature", "vegetation", "dense forest", "jungle vegetation"
+    ],
+    "VFX & Particles": [
+        "vfx", "fire", "smoke", "fluid", "explosion", "magic", "water splash", "electricity", "explosion fire effects",
+        "magic spell effects"
+    ],
+    "3D Models & Characters": [
+        "character", "creature", "humanoid", "monster", "animal", "human face", "robot", "cartoon style characters",
+        "mech robot", "dinosaur monster creature", "humanoid character portrait"
+    ],
+    "Weapons & Combat": [
+        "weapon", "gun", "sword", "firearm", "armor", "shield", "weapons display guns", "swords and medieval armor",
+        "first person weapon viewmodel"
+    ],
+    "Vehicles": [
+        "vehicle", "car", "aircraft", "ship", "truck", "spaceship vehicle", "racing car vehicle"
+    ],
+    "UI & Interface": [
+        "ui", "hud", "game icons", "inventory interface", "game user interface menu"
+    ],
+    "Shaders & Rendering": [
+        "stylized shader", "realistic shader", "pbr texture", "fog volume", "skybox", "hand painted stylized texture",
+        "photorealistic render", "moody foggy scene", "stylized low poly environment", "voxel art", "pixel art"
+    ],
 }
 
 
 def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
-                   tags_list: List[str] = None, vision_tags: str = "", summary_text: str = "") -> Dict[str, Any]:
+                   tags_list: List[str] = None, vision_tags: Any = None, summary_text: str = "") -> Dict[str, Any]:
     t = title.lower()
-    all_text = f"{t} {' '.join(tags_list or []).lower()} {summary_text.lower()}"
-    v_tags = [v.strip().lower() for v in (vision_tags or "").split(",") if v.strip()]
+    all_text = f"{t} {' '.join(tags_list or []).lower()} {(summary_text or '').lower()}"
+
+    v_tags = []
+    if vision_tags:
+        if isinstance(vision_tags, list):
+            v_tags = [str(v).strip().lower() for v in vision_tags]
+        elif isinstance(vision_tags, str):
+            v_str = vision_tags.strip()
+            if v_str.startswith("["):
+                try:
+                    v_tags = [str(v).strip().lower() for v in json.loads(v_str)]
+                except Exception:
+                    v_tags = [v.strip().lower() for v in v_str.split(",") if v.strip()]
+            else:
+                v_tags = [v.strip().lower() for v in v_str.split(",") if v.strip()]
 
     category = "Tools & Utilities"
     pipelines = ["HDRP", "URP", "Built-in"]
@@ -92,7 +132,8 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
 
     elif _word_match(t, ["tree", "trees", "foliage", "vegetation", "grass", "forest", "forests", "plant",
                          "plants", "fern", "ivy", "meadow", "speedtree", "nature renderer", "megaplants",
-                         "flower", "flowers", "bush", "bushes", "shrub", "shrubs", "wood", "woods", "flora"]):
+                         "flower", "flowers", "bush", "bushes", "shrub", "shrubs", "wood", "woods", "flora",
+                         "vines", "vine", "moss", "bamboo", "succulent", "succulents", "leaf", "leaves"]):
         category = "Foliage & Nature"
         tags.extend(["foliage", "vegetation", "nature", "flora"])
         if not summary:
@@ -101,7 +142,8 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
     elif _word_match(t, ["character", "characters", "creature", "creatures", "monster", "monsters",
                          "animal", "animals", "insect", "insects", "humanoid", "humanoids", "npc", "npcs",
                          "enemy", "enemies", "boss", "zombie", "zombies", "dinosaur", "dinosaurs", "dragon",
-                         "dragons", "bird", "birds", "fish", "human", "people", "hero", "villain"]):
+                         "dragons", "bird", "birds", "fish", "human", "people", "hero", "villain", "girl",
+                         "guy", "man", "woman", "boy", "paragon", "warrior", "knight", "soldier", "avatar"]):
         category = "3D Models & Characters"
         tags.extend(["characters", "creatures", "3d-models"])
         if not summary:
@@ -110,7 +152,7 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
     elif _word_match(t, ["weapon", "weapons", "gun", "guns", "sword", "swords", "melee", "combat",
                          "fps", "shooter", "bow", "bows", "shield", "shields", "axe", "axes", "lmg", "smg",
                          "rifle", "rifles", "pistol", "pistols", "shotgun", "shotguns", "grenade", "dagger",
-                         "knife", "knives", "cannon", "artillery", "armory"]):
+                         "knife", "knives", "cannon", "artillery", "armory", "ammo", "ammunition", "bullet", "bullets"]):
         category = "Weapons & Combat"
         tags.extend(["weapons", "combat", "gameplay"])
         if not summary:
@@ -118,7 +160,7 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
 
     elif _word_match(t, ["vehicle", "vehicles", "car", "cars", "truck", "trucks", "arcade vehicle",
                          "wheel", "wheels", "boat", "boats", "ship", "ships", "plane", "planes",
-                         "aircraft", "helicopter", "tank", "tanks", "automobile"]):
+                         "aircraft", "helicopter", "tank", "tanks", "automobile", "wagon", "train", "locomotive"]):
         category = "Vehicles"
         tags.extend(["vehicles", "physics", "driving"])
         if not summary:
@@ -138,7 +180,8 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
                          "factory", "saloon", "hospital", "bunker", "street", "megapack", "modular", "abandoned",
                          "ruins", "ruin", "house", "building", "buildings", "props", "prop", "synty", "polygon",
                          "trench", "trenches", "corridor", "corridors", "room", "rooms", "kitchen", "restaurant",
-                         "food", "furniture", "table", "chair", "tavern"]):
+                         "food", "furniture", "table", "chair", "tavern", "bar", "slums", "slum", "shanty",
+                         "station", "cyberpunk", "sci-fi", "urban", "decay", "subway", "metro"]):
         category = "3D Environments & Props"
         tags.extend(["3d-models", "environment", "modular", "props", "architecture"])
         if not summary:
@@ -147,7 +190,7 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
     elif _word_match(t, ["shader", "shaders", "skybox", "skyboxes", "pixelize", "outline", "lut",
                          "htrace", "beautify", "upscaling", "dlss", "xess", "fsr", "fog volume",
                          "post processing", "lighting box", "material", "materials", "auto material",
-                         "texture", "textures", "pbr", "decal", "decals"]):
+                         "texture", "textures", "pbr", "decal", "decals", "surface", "surfaces", "track"]):
         category = "Shaders & Rendering"
         tags.extend(["shader", "rendering", "graphics"])
         if not summary:
@@ -189,15 +232,15 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
                 break
 
     # 3. Store tags & summary keyword fallback
-    elif _word_match(all_text, ["plants", "trees", "foliage", "vegetation", "grass"]):
+    elif _word_match(all_text, ["plants", "trees", "foliage", "vegetation", "grass", "vines"]):
         category = "Foliage & Nature"
-    elif _word_match(all_text, ["props", "furniture", "architecture", "interior", "exterior", "modular building"]):
+    elif _word_match(all_text, ["props", "furniture", "architecture", "interior", "exterior", "modular building", "urban", "slums", "station"]):
         category = "3D Environments & Props"
-    elif _word_match(all_text, ["guns", "weapons", "firearms", "swords"]):
+    elif _word_match(all_text, ["guns", "weapons", "firearms", "swords", "ammo"]):
         category = "Weapons & Combat"
-    elif _word_match(all_text, ["monsters", "characters", "creatures", "animals"]):
+    elif _word_match(all_text, ["monsters", "characters", "creatures", "animals", "humanoid"]):
         category = "3D Models & Characters"
-    elif _word_match(all_text, ["shaders", "materials", "textures"]):
+    elif _word_match(all_text, ["shaders", "materials", "textures", "surfaces"]):
         category = "Shaders & Rendering"
 
     # 4. Canonical tools check (inspect title for genuine tool keywords)

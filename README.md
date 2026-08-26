@@ -194,6 +194,7 @@ Optional keys in `config.json` (created on first run):
 - **Windows-first.** Cache scanning assumes Windows paths. MCP search works anywhere; local-import detection doesn't.
 - **One machine, one user.** No sync, no server mode. Deliberate.
 - **Harvesting is scraping.** Unity and Fab change their internals whenever they feel like it, and have — the chunk sizes, endpoints, and GraphQL shapes in here are correct as of the day I shipped, not forever. When a fetch comes back empty, `data/store_harvest.log` records every JSON response seen; that's where to start digging.
+- **Taxonomy is heuristic.** Categories are inferred via a multimodal blend of word-boundary tokens, store tags, and zero-shot CLIP visual concept mining from screenshots. Highly stylized titles without screenshots default to `Tools & Utilities`, though semantic vector search and hybrid search always cover the entire vault regardless of assigned category.
 - **Unpacking is Unity-only.** Fab assets are indexed and searchable, but `.unitypackage` extraction obviously doesn't apply.
 
 If you build something cool with this, I'd genuinely like to hear about it.

@@ -31,3 +31,8 @@ Thumbs.db
 .vscode/
 data/unity_solr_sample.json
 data/fab_library_sample.json
+
+# PyInstaller & standalone builds
+Quartermaster.spec
+build/
+dist/
