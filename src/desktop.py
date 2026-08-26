@@ -899,21 +899,9 @@ class MainWindow(QMainWindow):
         self.op.start()
 
     def _fab_deep_pending(self) -> int:
-        """Fab rows whose gallery is still cover-only but whose canonical
-        listing URL is known — i.e. work the browser-based pass can do."""
-        from .db import get_connection
-        conn = get_connection()
-        n = 0
-        for (g, u) in conn.execute(
-                "SELECT gallery_images, store_url FROM assets WHERE source='fab'"):
-            if u and "/library/assets/" in u:
-                try:
-                    if len(json.loads(g or "[]")) <= 1:
-                        n += 1
-                except Exception:
-                    n += 1
-        conn.close()
-        return n
+        """Fab listings the browser pass can still improve (galleries or
+        descriptions)."""
+        return store_client.fab_deep_media_pending()
 
     def _start_enrich_sweep(self):
         pending = store_client.count_unenriched()

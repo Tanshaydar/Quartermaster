@@ -687,21 +687,43 @@ def _balanced_json_array(html: str, from_pos: int):
 
 
 
+def fab_deep_media_pending() -> int:
+    """Count Fab listings the browser pass can still improve: cover-only
+    galleries OR heuristic placeholder descriptions."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, title, store_url, summary, gallery_images FROM assets WHERE source='fab' "
+        "AND store_url LIKE '%/library/assets/%'").fetchall()
+    conn.close()
+    n = 0
+    for r in rows:
+        try:
+            n_imgs = len(json.loads(r["gallery_images"] or "[]"))
+        except Exception:
+            n_imgs = 0
+        summary = (r["summary"] or "").strip()
+        title = (r["title"] or "").strip()
+        needs_desc = not summary or summary.lower().endswith(f": {title.lower()}")
+        if n_imgs <= 1 or needs_desc:
+            n += 1
+    return n
+
+
 def run_fab_deep_media(cancel_event=None, progress=None) -> int:
     """SEPARATE long-running pass (like enrichment, NOT part of fetch):
     visits each Fab listing's canonical page in the authed browser and pulls
     its full 'medias' gallery + description.
 
     Work list = fab rows whose store_url is a canonical /library/assets/ URL
-    but whose gallery is still cover-only — so re-runs resume where the last
-    one stopped. Plain HTTP gets 403'd by Fab's bot wall; this rides the
-    authed browser. Images/CSS/fonts aborted during navigation for speed.
-    Returns number of listings enriched."""
+    whose gallery is still cover-only OR whose description is still the
+    heuristic placeholder — so re-runs pick up both gaps. Plain HTTP gets
+    403'd by Fab's bot wall; this rides the authed browser. Images/CSS/fonts
+    aborted during navigation for speed. Returns listings enriched."""
     from .db import get_connection
 
     conn = get_connection()
     rows = conn.execute(
-        "SELECT id, title, store_url, gallery_images FROM assets WHERE source='fab' "
+        "SELECT id, title, store_url, summary, gallery_images FROM assets WHERE source='fab' "
         "AND store_url LIKE '%/library/assets/%'").fetchall()
     pending = []
     for r in rows:
@@ -709,13 +731,18 @@ def run_fab_deep_media(cancel_event=None, progress=None) -> int:
             n_imgs = len(json.loads(r["gallery_images"] or "[]"))
         except Exception:
             n_imgs = 0
-        if n_imgs <= 1:
+        summary = (r["summary"] or "").strip()
+        title = (r["title"] or "").strip()
+        # heuristic summaries from classify_asset() end with ": <title>"
+        needs_desc = not summary or summary.lower().endswith(f": {title.lower()}")
+        if n_imgs <= 1 or needs_desc:
+            pending.append((r["id"], r["title"], r["store_url"]))
             pending.append((r["id"], r["title"], r["store_url"]))
     conn.close()
 
     if not pending:
         if progress:
-            progress(0, 0, "Fab deep-media: nothing to do — all galleries populated.")
+            progress(0, 0, "Fab deep-media: nothing to do — galleries and descriptions populated.")
         return 0
 
     total = len(pending)
@@ -794,14 +821,17 @@ def run_fab_deep_media(cancel_event=None, progress=None) -> int:
                            html, re.I)
             if md:
                 description = md.group(1).replace("&amp;", "&")
-
             conn = get_connection()
             sets = ["gallery_images = ?"]
             params: List[Any] = [json.dumps(gallery)]
             sets.append("image_url = CASE WHEN image_url = '' THEN ? ELSE image_url END")
             params.append(gallery[0])
             if description:
-                sets.append("summary = CASE WHEN summary = '' OR summary LIKE '%asset pack%' THEN ? ELSE summary END")
+                # heuristic summaries end with ": <title>" — replace those too
+                sets.append("summary = CASE WHEN summary = '' "
+                            "OR lower(summary) = lower(title) "
+                            "OR summary LIKE '%' || ': ' || title THEN ? "
+                            "ELSE summary END")
                 params.append(description)
             params.append(aid)
             conn.execute(f"UPDATE assets SET {', '.join(sets)} WHERE id = ?", params)
