@@ -30,6 +30,22 @@ except ImportError:
 # Heuristic classifier (used until per-asset enrichment fills in real data)
 # ---------------------------------------------------------------------------
 
+def _word_match(text: str, keywords: List[str]) -> bool:
+    """Checks if any keyword appears as a whole word or boundary-delimited phrase."""
+    for kw in keywords:
+        kw = kw.strip().lower()
+        if not kw:
+            continue
+        if " " in kw or "-" in kw:
+            if kw in text:
+                return True
+        else:
+            rx = re.compile(r"\b" + re.escape(kw) + r"(?![a-z0-9])")
+            if rx.search(text):
+                return True
+    return False
+
+
 def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0) -> Dict[str, Any]:
     t = title.lower()
 
@@ -49,9 +65,10 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0) -> Dic
     elif "built-in" in t or "birp" in t or "standard rendering" in t:
         pipelines = ["Built-in"]
 
-    if any(k in t for k in ["stampit", "heightmap", "microsplat", "microverse", "terrain", "digger",
-                            "biome", "gaia", "infinitelands", "canyon", "cliff", "plateau",
-                            "landscape", "dune", "mountain", "rock", "boulder", "desert", "stone"]):
+    if _word_match(t, ["stampit", "heightmap", "heightmaps", "microsplat", "microverse", "terrain", "terrains",
+                       "digger", "biome", "gaia", "infinitelands", "canyon", "canyons", "cliff", "cliffs",
+                       "plateau", "plateaus", "landscape", "landscapes", "dune", "dunes", "mountain", "mountains",
+                       "rock", "rocks", "rocky", "boulder", "boulders", "desert", "stone", "stones"]):
         category = "Terrain & Landscape"
         tags.extend(["terrain", "heightmaps", "environment"])
         if "stampit" in t or "stamp" in t:
@@ -70,8 +87,10 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0) -> Dic
             summary = f"Terrain and landscape asset: {title}"
             usage_notes = "Ideal for outdoor environment blockout and geological dressing."
 
-    elif any(k in t for k in ["vfx", "fluid", "blood", "fire", "shockwave", "lightning", "water splash",
-                              "explosion", "particle", "aura", "spell", "laser", "projectile", "magic effect"]):
+    elif _word_match(t, ["vfx", "fluid", "fluids", "blood", "fire", "shockwave", "shockwaves", "lightning",
+                         "water splash", "explosion", "explosions", "particle", "particles", "aura", "spell",
+                         "spells", "laser", "lasers", "projectile", "projectiles", "magic effect", "fx",
+                         "water", "ocean", "river", "rivers", "lake", "lakes", "reservoir"]):
         category = "VFX & Particles"
         tags.extend(["vfx", "particles", "effects"])
         if "water" in t or "ocean" in t or "river" in t:
@@ -84,29 +103,36 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0) -> Dic
         else:
             summary = f"Visual effect system: {title}"
 
-    elif any(k in t for k in ["tree", "foliage", "vegetation", "grass", "forest", "plant", "fern",
-                              "ivy", "meadow", "speedtree", "nature renderer"]):
+    elif _word_match(t, ["tree", "trees", "foliage", "vegetation", "grass", "forest", "forests", "plant",
+                         "plants", "fern", "ivy", "meadow", "speedtree", "nature renderer"]):
         category = "Foliage & Nature"
         tags.extend(["foliage", "vegetation", "nature", "flora"])
         summary = f"Foliage / scanned nature library: {title}"
         usage_notes = "Check wind vertex displacement and subsurface settings for realism."
 
-    elif any(k in t for k in ["sound", "audio", "music", "sfx", "footstep", "speech", "stinger",
-                              "ambience", "ambiance", "foley"]):
+    elif _word_match(t, ["sound", "sounds", "audio", "music", "sfx", "footstep", "footsteps", "speech",
+                         "stinger", "ambience", "ambiance", "foley", "soundtrack"]):
         category = "Audio & SFX"
         tags.extend(["audio", "sound-effects", "foley", "music"])
         summary = f"Audio asset collection: {title}"
         usage_notes = "Import as WAV/Vorbis clips; key for diegetic atmosphere."
 
-    elif any(k in t for k in ["ui", "gui", "hud", "menu", "dialogue", "inventory", "icon",
-                              "loading screen", "scroller", "fantasy interface"]):
+    elif _word_match(t, ["ui", "gui", "hud", "menu", "menus", "dialogue", "inventory", "icon", "icons",
+                         "loading screen", "scroller", "fantasy interface", "canvas", "crosshair"]):
         category = "UI & Interface"
         tags.extend(["ui", "gui", "hud", "interface", "canvas"])
         summary = f"User interface system or graphics pack: {title}"
         usage_notes = "Adaptable to uGUI, TextMeshPro, UMG (Unreal) or UI Toolkit."
 
-    elif any(k in t for k in ["anim", "mocap", "locomotion", "movement", "character controller",
-                              "climb", "parkour", "humanoid", "rig", "skeleton"]):
+    elif _word_match(t, ["character", "characters", "creature", "creatures", "monster", "monsters",
+                         "animal", "animals", "insect", "insects", "humanoid", "humanoids", "npc", "npcs",
+                         "enemy", "enemies", "boss", "zombie", "zombies"]):
+        category = "3D Models & Characters"
+        tags.extend(["characters", "creatures", "3d-models"])
+        summary = f"3D character or creature models: {title}"
+
+    elif _word_match(t, ["anim", "animation", "animations", "animator", "mocap", "locomotion",
+                         "movement", "character controller", "climb", "parkour", "rig", "rigs", "rigging", "skeleton"]):
         category = "Animation & Rigging"
         tags.extend(["animation", "locomotion", "character"])
         if "motion matching" in t:
@@ -116,9 +142,10 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0) -> Dic
         else:
             summary = f"Animation pack or character locomotion system: {title}"
 
-    elif any(k in t for k in ["shader", "pixelize", "outline", "lut", "htrace", "beautify",
-                              "upscaling", "dlss", "xess", "fsr", "fog volume", "post processing",
-                              "lighting box", "material"]):
+    elif _word_match(t, ["shader", "shaders", "skybox", "skyboxes", "pixelize", "outline", "lut",
+                         "htrace", "beautify", "upscaling", "dlss", "xess", "fsr", "fog volume",
+                         "post processing", "lighting box", "material", "materials", "auto material",
+                         "texture", "textures", "pbr"]):
         category = "Shaders & Rendering"
         tags.extend(["shader", "rendering", "graphics"])
         if "htrace" in t:
@@ -131,28 +158,30 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0) -> Dic
         else:
             summary = f"Rendering enhancement / shader tool: {title}"
 
-    elif any(k in t for k in ["environment", "interior", "exterior", "cathedral", "castle", "temple",
-                              "dungeon", "village", "city", "warehouse", "factory", "saloon",
-                              "hospital", "bunker", "street", "megapack", "modular", "abandoned",
-                              "ruins", "house", "building"]):
+    elif _word_match(t, ["environment", "environments", "interior", "interiors", "exterior", "exteriors",
+                         "cathedral", "castle", "temple", "dungeon", "dungeons", "village", "city", "warehouse",
+                         "factory", "saloon", "hospital", "bunker", "street", "megapack", "modular", "abandoned",
+                         "ruins", "ruin", "house", "building", "buildings", "props", "prop", "synty", "polygon"]):
         category = "3D Environments & Props"
         tags.extend(["3d-models", "environment", "modular", "props", "architecture"])
         summary = f"Modular 3D environment kit: {title}"
         usage_notes = "Extract period-neutral props or use modular pieces for level assembly."
 
-    elif any(k in t for k in ["ai ", "assistant", "whisper", "speech recognition", "dialogue system",
-                              "flowcanvas", "nodecanvas", "playmaker", "behavior", "state machine"]):
+    elif _word_match(t, ["ai", "assistant", "whisper", "speech recognition", "dialogue system",
+                         "flowcanvas", "nodecanvas", "playmaker", "behavior", "behavior tree", "state machine"]):
         category = "AI & Visual Scripting"
         tags.extend(["ai", "logic", "scripting", "behavior"])
         summary = f"AI reasoning, behavior tree, or visual scripting framework: {title}"
         usage_notes = "Enables node-based state machines, dialogue trees, or LLM-driven interactions."
 
-    elif any(k in t for k in ["weapon", "gun", "sword", "melee", "combat", "fps", "shooter", "bow"]):
+    elif _word_match(t, ["weapon", "weapons", "gun", "guns", "sword", "swords", "melee", "combat",
+                         "fps", "shooter", "bow", "bows", "shield", "shields", "axe", "axes"]):
         category = "Weapons & Combat"
         tags.extend(["weapons", "combat", "gameplay"])
         summary = f"Weapon / combat system or models: {title}"
 
-    elif any(k in t for k in ["vehicle", "car", "truck", "arcade vehicle", "wheel"]):
+    elif _word_match(t, ["vehicle", "vehicles", "car", "cars", "truck", "trucks", "arcade vehicle",
+                         "wheel", "wheels", "boat", "boats", "ship", "ships", "plane", "planes"]):
         category = "Vehicles"
         tags.extend(["vehicles", "physics", "driving"])
         summary = f"Vehicle system or models: {title}"
