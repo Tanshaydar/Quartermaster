@@ -238,6 +238,7 @@ Optional keys in `config.json` (created on first run):
 - **One machine, one user.** No sync, no server mode. Deliberate.
 - **Harvesting is scraping.** Unity and Fab change their internals whenever they feel like it, and have — the chunk sizes, endpoints, and GraphQL shapes in here are correct as of the day I shipped, not forever. When a fetch comes back empty, `data/store_harvest.log` records every JSON response seen; that's where to start digging.
 - **Taxonomy is heuristic.** Categories are inferred via a multimodal blend of word-boundary tokens, store tags, and zero-shot CLIP visual concept mining from screenshots. Highly stylized titles without screenshots default to `Tools & Utilities`, though semantic vector search and hybrid search always cover the entire vault regardless of assigned category. Tuning the visual vocabulary is documented in [`docs/concepts.md`](docs/concepts.md).
+- **Indexing stops at the package boundary.** Search operates across titles, store descriptions, metadata tags, and whole-image CLIP embeddings of gallery screenshots. It does not unpack archive contents to index individual sub-meshes or internal filenames (e.g. searching for a specific architectural sub-element like a "pantile" or "curved concrete riser" inside a larger modular environment kit will only hit if visible in screenshots or declared in the listing text).
 - **Unpacking is Unity-only.** Fab assets are indexed and searchable, but `.unitypackage` extraction obviously doesn't apply.
 
 If you build something cool with this, I'd genuinely like to hear about it.
