@@ -51,12 +51,26 @@ class TestFrozenAndPlatformResolution(unittest.TestCase):
                     self.assertEqual(expected_data_dir, os.path.join(fake_xdg, "quartermaster"))
 
     def test_linux_unity_cache_scan_safety(self):
-        """Ensure local_scan.scan_all executes safely across platform roots without exceptions."""
+        """Ensure local_scan.scan_all executes safely across platform roots without touching production DB."""
+        import tempfile
+        from src.db import init_db
         from src import local_scan
-        res = local_scan.scan_all()
-        self.assertIsInstance(res, dict)
-        self.assertIn("files_scanned", res)
-        self.assertIn("matched_to_library", res)
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            tmp_db = f.name
+
+        try:
+            init_db(tmp_db)
+            res = local_scan.scan_all(db_path=tmp_db)
+            self.assertIsInstance(res, dict)
+            self.assertIn("files_scanned", res)
+            self.assertIn("matched_to_library", res)
+        finally:
+            if os.path.exists(tmp_db):
+                try:
+                    os.remove(tmp_db)
+                except Exception:
+                    pass
 
     def test_browser_candidates_and_path_discovery(self):
         """Ensure _find_browser checks candidates and path binaries safely."""
