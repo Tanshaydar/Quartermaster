@@ -30,11 +30,11 @@ from fastapi.staticfiles import StaticFiles
 try:
     from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
     from .config import load_config, get_or_create_auth_token, evict_image_cache, __version__, WEB_DIR, is_safe_image_url, MAX_IMAGE_BYTES
-    from . import store_client, local_scan, unpacker, stack_rules
+    from . import store_client, local_scan, unpacker, stack_rules, semantic
 except ImportError:
     from db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
     from config import load_config, get_or_create_auth_token, evict_image_cache, __version__, WEB_DIR, is_safe_image_url, MAX_IMAGE_BYTES
-    import store_client, local_scan, unpacker, stack_rules
+    import store_client, local_scan, unpacker, stack_rules, semantic
 
 init_db()
 
@@ -112,12 +112,55 @@ def index():
 
 @app.get("/api/assets")
 def api_assets(query: str = "", category: str = "all", pipeline: str = "all",
-               source: str = "all", local: str = "all", sort_by: str = "title_asc",
+               source: str = "all", local: str = "all", sort_by: str = "relevance",
                limit: int = 60, offset: int = 0):
+    if query.strip():
+        try:
+            merged = semantic.hybrid_search(query.strip(), limit=max(limit * 3, 200))
+            items = merged.get("results", [])
+            filtered = []
+            for item in items:
+                if source != "all" and item.get("source") != source:
+                    continue
+                if category != "all" and item.get("category") != category:
+                    continue
+                if pipeline != "all":
+                    pipes = item.get("render_pipelines") or item.get("formats") or []
+                    if not any(pipeline.lower() in p.lower() for p in pipes):
+                        continue
+                if local != "all":
+                    is_local = bool(item.get("local_path"))
+                    if (local == "true" and not is_local) or (local == "false" and is_local):
+                        continue
+                filtered.append(item)
+
+            if sort_by == "title_asc":
+                filtered.sort(key=lambda x: (x.get("title") or "").lower())
+            elif sort_by == "title_desc":
+                filtered.sort(key=lambda x: (x.get("title") or "").lower(), reverse=True)
+            elif sort_by == "claimed_desc":
+                filtered.sort(key=lambda x: x.get("claimed_at") or "", reverse=True)
+            elif sort_by == "size_desc":
+                filtered.sort(key=lambda x: x.get("size_bytes") or 0, reverse=True)
+            # sort_by == "relevance" keeps hybrid_search ranking
+
+            paged = filtered[offset : offset + limit]
+            return {
+                "items": paged,
+                "stats": get_stats(),
+                "total": len(filtered),
+                "search_mode": merged.get("search_mode", "3-way-hybrid"),
+            }
+        except Exception:
+            pass
+
+    # Empty query or fallback
+    db_sort = sort_by if sort_by != "relevance" else "title_asc"
+    items = search_assets(query=query or None, category=category, pipeline=pipeline,
+                          source=source, local=None if local == "all" else local,
+                          sort_by=db_sort, limit=min(limit, 2000), offset=offset)
     return {
-        "items": search_assets(query=query or None, category=category, pipeline=pipeline,
-                               source=source, local=None if local == "all" else local,
-                               sort_by=sort_by, limit=min(limit, 2000), offset=offset),
+        "items": items,
         "stats": get_stats(),
     }
 

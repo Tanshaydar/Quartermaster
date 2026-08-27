@@ -30,11 +30,11 @@ from PySide6.QtWidgets import (
 try:
     from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
     from .config import load_config, rotate_log_if_large, evict_image_cache, __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH
-    from . import store_client, local_scan, vision
+    from . import store_client, local_scan, vision, semantic
 except ImportError:
     from db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
     from config import load_config, rotate_log_if_large, evict_image_cache, __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH
-    import store_client, local_scan, vision
+    import store_client, local_scan, vision, semantic
 
 ICON_PATH = ICON_ICO_PATH
 ICON_PNG = ICON_PNG_PATH
@@ -76,6 +76,62 @@ a {{ color: {ACCENT}; }}
 # ---------------------------------------------------------------------------
 # Workers
 # ---------------------------------------------------------------------------
+
+class SearchWorker(QThread):
+    """Runs 3-way hybrid search or DB queries off the UI thread."""
+    results_ready = Signal(int, list, str)
+
+    def __init__(self, query_id: int, query: str, eng: Optional[str], pipe: Optional[str],
+                 cat: Optional[str], sort_mode: str, parent=None):
+        super().__init__(parent)
+        self.query_id = query_id
+        self.query = query
+        self.eng = eng
+        self.pipe = pipe
+        self.cat = cat
+        self.sort_mode = sort_mode
+
+    def run(self):
+        try:
+            if self.query:
+                merged = semantic.hybrid_search(self.query, limit=5000)
+                items = merged.get("results", [])
+                mode = merged.get("search_mode", "3-way-hybrid")
+
+                filtered = []
+                for item in items:
+                    if self.eng and item.get("source") != self.eng:
+                        continue
+                    if self.cat and item.get("category") != self.cat:
+                        continue
+                    if self.pipe:
+                        pipes = item.get("render_pipelines") or item.get("formats") or []
+                        if not any(self.pipe.lower() in p.lower() for p in pipes):
+                            continue
+                    filtered.append(item)
+
+                if self.sort_mode == "title_asc":
+                    filtered.sort(key=lambda x: (x.get("title") or "").lower())
+                elif self.sort_mode == "title_desc":
+                    filtered.sort(key=lambda x: (x.get("title") or "").lower(), reverse=True)
+                elif self.sort_mode == "claimed_desc":
+                    filtered.sort(key=lambda x: x.get("claimed_at") or "", reverse=True)
+                elif self.sort_mode == "size_desc":
+                    filtered.sort(key=lambda x: x.get("size_bytes") or 0, reverse=True)
+                # "relevance" keeps hybrid_search RRF order
+
+                self.results_ready.emit(self.query_id, filtered, mode)
+            else:
+                db_sort = self.sort_mode if self.sort_mode != "relevance" else "title_asc"
+                items = search_assets(query=None, source=self.eng, pipeline=self.pipe,
+                                      category=self.cat, sort_by=db_sort, limit=5000)
+                self.results_ready.emit(self.query_id, items, "browse")
+        except Exception:
+            db_sort = self.sort_mode if self.sort_mode != "relevance" else "title_asc"
+            items = search_assets(query=self.query or None, source=self.eng, pipeline=self.pipe,
+                                  category=self.cat, sort_by=db_sort, limit=5000)
+            self.results_ready.emit(self.query_id, items, "keyword")
+
 
 class LongOp(QThread):
     """Runs a blocking backend call off the UI thread with thread-safe progress marshaling."""
@@ -240,6 +296,9 @@ class AssetCard(QWidget):
         row2 = QHBoxLayout()
         cat = badge(item.get("category", ""), "#a371f7")
         row2.addWidget(cat)
+        if item.get("match"):
+            m_badge = badge(item["match"], "#58a6ff")
+            row2.addWidget(m_badge)
         if item.get("local_path"):
             loc = badge("⚡ Local", GREEN)
             loc.setToolTip(item["local_path"])
@@ -552,11 +611,11 @@ class MainWindow(QMainWindow):
         bar = QHBoxLayout()
         bar.setSpacing(8)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search your vault…  (title, publisher, tag, notes)")
+        self.search.setPlaceholderText("Search your vault…  (natural language, intent, vision, keywords)")
         self.engine = QComboBox(); self.engine.addItems(["All Engines", "Unity", "Fab / Unreal"])
         self.pipeline = QComboBox(); self.pipeline.addItems(["All Pipelines", "HDRP", "URP", "Built-in"])
         self.category = QComboBox(); self.category.addItem("All Categories")
-        self.sort_by = QComboBox(); self.sort_by.addItems(["Name (A-Z)", "Name (Z-A)", "Recently Acquired", "Size (Largest)"])
+        self.sort_by = QComboBox(); self.sort_by.addItems(["Relevance", "Name (A-Z)", "Name (Z-A)", "Recently Acquired", "Size (Largest)"])
         self.sync_btn = QPushButton("⚙ Sync")
         for w in (self.search, self.engine, self.pipeline, self.category, self.sort_by, self.sync_btn):
             bar.addWidget(w)
@@ -626,8 +685,13 @@ class MainWindow(QMainWindow):
         # ---- overlay (must exist before any long op can start) ----
         self._build_overlay()
 
+        # ---- search state & worker ----
+        self._search_id = 0
+        self._search_worker = None
+
         # ---- wiring ----
         self.search.textChanged.connect(self._debounce_search)
+        self.search.returnPressed.connect(self.do_search)
         for cb in (self.engine, self.pipeline, self.category, self.sort_by):
             cb.currentIndexChanged.connect(self.do_search)
         self.sync_btn.clicked.connect(
@@ -635,7 +699,7 @@ class MainWindow(QMainWindow):
 
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
-        self.search_timer.setInterval(150)
+        self.search_timer.setInterval(250)
         self.search_timer.timeout.connect(self.do_search)
 
         self._rendered_count = 0
@@ -657,13 +721,26 @@ class MainWindow(QMainWindow):
         self.search_timer.start()
 
     def do_search(self):
+        self._search_id += 1
         q = self.search.text().strip()
         eng = {0: None, 1: "unity", 2: "fab"}[self.engine.currentIndex()]
         pipe = {0: None, 1: "HDRP", 2: "URP", 3: "Built-in"}[self.pipeline.currentIndex()]
         cat = None if self.category.currentIndex() <= 0 else self.category.currentText()
-        sort_mode = {0: "title_asc", 1: "title_desc", 2: "claimed_desc", 3: "size_desc"}[self.sort_by.currentIndex()]
-        self.results = search_assets(query=q or None, source=eng, pipeline=pipe,
-                                     category=cat, sort_by=sort_mode, limit=5000)
+        sort_mode = {0: "relevance", 1: "title_asc", 2: "title_desc", 3: "claimed_desc", 4: "size_desc"}[self.sort_by.currentIndex()]
+
+        # Show searching status in status bar
+        self.statusBar().showMessage(f"Searching for '{q}'…" if q else "Browsing vault…")
+
+        # Launch background SearchWorker
+        worker = SearchWorker(self._search_id, q, eng, pipe, cat, sort_mode, parent=self)
+        worker.results_ready.connect(self._on_search_results)
+        self._search_worker = worker
+        worker.start()
+
+    def _on_search_results(self, query_id: int, items: list, mode: str):
+        if query_id != self._search_id:
+            return  # Stale search query result; ignore
+        self.results = items
         self.list.clear()
         self._rendered_count = 0
         self._render_next_batch()
