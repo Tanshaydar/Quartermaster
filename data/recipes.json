@@ -30,7 +30,7 @@
     "terrain_blend": {
       "label": "Terrain mesh blending",
       "exclusive": true,
-      "match": ["naturemanufacture|dynamic nature", "microsplat"]
+      "match": ["microsplat - terrain blending|microsplat terrain blending", "naturemanufacture|meadow environment|forest environment - dynamic nature|mountain environment - dynamic nature|winter environment - nature pack"]
     },
     "gi_ao": {
       "label": "GI / AO enhancement",

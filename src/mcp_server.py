@@ -189,7 +189,7 @@ def get_stack_recommendations(problem_description: str, limit_per_category: int 
     recommendations: dict[str, list] = {}
     for aspect_name, scored_list in aspect_buckets.items():
         if scored_list:
-            scored_list.sort(key=lambda x: (x[1], x[2]), reverse=True)
+            scored_list.sort(key=lambda x: (x[2], x[1]), reverse=True)
             recommendations[aspect_name] = [_slim(item[0]) for item in scored_list[:limit_per_category]]
 
     return json.dumps({
