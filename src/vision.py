@@ -28,6 +28,7 @@ Config keys (optional):
   vision_batch_size   (default 8)     images per ONNX batch
   vision_concurrency  (default 6)     parallel downloads
 """
+import functools
 import io
 import json
 import os
@@ -419,10 +420,7 @@ def vision_search(query: str, k: int = 40, db_path: str = DB_PATH) -> list:
         return []
 
     try:
-        model = _get_clip_text_model()
-        qv = np.array(list(model.embed([query]))[0], dtype=np.float32)
-        qv /= (np.linalg.norm(qv) + 1e-9)
-
+        qv = _embed_clip_query(query)
         scores = mat @ qv  # (N_images,) dot product
 
         # Aggregate max score per asset_id
@@ -439,8 +437,16 @@ def vision_search(query: str, k: int = 40, db_path: str = DB_PATH) -> list:
         top_aids = sorted(best_scores.keys(), key=lambda a: -best_scores[a])[:k]
         return [{"id": a, "score": round(best_scores[a], 4), "image_url": best_images[a]} for a in top_aids]
     except Exception as e:
-        print(f"[vision] search failed: {e}")
+        print(f"[vision] search failed: {e}", file=sys.stderr)
         return []
+
+
+@functools.lru_cache(maxsize=512)
+def _embed_clip_query(query: str):
+    model = _get_clip_text_model()
+    qv = np.array(list(model.embed([query]))[0], dtype=np.float32)
+    qv /= (np.linalg.norm(qv) + 1e-9)
+    return qv
 
 
 def status():

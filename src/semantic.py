@@ -14,6 +14,7 @@ CLI:
   python -m src.semantic build      # (re)build the embedding index
   python -m src.semantic query "spooky abandoned industrial site"
 """
+import functools
 import json
 import os
 import struct
@@ -197,16 +198,23 @@ def semantic_search(query: str, k: int = 40, db_path: str = DB_PATH) -> List[Dic
     if index_size(db_path) == 0:
         return []
 
-    ids, mat, np = _load_matrix(db_path)
+    ids, mat, np_mod = _load_matrix(db_path)
     if ids is None:
         return []
+    qv = _embed_query(query)
+    scores = mat @ qv
+    top = np_mod.argsort(-scores)[:k]
+    out = [{"id": ids[i], "score": float(scores[i])} for i in top]
+    return out
+
+
+@functools.lru_cache(maxsize=512)
+def _embed_query(query: str):
+    import numpy as np
     model = _model()
     qv = np.array(list(model.embed([query]))[0], dtype=np.float32)
     qv /= (np.linalg.norm(qv) + 1e-9)
-    scores = mat @ qv
-    top = np.argsort(-scores)[:k]
-    out = [{"id": ids[i], "score": float(scores[i])} for i in top]
-    return out
+    return qv
 
 
 def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[str, Any]:

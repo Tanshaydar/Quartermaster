@@ -55,6 +55,24 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def check_cross_origin_defense(request: Request, call_next):
+    # Reject cross-origin browser fetch requests from unauthorized origins
+    origin = request.headers.get("origin")
+    if origin and origin.rstrip("/") not in ALLOWED_ORIGINS:
+        return Response("Forbidden: Cross-Origin request blocked (CSRF/DoS protection)", status_code=403)
+
+    referer = request.headers.get("referer")
+    if referer:
+        import urllib.parse
+        ref_parsed = urllib.parse.urlsplit(referer)
+        ref_origin = f"{ref_parsed.scheme}://{ref_parsed.netloc}".rstrip("/")
+        if ref_origin not in ALLOWED_ORIGINS:
+            return Response("Forbidden: Invalid Referer origin (CSRF/DoS protection)", status_code=403)
+
+    return await call_next(request)
+
+
 def verify_auth(
     request: Request,
     x_qm_token: Optional[str] = Header(None, alias="X-Quartermaster-Token"),
