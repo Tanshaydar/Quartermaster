@@ -704,6 +704,7 @@ class MainWindow(QMainWindow):
 
         self._rendered_count = 0
         self._batch_size = 100
+        self._is_rendering = False
 
         self.refresh_categories()
         self.refresh_stats()
@@ -746,27 +747,39 @@ class MainWindow(QMainWindow):
         self._render_next_batch()
 
     def _render_next_batch(self):
+        if getattr(self, "_is_rendering", False):
+            return
         if not hasattr(self, "results") or self._rendered_count >= len(self.results):
             return
-        next_items = self.results[self._rendered_count : self._rendered_count + self._batch_size]
-        self.list.setUpdatesEnabled(False)
+        self._is_rendering = True
         try:
-            for item in next_items:
-                li = QListWidgetItem(self.list)
-                li.setData(Qt.ItemDataRole.UserRole, item)
-                card = AssetCard(item)
-                li.setSizeHint(card.sizeHint())
-                self.list.setItemWidget(li, card)
+            start = self._rendered_count
+            end = min(start + self._batch_size, len(self.results))
+            next_items = self.results[start:end]
+            self._rendered_count = end  # Advance counter before mutating UI/scrollbar
+
+            self.list.setUpdatesEnabled(False)
+            try:
+                for item in next_items:
+                    li = QListWidgetItem(self.list)
+                    li.setData(Qt.ItemDataRole.UserRole, item)
+                    card = AssetCard(item)
+                    li.setSizeHint(card.sizeHint())
+                    self.list.setItemWidget(li, card)
+            finally:
+                self.list.setUpdatesEnabled(True)
+
+            total = len(self.results)
+            if total > self._rendered_count:
+                self.statusBar().showMessage(f"Showing {self._rendered_count} of {total} matches (scroll down for more)")
+            else:
+                self.statusBar().showMessage(f"{total} matches")
         finally:
-            self.list.setUpdatesEnabled(True)
-        self._rendered_count += len(next_items)
-        total = len(self.results)
-        if total > self._rendered_count:
-            self.statusBar().showMessage(f"Showing {self._rendered_count} of {total} matches (scroll down for more)")
-        else:
-            self.statusBar().showMessage(f"{total} matches")
+            self._is_rendering = False
 
     def _on_scroll(self, value):
+        if getattr(self, "_is_rendering", False):
+            return
         sb = self.list.verticalScrollBar()
         if sb.maximum() - value < 150:
             self._render_next_batch()
