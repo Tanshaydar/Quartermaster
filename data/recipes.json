@@ -5,7 +5,7 @@
     "weather_sky": {
       "label": "Weather / sky system",
       "exclusive": true,
-      "match": ["enviro", "unistorm", "weather", "hdri sky", "sky system", "atmospheric"]
+      "match": ["enviro", "unistorm", "weather", "hdri sky", "sky system", "atmospheric skies|atmospheric weather"]
     },
     "water_system": {
       "label": "Water system",
@@ -27,6 +27,11 @@
       "exclusive": false,
       "match": ["microsplat", "terrain shader"]
     },
+    "terrain_blend": {
+      "label": "Terrain mesh blending",
+      "exclusive": true,
+      "match": ["naturemanufacture|dynamic nature", "microsplat"]
+    },
     "gi_ao": {
       "label": "GI / AO enhancement",
       "exclusive": true,
@@ -35,7 +40,7 @@
     "unified_lit_shader": {
       "label": "Unified lit shader framework",
       "exclusive": true,
-      "match": ["better lit", "better shaders"]
+      "match": ["better lit|better shaders"]
     }
   },
 
@@ -44,7 +49,8 @@
     { "if_match": "microsplat - hdrp", "requires": "microsplat", "reason": "HDRP pathway is a MicroSplat module and needs the core shader." },
     { "if_match": "microsplat - urp", "requires": "microsplat", "reason": "URP pathway is a MicroSplat module and needs the core shader." },
     { "if_match": "stampit", "requires": "microverse|microsplat", "reason": "StampIT stamps are consumed by MicroVerse or applied via MicroSplat." },
-    { "if_match": "enviro - additional", "requires": "enviro", "reason": "Additional weather packs extend the core Enviro system." }
+    { "if_match": "enviro - additional", "requires": "enviro", "reason": "Additional weather packs extend the core Enviro system." },
+    { "if_match": "dynamic nature", "requires": "naturemanufacture|microsplat", "reason": "Dynamic Nature packs utilize NatureManufacture shaders or procedural terrain blending." }
   ],
 
   "recipes": [

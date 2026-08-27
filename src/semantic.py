@@ -313,7 +313,9 @@ def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[s
             item["match"] = "+".join(sorted(item_sigs))
         else:
             item["match"] = next(iter(item_sigs), "keyword")
-        item["relevance"] = round(score, 4)
+        # Normalize RRF raw sum against theoretical 3-way top rank ceiling ((1.0 + 1.0 + 0.9) / 61 ≈ 0.0475)
+        max_rrf = (1.0 + 1.0 + 0.9) / (K + 1)
+        item["relevance"] = round(min(score / max_rrf, 1.0), 3)
         if "semantic" in item_sigs:
             item["sem_score"] = round(sem_map.get(aid, 0.0), 4)
         if "vision" in item_sigs:

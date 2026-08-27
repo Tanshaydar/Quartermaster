@@ -65,20 +65,29 @@ that way, because a MicroSplat core plus its modules legitimately coexist.
 ### The same-family exception
 
 Two assets filling one exclusive role are *not* reported as a conflict if they
-look like the same product. Quartermaster compares a **family key** — the first
-two significant words of each title, after dropping `the, and, for, pro, free,
-vol, pack, bundle, unity, 6`.
+matched the **exact same pattern string** in your rule. Quartermaster tracks which
+pattern in `"match"` triggered for each asset.
 
-So *"MicroSplat — URP"* and *"MicroSplat — HDRP"* both reduce to
-`("microsplat", "urp"/"hdrp")`… which differ, and would be flagged. But
-*"Enviro 3"* and *"Enviro 3 — Additional Weather"* collapse to the same key and
-are downgraded to a softer note under `same_family_notes`:
+So in:
+```json
+"terrain_generator": {
+  "exclusive": true,
+  "match": ["microverse", "gaia", "digger", "infinitelands"]
+}
+```
+
+*"MicroVerse — Core"* and *"MicroVerse — Roads"* both matched `"microverse"`, so they
+are recognised as the same product line and downgraded to a softer note under `same_family_notes`:
 
 > These look like modules/versions of the same product family. Verify which
 > variant you actually need before importing several.
 
-If a genuine conflict is being downgraded (or vice versa), the family key is the
-thing to look at — usually a stop word away from behaving.
+While *"MicroVerse — Core"* (matched `"microverse"`) and *"Gaia Pro"* (matched `"gaia"`)
+matched different patterns in an exclusive role, and are correctly flagged as a **conflict**.
+
+If a vendor splits brand names across variants (e.g. `Better Lit Shader` and `Better Shaders`),
+combine them with `|` in a single pattern entry (`"better lit|better shaders"`), and they will
+group into the same family automatically.
 
 ---
 

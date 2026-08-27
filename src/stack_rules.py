@@ -49,19 +49,19 @@ def _title_matches(title: str, pattern: str) -> bool:
     return False
 
 
-def _family_key(title: str) -> tuple:
-    """Significant-word prefix used to group modules/versions of one product."""
-    stop = {"the", "and", "for", "pro", "free", "vol", "pack", "bundle", "unity", "6"}
-    words = [w for w in re.findall(r"[a-z0-9]+", title.lower()) if w not in stop]
-    return tuple(words[:2])
+def detect_roles_with_patterns(title: str, rules: Dict[str, Any]) -> List[tuple]:
+    """Returns [(role_key, matched_pattern), ...]."""
+    matches = []
+    for role_key, spec in rules.get("roles", {}).items():
+        for pat in spec.get("match", []):
+            if _title_matches(title, pat):
+                matches.append((role_key, pat))
+                break
+    return matches
 
 
 def detect_roles(title: str, rules: Dict[str, Any]) -> List[str]:
-    roles = []
-    for role_key, spec in rules["roles"].items():
-        if any(_title_matches(title, pat) for pat in spec["match"]):
-            roles.append(role_key)
-    return roles
+    return [r[0] for r in detect_roles_with_patterns(title, rules)]
 
 
 def validate_stack(asset_ids: List[str], db_path: str = DB_PATH) -> Dict[str, Any]:
@@ -78,21 +78,18 @@ def validate_stack(asset_ids: List[str], db_path: str = DB_PATH) -> Dict[str, An
     missing_ids = [a for a in asset_ids if a not in found_ids]
 
     # ---- role map ----
-    role_map: Dict[str, List[Dict[str, Any]]] = {}
+    role_map: Dict[str, List[tuple]] = {}
     for item in items:
-        for role in detect_roles(item["title"], rules):
-            role_map.setdefault(role, []).append(item)
+        for role_key, pat in detect_roles_with_patterns(item["title"], rules):
+            role_map.setdefault(role_key, []).append((item, pat))
 
     # ---- conflicts: exclusive roles filled twice+ ----
-    def looks_same_family(members: List[Dict[str, Any]]) -> bool:
-        keys = [_family_key(m["title"]) for m in members]
-        first = keys[0]
-        return all(k == first for k in keys)
-
     conflicts = []
     family_notes = []
-    for role_key, members in sorted(role_map.items()):
+    for role_key, member_tuples in sorted(role_map.items()):
         spec = rules["roles"][role_key]
+        members = [m[0] for m in member_tuples]
+        patterns = [m[1] for m in member_tuples]
         if spec.get("exclusive") and len(members) > 1:
             entry = {
                 "role": spec["label"],
@@ -100,8 +97,8 @@ def validate_stack(asset_ids: List[str], db_path: str = DB_PATH) -> Dict[str, An
                 "advice": f"Pick one {spec['label'].lower()} per project; "
                           f"these systems will fight over the same subsystems.",
             }
-            if looks_same_family(members):
-                # modules or multiple versions of one product — softer note
+            if len(set(patterns)) == 1:
+                # all members matched the same rule pattern -> same brand/family
                 entry.pop("advice")
                 entry["note"] = ("These look like modules/versions of the same "
                                  "product family. Verify which variant you actually need "
