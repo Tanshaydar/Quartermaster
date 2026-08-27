@@ -243,6 +243,24 @@ Optional keys in `config.json` (created on first run):
   2. *Vacuous store boilerplate:* A noticeable fraction of store listings (particularly Unity's templated `og:description`) contain pure marketing boilerplate (*"Elevate your workflow with..."*) that carries zero technical information. The visual CLIP embeddings exist precisely to bridge this gap, but whole-image vectors cannot always resolve fine-grained sub-elements.
 - **Unpacking is Unity-only.** Fab assets are indexed and searchable, but `.unitypackage` extraction obviously doesn't apply.
 
+## When it breaks
+
+Open an [issue](https://github.com/Tanshaydar/Quartermaster/issues). It's a solo project, so I can't promise a
+response time, but I do read them.
+
+What helps, by symptom:
+
+- **A fetch came back empty or short.** This is the most likely thing to break, because the stores change their
+  internals without notice. `data/store_harvest.log` records every JSON response the harvest saw — the tail of
+  that file is the whole diagnosis. Include it.
+- **Search returns nothing sensible.** Check `python -m src.vision status` first. An unbuilt index degrades to
+  keyword-only silently, and that accounts for most "search is broken" reports.
+- **Wrong categories, or a conflict that isn't real.** That's usually the knowledge base rather than the code —
+  [`docs/recipes.md`](docs/recipes.md) and [`docs/concepts.md`](docs/concepts.md) cover how to fix it yourself,
+  and a PR to `data/recipes.json` with a rule I don't own the assets to test is genuinely welcome.
+- **The standalone won't start.** It's `--windowed`, so it fails silently. `%LOCALAPPDATA%\Quartermaster\data\crash.log`
+  is where it lands.
+
 If you build something cool with this, I'd genuinely like to hear about it.
 
 
