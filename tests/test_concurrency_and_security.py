@@ -25,15 +25,27 @@ class TestConcurrencyAndSecurity(unittest.TestCase):
         tok = get_or_create_auth_token()
 
         with patch("src.server.local_scan.scan_all", return_value={"files_scanned": {}, "matched_to_library": 0}):
-            # Subdomain attack: http://localhost:7890.attacker.com MUST be rejected with 403
+            # 1. Subdomain attack: http://localhost:7890.attacker.com MUST be rejected with 403
             r_bad = client.post("/api/scan-local",
                                 headers={"X-Quartermaster-Token": tok, "Origin": "http://localhost:7890.attacker.com"})
             self.assertEqual(r_bad.status_code, 403)
 
-            # Exact valid origin MUST be accepted
+            # 2. Exact valid origin MUST be accepted
             r_good = client.post("/api/scan-local",
                                  headers={"X-Quartermaster-Token": tok, "Origin": "http://localhost:7890"})
             self.assertEqual(r_good.status_code, 200)
+
+            # 3. Headerless no-referrer subresource attack (no Origin, no Referer, no Token) on /api/ MUST be rejected with 403
+            r_no_ref = client.get("/api/assets?query=test")
+            self.assertEqual(r_no_ref.status_code, 403)
+
+            # 4. Headerless with valid token (e.g. Unity bridge, curl) MUST be accepted with 200
+            r_tok = client.get("/api/assets?query=test", headers={"X-Quartermaster-Token": tok})
+            self.assertEqual(r_tok.status_code, 200)
+
+            # 5. Same-origin Referer (Web UI) MUST be accepted with 200
+            r_web = client.get("/api/assets?query=test", headers={"Referer": "http://localhost:7890/"})
+            self.assertEqual(r_web.status_code, 200)
 
     def test_browser_profile_locking(self):
         with tempfile.TemporaryDirectory() as tmp_prof:

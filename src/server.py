@@ -57,18 +57,38 @@ app.add_middleware(
 
 @app.middleware("http")
 async def check_cross_origin_defense(request: Request, call_next):
-    # Reject cross-origin browser fetch requests from unauthorized origins
+    # 1. Reject cross-origin browser fetch requests with unauthorized Origin
     origin = request.headers.get("origin")
     if origin and origin.rstrip("/") not in ALLOWED_ORIGINS:
         return Response("Forbidden: Cross-Origin request blocked (CSRF/DoS protection)", status_code=403)
 
+    # 2. Reject cross-origin subresource requests with unauthorized Referer
     referer = request.headers.get("referer")
+    has_valid_referer = False
     if referer:
         import urllib.parse
         ref_parsed = urllib.parse.urlsplit(referer)
         ref_origin = f"{ref_parsed.scheme}://{ref_parsed.netloc}".rstrip("/")
         if ref_origin not in ALLOWED_ORIGINS:
             return Response("Forbidden: Invalid Referer origin (CSRF/DoS protection)", status_code=403)
+        has_valid_referer = True
+
+    # 3. For /api/ endpoints: if neither Origin nor Referer is present (e.g. <img referrerpolicy="no-referrer"> attack),
+    # require a valid token (X-Quartermaster-Token, Authorization: Bearer, or session cookie)
+    if request.url.path.startswith("/api/"):
+        has_valid_origin = bool(origin and origin.rstrip("/") in ALLOWED_ORIGINS)
+        if not has_valid_origin and not has_valid_referer:
+            token = request.headers.get("X-Quartermaster-Token")
+            if not token:
+                auth = request.headers.get("Authorization", "")
+                if auth.startswith("Bearer "):
+                    token = auth[7:].strip()
+            if not token:
+                token = request.cookies.get("quartermaster_token")
+
+            expected = get_or_create_auth_token()
+            if not token or token != expected:
+                return Response("Forbidden: Authentication token or trusted local origin required (CSRF/DoS protection)", status_code=403)
 
     return await call_next(request)
 
