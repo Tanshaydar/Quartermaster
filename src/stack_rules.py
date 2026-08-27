@@ -126,7 +126,7 @@ def validate_stack(asset_ids: List[str], db_path: str = DB_PATH) -> Dict[str, An
 
     return {
         "stack_size": len(items),
-        "roles_detected": {rules["roles"][k]["label"]: [i["title"] for i in v]
+        "roles_detected": {rules["roles"][k]["label"]: [i[0]["title"] for i in v]
                            for k, v in role_map.items()},
         "conflicts": conflicts,
         "same_family_notes": family_notes,

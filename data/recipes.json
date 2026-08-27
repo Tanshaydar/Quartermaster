@@ -45,7 +45,7 @@
   },
 
   "requires": [
-    { "if_match": "microsplat trax", "requires": "microsplat", "reason": "Trax is a MicroSplat module and needs the core MicroSplat terrain shader." },
+    { "if_match": "microsplat - trax|microsplat trax", "requires": "microsplat", "reason": "Trax is a MicroSplat module and needs the core MicroSplat terrain shader." },
     { "if_match": "microsplat - hdrp", "requires": "microsplat", "reason": "HDRP pathway is a MicroSplat module and needs the core shader." },
     { "if_match": "microsplat - urp", "requires": "microsplat", "reason": "URP pathway is a MicroSplat module and needs the core shader." },
     { "if_match": "stampit", "requires": "microverse|microsplat", "reason": "StampIT stamps are consumed by MicroVerse or applied via MicroSplat." },
