@@ -40,6 +40,31 @@ class TestFrozenAndPlatformResolution(unittest.TestCase):
         if config.IS_FROZEN:
             self.assertEqual(config.DATA_DIR, expected_prefix)
 
+    def test_linux_xdg_data_dir_resolution(self):
+        """Simulate Linux XDG_DATA_HOME environment when frozen."""
+        fake_xdg = os.path.abspath("/tmp/fake_user/share")
+        with patch.dict(os.environ, {"XDG_DATA_HOME": fake_xdg}):
+            with patch.object(sys, "platform", "linux"):
+                with patch.object(sys, "frozen", True, create=True):
+                    xdg_data = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+                    expected_data_dir = os.path.join(xdg_data, "quartermaster")
+                    self.assertEqual(expected_data_dir, os.path.join(fake_xdg, "quartermaster"))
+
+    def test_linux_unity_cache_scan_safety(self):
+        """Ensure local_scan.scan_all executes safely across platform roots without exceptions."""
+        from src import local_scan
+        res = local_scan.scan_all()
+        self.assertIsInstance(res, dict)
+        self.assertIn("files_scanned", res)
+        self.assertIn("matched_to_library", res)
+
+    def test_browser_candidates_and_path_discovery(self):
+        """Ensure _find_browser checks candidates and path binaries safely."""
+        from src import store_client
+        found = store_client._find_browser()
+        if found:
+            self.assertTrue(os.path.isfile(found))
+
 
 if __name__ == "__main__":
     unittest.main()

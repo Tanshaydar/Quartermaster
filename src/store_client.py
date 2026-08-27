@@ -100,16 +100,47 @@ def _url_host_in_provider(url: str, provider: str) -> bool:
 _active_procs: Dict[str, subprocess.Popen] = {}
 
 _BROWSER_CANDIDATES = [
+    # Windows
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    # Linux & BSD
+    "/usr/bin/google-chrome-stable",
     "/usr/bin/google-chrome",
+    "/usr/bin/chromium-browser",
     "/usr/bin/chromium",
+    "/usr/bin/microsoft-edge-stable",
+    "/usr/bin/microsoft-edge",
+    "/snap/bin/chromium",
+    "/var/lib/flatpak/exports/bin/com.google.Chrome",
+    "/var/lib/flatpak/exports/bin/org.chromium.Chromium",
+    # macOS
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+]
+
+_PATH_BINARIES = [
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "chrome",
+    "msedge",
 ]
 
 
 def _find_browser() -> Optional[str]:
+    import shutil
+    # 1. Check PATH dynamically
+    for b in _PATH_BINARIES:
+        found = shutil.which(b)
+        if found and os.path.isfile(found):
+            return found
+    # 2. Check well-known filesystem locations
     for c in _BROWSER_CANDIDATES:
         if os.path.isfile(c):
             return c

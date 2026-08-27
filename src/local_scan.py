@@ -73,14 +73,22 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
     # 1. Discover all disk paths safely first BEFORE touching the database
 
     # ---------------- Unity ----------------
-    unity_root = os.path.join(os.environ.get("APPDATA", ""), "Unity", "Asset Store-5.x")
+    unity_candidates = [
+        # Windows
+        os.path.join(os.environ.get("APPDATA", ""), "Unity", "Asset Store-5.x"),
+        # Linux (XDG standard)
+        os.path.expanduser("~/.local/share/unity3d/Asset Store-5.x"),
+        # macOS
+        os.path.expanduser("~/Library/Unity/Asset Store-5.x"),
+    ]
     unity_count = 0
-    if os.path.isdir(unity_root):
-        for pkg_file in glob.glob(os.path.join(unity_root, "*", "*", "*.unitypackage")):
-            title = os.path.splitext(os.path.basename(pkg_file))[0]
-            key = _norm(title)
-            found.setdefault(key, pkg_file)
-            unity_count += 1
+    for unity_root in unity_candidates:
+        if unity_root and os.path.isdir(unity_root):
+            for pkg_file in glob.glob(os.path.join(unity_root, "*", "*", "*.unitypackage")):
+                title = os.path.splitext(os.path.basename(pkg_file))[0]
+                key = _norm(title)
+                found.setdefault(key, pkg_file)
+                unity_count += 1
 
     # ---------------- Fab ----------------
     fab_count = 0

@@ -87,7 +87,7 @@ exe_gui = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(BASE_DIR, 'assets', 'icon.ico'),
+    icon=os.path.join(BASE_DIR, 'assets', 'icon.ico' if os.name == 'nt' else 'icon.png'),
 )
 
 exe_mcp = EXE(
@@ -106,7 +106,7 @@ exe_mcp = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(BASE_DIR, 'assets', 'icon.ico'),
+    icon=os.path.join(BASE_DIR, 'assets', 'icon.ico' if os.name == 'nt' else 'icon.png'),
 )
 
 coll = COLLECT(

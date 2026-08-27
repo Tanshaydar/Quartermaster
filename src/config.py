@@ -13,7 +13,12 @@ IS_FROZEN = getattr(sys, "frozen", False)
 if IS_FROZEN:
     # PyInstaller onedir bundles static data in sys._MEIPASS (_internal)
     BUNDLE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
-    DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Quartermaster")
+    if sys.platform == "win32":
+        DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Quartermaster")
+    else:
+        # Linux / POSIX XDG standard
+        xdg_data = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+        DATA_DIR = os.path.join(xdg_data, "quartermaster")
 else:
     BUNDLE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     DATA_DIR = BUNDLE_DIR

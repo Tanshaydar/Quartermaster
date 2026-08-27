@@ -1074,7 +1074,9 @@ class MainWindow(QMainWindow):
 
     # ---------------- tray & hotkey ----------------
 
-    def make_tray_icon(self) -> QSystemTrayIcon:
+    def make_tray_icon(self) -> Optional[QSystemTrayIcon]:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return None
         pm = QPixmap(64, 64); pm.fill(QColor(BG))
         p = QPainter(pm); p.setPen(QColor(ACCENT))
         f = QFont("Segoe UI", 34, QFont.Weight.Bold); p.setFont(f)
@@ -1113,9 +1115,10 @@ class MainWindow(QMainWindow):
             op.wait(5000)
 
     def closeEvent(self, ev):
-        # minimize-to-tray instead of quitting (Quit is in the tray menu / Ctrl+Q)
-        if getattr(self, "_tray", None) and getattr(self, "_really_quit", False) is not True \
-                and QApplication.instance().property("quitting") is not True:
+        # minimize-to-tray instead of quitting if tray is available (Quit is in the tray menu / Ctrl+Q)
+        if getattr(self, "_tray", None) and QSystemTrayIcon.isSystemTrayAvailable() and \
+                getattr(self, "_really_quit", False) is not True and \
+                QApplication.instance().property("quitting") is not True:
             ev.ignore()
             self.hide()
             self._tray.showMessage("Quartermaster", "Still running in the tray — Win+Alt+V to reopen.",
