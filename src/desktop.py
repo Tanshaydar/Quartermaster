@@ -651,6 +651,12 @@ class MainWindow(QMainWindow):
             pre_status="A NORMAL browser window opens (zero automation). Complete captcha + Epic sign-in, then CLOSE that window yourself.",
             cancellable=False))
         add_sync_btn("⟳ Fetch Fab", lambda: self._fetch_op("fab"))
+        add_sync_btn("🌿 Sync Quixel", lambda: self._long_op(
+            lambda ev, cb: store_client.sync_quixel_catalog(cancel_event=ev, progress=cb),
+            "Sync Quixel Megascans",
+            pre_status="Fetching complete Quixel Megascans & Megaplants catalog from Fab…",
+            success_text="✅ Quixel Megascans catalog synced into vault.",
+            with_progress=True))
         add_sync_btn("🖼 Enrich library", lambda: self._start_enrich_sweep())
         add_sync_btn("👁 Vision pass", lambda: self._long_op(
             lambda ev, cb: vision.build(cancel_event=ev, progress=cb), "Vision pass", with_progress=True))

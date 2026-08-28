@@ -1614,12 +1614,145 @@ def enrich_assets(limit: Optional[int] = None, progress=None,
     return done
 
 
+def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Dict[str, Any]:
+    """
+    Syncs the complete Quixel Megascans & Megaplants catalog from Fab.
+    Sellers: 'Quixel Megascans' and 'Quixel Megaplants'.
+    Paginates through all listings and upserts into local vault database.
+    """
+    import httpx
+    try:
+        from . import ingest, config, db
+    except ImportError:
+        import ingest, config, db
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
+
+    sellers = ["Quixel Megascans", "Quixel Megaplants"]
+    total_added = 0
+    total_updated = 0
+    page_count = 0
+
+    client = httpx.Client(headers=headers, timeout=20.0)
+    try:
+        for seller in sellers:
+            if cancel_event and cancel_event.is_set():
+                break
+            encoded_seller = seller.replace(" ", "+")
+            url = f"https://www.fab.com/i/listings/search?seller={encoded_seller}&count=50"
+            _log(f"Starting Quixel sync for '{seller}'...")
+
+            while url:
+                if cancel_event and cancel_event.is_set():
+                    _log("Quixel sync cancelled by user.")
+                    break
+
+                try:
+                    r = client.get(url)
+                    if r.status_code != 200:
+                        _log(f"  [warn] Quixel sync HTTP {r.status_code} for {url}")
+                        break
+                    data = r.json()
+                except Exception as e:
+                    _log(f"  [warn] Quixel fetch failed: {e}")
+                    break
+
+                items = data.get("results", [])
+                if not items:
+                    break
+
+                for raw in items:
+                    uid = raw.get("uid")
+                    title = str(raw.get("title") or raw.get("name") or "").strip()
+                    if not uid or not title:
+                        continue
+
+                    cat_raw = raw.get("category", {}).get("name") or raw.get("category", {}).get("slug") or "Props"
+                    classified = ingest.classify_asset(title, cat_raw, "")
+
+                    # Extract tags
+                    tags = [t.get("name") for t in raw.get("tags", []) if isinstance(t, dict) and t.get("name")]
+                    for default_tag in ("Quixel", "Megascans" if "Megascans" in seller else "Megaplants"):
+                        if default_tag not in tags:
+                            tags.append(default_tag)
+
+                    # Extract thumbnails
+                    thumbs = raw.get("thumbnails", [])
+                    cover_url = ""
+                    gallery = []
+                    if thumbs and isinstance(thumbs, list):
+                        for th in thumbs:
+                            m_url = th.get("mediaUrl")
+                            if m_url and config.is_safe_image_url(m_url):
+                                if not cover_url:
+                                    cover_url = m_url
+                                gallery.append(m_url)
+                            for img in th.get("images", []):
+                                i_url = img.get("url")
+                                if i_url and config.is_safe_image_url(i_url) and i_url not in gallery:
+                                    gallery.append(i_url)
+
+                    record = {
+                        "id": f"fab_{uid}",
+                        "source": "fab",
+                        "package_id": uid,
+                        "product_id": "",
+                        "title": title,
+                        "publisher": seller,
+                        "publisher_id": raw.get("user", {}).get("sellerId", ""),
+                        "version": "",
+                        "size_mb": 0.0,
+                        "size_str": "",
+                        "claimed_date": raw.get("publishedAt", "")[:10] if raw.get("publishedAt") else "",
+                        "store_url": f"https://www.fab.com/listings/{uid}",
+                        "category": classified.get("category", "3D Environments & Props"),
+                        "render_pipelines": classified.get("render_pipelines", ["HDRP", "URP", "Built-in"]),
+                        "tags": list(set(tags + classified.get("tags", []))),
+                        "summary": classified.get("summary") or f"{title} by {seller}",
+                        "usage_notes": "",
+                        "image_url": cover_url,
+                        "gallery_images": gallery[:10],
+                        "video_links": [],
+                        "formats": ["Unreal Engine", "FBX", "Textures"],
+                        "license": "Epic Content License",
+                        "enriched": 1
+                    }
+
+                    res = db.upsert_asset(record, db_path=db_path)
+                    if res == "inserted":
+                        total_added += 1
+                    else:
+                        total_updated += 1
+
+                page_count += 1
+                if progress:
+                    progress(total_added + total_updated, None, f"Synced {total_added + total_updated} Quixel assets (Page {page_count})…")
+                _log(f"  Quixel sync: page {page_count} (+{len(items)} items, {total_added + total_updated} total)")
+
+                url = data.get("next")
+    finally:
+        client.close()
+
+    _log(f"Quixel sync completed: {total_added} added, {total_updated} updated across {page_count} pages.")
+    return {
+        "added": total_added,
+        "updated": total_updated,
+        "total_synced": total_added + total_updated,
+        "pages": page_count
+    }
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "login" and len(sys.argv) > 2:
         interactive_login(sys.argv[2])
     elif cmd == "fetch" and len(sys.argv) > 2:
         fetch_library(sys.argv[2])
+    elif cmd in ("quixel", "sync-quixel"):
+        sync_quixel_catalog()
     elif cmd == "enrich":
         n = int(sys.argv[2]) if len(sys.argv) > 2 else None
         enrich_assets(n)
@@ -1628,5 +1761,6 @@ if __name__ == "__main__":
     else:
         print("Usage:\n  python -m src.store_client login <unity|fab>\n"
               "  python -m src.store_client fetch <unity|fab>\n"
+              "  python -m src.store_client sync-quixel\n"
               "  python -m src.store_client enrich [limit]\n"
               "  python -m src.store_client fab-deep-media [limit]")
