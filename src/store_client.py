@@ -1631,10 +1631,11 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
         "Accept": "application/json"
     }
 
-    sellers = ["Quixel Megascans", "Quixel Megaplants", "Quixel"]
+    sellers = ["Quixel Megascans", "Quixel Megaplants"]
     total_added = 0
     total_updated = 0
     page_count = 0
+    failed_sellers = []
 
     client = httpx.Client(headers=headers, timeout=25.0)
     try:
@@ -1671,6 +1672,8 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                         _time.sleep(1.0)
 
                 if not data or not isinstance(data, dict):
+                    failed_sellers.append(seller)
+                    _log(f"  [error] Quixel sync stopped prematurely for '{seller}' (rate-limited or network error).")
                     break
 
                 items = data.get("results", [])
@@ -1683,14 +1686,22 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                     if not uid or not title:
                         continue
 
-                    cat_raw = raw.get("category", {}).get("name") or raw.get("category", {}).get("slug") or "Props"
-                    classified = ingest.classify_asset(title, cat_raw, "")
-
-                    # Extract tags
-                    tags = [t.get("name") for t in raw.get("tags", []) if isinstance(t, dict) and t.get("name")]
+                    # Extract tags and category for accurate classification
+                    raw_tags = [t.get("name") for t in raw.get("tags", []) if isinstance(t, dict) and t.get("name")]
+                    cat_name = raw.get("category", {}).get("name") or raw.get("category", {}).get("slug") or ""
+                    if cat_name and cat_name not in raw_tags:
+                        raw_tags.append(cat_name)
                     for default_tag in ("Quixel", "Megascans" if "Megascans" in seller else "Megaplants"):
-                        if default_tag not in tags:
-                            tags.append(default_tag)
+                        if default_tag not in raw_tags:
+                            raw_tags.append(default_tag)
+
+                    desc = raw.get("description") or f"{title} by {seller}"
+                    classified = ingest.classify_asset(
+                        title=title,
+                        publisher=seller,
+                        tags_list=raw_tags,
+                        summary_text=desc
+                    )
 
                     # Extract thumbnails
                     thumbs = raw.get("thumbnails", [])
@@ -1709,8 +1720,8 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                                     gallery.append(i_url)
 
                     record = {
-                        "id": f"fab_{uid}",
-                        "source": "fab",
+                        "id": f"quixel_{uid}",
+                        "source": "quixel",
                         "package_id": uid,
                         "product_id": "",
                         "title": title,
@@ -1723,14 +1734,14 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                         "store_url": f"https://www.fab.com/listings/{uid}",
                         "category": classified.get("category", "3D Environments & Props"),
                         "render_pipelines": classified.get("render_pipelines", ["HDRP", "URP", "Built-in"]),
-                        "tags": list(set(tags + classified.get("tags", []))),
-                        "summary": classified.get("summary") or f"{title} by {seller}",
+                        "tags": list(set(raw_tags + classified.get("tags", []))),
+                        "summary": classified.get("summary") or desc,
                         "usage_notes": "",
                         "image_url": cover_url,
                         "gallery_images": gallery[:10],
                         "video_links": [],
                         "formats": ["Unreal Engine", "FBX", "Textures"],
-                        "license": "Epic Content License",
+                        "license": "Epic Content License (Free Claim)",
                         "enriched": 1
                     }
 
@@ -1750,12 +1761,15 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
     finally:
         client.close()
 
-    _log(f"Quixel sync completed: {total_added} added, {total_updated} updated across {page_count} pages.")
+    status = "partial" if failed_sellers else ("cancelled" if (cancel_event and cancel_event.is_set()) else "completed")
+    _log(f"Quixel sync {status}: {total_added} added, {total_updated} updated across {page_count} pages.")
     return {
+        "status": status,
         "added": total_added,
         "updated": total_updated,
         "total_synced": total_added + total_updated,
-        "pages": page_count
+        "pages": page_count,
+        "failed_sellers": failed_sellers
     }
 
 

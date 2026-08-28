@@ -289,8 +289,14 @@ class AssetCard(QWidget):
         meta = QHBoxLayout()
         pub = QLabel(item.get("publisher") or "")
         pub.setStyleSheet(f"color:{MUTED}; font-size:12px;")
-        eng = badge("Unity" if item["source"] == "unity" else "Fab",
-                    "#7c9c47" if item["source"] == "unity" else "#c7c7c7")
+        if item.get("source") == "unity":
+            eng = badge("Unity (Owned)", "#7c9c47")
+        elif item.get("source") == "fab":
+            eng = badge("Fab (Owned)", "#388bfd")
+        elif item.get("source") == "quixel":
+            eng = badge("Quixel (Catalog)", "#e3b341")
+        else:
+            eng = badge(str(item.get("source", "")).title(), "#c7c7c7")
         meta.addWidget(pub); meta.addStretch(); meta.addWidget(eng)
 
         row2 = QHBoxLayout()
@@ -612,7 +618,7 @@ class MainWindow(QMainWindow):
         bar.setSpacing(8)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search your vault…  (natural language, intent, vision, keywords)")
-        self.engine = QComboBox(); self.engine.addItems(["All Engines", "Unity", "Fab / Unreal"])
+        self.engine = QComboBox(); self.engine.addItems(["All Engines", "Unity (Owned)", "Fab (Owned)", "Quixel (Catalog)"])
         self.pipeline = QComboBox(); self.pipeline.addItems(["All Pipelines", "HDRP", "URP", "Built-in"])
         self.category = QComboBox(); self.category.addItem("All Categories")
         self.sort_by = QComboBox(); self.sort_by.addItems(["Relevance", "Name (A-Z)", "Name (Z-A)", "Recently Acquired", "Size (Largest)"])
@@ -730,7 +736,7 @@ class MainWindow(QMainWindow):
     def do_search(self):
         self._search_id += 1
         q = self.search.text().strip()
-        eng = {0: None, 1: "unity", 2: "fab"}[self.engine.currentIndex()]
+        eng = {0: None, 1: "unity", 2: "fab", 3: "quixel"}[self.engine.currentIndex()]
         pipe = {0: None, 1: "HDRP", 2: "URP", 3: "Built-in"}[self.pipeline.currentIndex()]
         cat = None if self.category.currentIndex() <= 0 else self.category.currentText()
         sort_mode = {0: "relevance", 1: "title_asc", 2: "title_desc", 3: "claimed_desc", 4: "size_desc"}[self.sort_by.currentIndex()]
