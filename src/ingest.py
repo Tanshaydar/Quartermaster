@@ -124,7 +124,8 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
     if _word_match(t, ["stampit", "heightmap", "heightmaps", "microsplat", "microverse", "terrain", "terrains",
                        "digger", "biome", "gaia", "infinitelands", "canyon", "canyons", "cliff", "cliffs",
                        "plateau", "plateaus", "landscape", "landscapes", "dune", "dunes", "mountain", "mountains",
-                       "rock", "rocks", "rocky", "boulder", "boulders", "desert", "stone", "stones", "isles", "isle", "caves", "cave"]):
+                       "rock", "rocks", "rocky", "boulder", "boulders", "desert", "stone", "stones", "isles", "isle", "caves", "cave",
+                       "dirt", "mud", "sand", "clay", "quarry", "soil"]):
         category = "Terrain & Landscape"
         tags.extend(["terrain", "heightmaps", "environment"])
         if not summary:
@@ -133,7 +134,8 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
     elif _word_match(t, ["tree", "trees", "foliage", "vegetation", "grass", "forest", "forests", "plant",
                          "plants", "fern", "ivy", "meadow", "speedtree", "nature renderer", "megaplants",
                          "flower", "flowers", "bush", "bushes", "shrub", "shrubs", "wood", "woods", "flora",
-                         "vines", "vine", "moss", "bamboo", "succulent", "succulents", "leaf", "leaves"]):
+                         "vines", "vine", "moss", "bamboo", "succulent", "succulents", "leaf", "leaves",
+                         "palm", "aloe", "begonia", "cactus", "cacti", "bark", "trunk"]):
         category = "Foliage & Nature"
         tags.extend(["foliage", "vegetation", "nature", "flora"])
         if not summary:
@@ -143,11 +145,12 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
                          "animal", "animals", "insect", "insects", "humanoid", "humanoids", "npc", "npcs",
                          "enemy", "enemies", "boss", "zombie", "zombies", "dinosaur", "dinosaurs", "dragon",
                          "dragons", "bird", "birds", "fish", "human", "people", "hero", "villain", "girl",
-                         "guy", "man", "woman", "boy", "paragon", "warrior", "knight", "soldier", "avatar"]):
+                         "guy", "man", "woman", "boy", "paragon", "warrior", "knight", "soldier", "avatar",
+                         "skull", "skulls", "bone", "bones", "skeleton", "skeletons", "fossil", "fossils", "horn", "horns"]):
         category = "3D Models & Characters"
         tags.extend(["characters", "creatures", "3d-models"])
         if not summary:
-            summary = f"3D character or creature models: {title}"
+            summary = f"3D character, creature, or anatomical model: {title}"
 
     elif _word_match(t, ["weapon", "weapons", "gun", "guns", "sword", "swords", "melee", "combat",
                          "fps", "shooter", "bow", "bows", "shield", "shields", "axe", "axes", "lmg", "smg",
@@ -181,11 +184,21 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
                          "ruins", "ruin", "house", "building", "buildings", "props", "prop", "synty", "polygon",
                          "trench", "trenches", "corridor", "corridors", "room", "rooms", "kitchen", "restaurant",
                          "food", "furniture", "table", "chair", "tavern", "bar", "slums", "slum", "shanty",
-                         "station", "cyberpunk", "sci-fi", "urban", "decay", "subway", "metro"]):
+                         "station", "cyberpunk", "sci-fi", "urban", "decay", "subway", "metro",
+                         "concrete", "barrier", "barriers", "beam", "beams", "plank", "planks", "board", "boards",
+                         "brick", "bricks", "block", "blocks", "column", "columns", "pillar", "pillars", "pipe", "pipes",
+                         "metal", "corrugated", "cable", "cables", "wire", "wires", "crate", "crates", "barrel", "barrels",
+                         "pallet", "pallets", "container", "containers", "scaffolding", "sandbag", "sandbags",
+                         "debris", "rubble", "towel", "cloth", "supplies", "sign", "signs", "statue", "statues",
+                         "stairs", "staircase", "wall", "walls", "floor", "floors", "ground", "grounds", "path", "paths",
+                         "door", "doors", "window", "windows", "arch", "arches", "fence", "fences", "gate", "gates",
+                         "tombstone", "slab", "bench", "lamp", "pole", "vent", "vents", "tank", "valve", "cart",
+                         "wheelbarrow", "puddle", "puddles", "gravel", "asphalt", "cobblestone", "sidewalk", "curb",
+                         "trash", "rubbish", "pile", "piles", "stack", "stacks", "structure", "decor"]):
         category = "3D Environments & Props"
         tags.extend(["3d-models", "environment", "modular", "props", "architecture"])
         if not summary:
-            summary = f"Modular 3D environment kit: {title}"
+            summary = f"Modular 3D environment kit or props: {title}"
 
     elif _word_match(t, ["shader", "shaders", "skybox", "skyboxes", "pixelize", "outline", "lut",
                          "htrace", "beautify", "upscaling", "dlss", "xess", "fsr", "fog volume",
@@ -238,10 +251,15 @@ def classify_asset(title: str, publisher: str = "", size_mb: float = 0.0,
         category = "3D Environments & Props"
     elif _word_match(all_text, ["guns", "weapons", "firearms", "swords", "ammo"]):
         category = "Weapons & Combat"
-    elif _word_match(all_text, ["monsters", "characters", "creatures", "animals", "humanoid"]):
+    elif _word_match(all_text, ["monsters", "characters", "creatures", "animals", "humanoid", "skull", "bones"]):
         category = "3D Models & Characters"
     elif _word_match(all_text, ["shaders", "materials", "textures", "surfaces"]):
         category = "Shaders & Rendering"
+    elif _word_match(all_text, ["quixel", "megascans", "megaplants", "3d scan", "scanned", "photogrammetry"]):
+        category = "3D Environments & Props"
+        tags.extend(["3d-models", "props", "scanned"])
+        if not summary:
+            summary = f"Scanned 3D asset: {title}"
 
     # 4. Canonical tools check (inspect title for genuine tool keywords)
     elif _word_match(t, ["tool", "tools", "utility", "utilities", "editor", "inspector", "baker",

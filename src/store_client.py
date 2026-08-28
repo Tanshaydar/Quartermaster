@@ -1704,7 +1704,7 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                         summary_text=desc
                     )
 
-                    # Extract thumbnails
+                    # Extract cover image and distinct gallery images (avoiding multiple resolution crops of the same image)
                     thumbs = raw.get("thumbnails", [])
                     cover_url = ""
                     gallery = []
@@ -1714,11 +1714,8 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                             if m_url and config.is_safe_image_url(m_url):
                                 if not cover_url:
                                     cover_url = m_url
-                                gallery.append(m_url)
-                            for img in th.get("images", []):
-                                i_url = img.get("url")
-                                if i_url and config.is_safe_image_url(i_url) and i_url not in gallery:
-                                    gallery.append(i_url)
+                                elif m_url not in gallery and m_url != cover_url:
+                                    gallery.append(m_url)
 
                     record = {
                         "id": f"quixel_{uid}",
