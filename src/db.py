@@ -118,6 +118,12 @@ def init_db(db_path: str = DB_PATH):
     # Prune any dangling FTS entries whose parent row in assets was removed
     cur.execute("DELETE FROM assets_fts WHERE id NOT IN (SELECT id FROM assets)")
 
+    # Prune any dangling image_vectors whose referenced assets were removed
+    try:
+        cur.execute("DELETE FROM image_vectors WHERE asset_id NOT IN (SELECT id FROM assets)")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
