@@ -197,8 +197,8 @@ def get_stack_recommendations(problem_description: str, limit_per_category: int 
         "problem": problem_description,
         "matched_aspects": list(recommendations.keys()),
         "recommendations": recommendations,
-        "note": "All recommended items are already owned by the user and scored via 3-way hybrid search (FTS5 + BGE semantic + CLIP vision).",
-    }, ensure_ascii=False)
+        "note": "Items marked vault_owned are in the user's library. Items marked catalog_grant are Quixel Megascans catalog entries claimable free under the Epic Content License — available, but not yet acquired. Scored via 3-way hybrid search (FTS5 + BGE semantic + CLIP vision).",
+    }, indent=2, ensure_ascii=False)
 
 
 @mcp.tool()

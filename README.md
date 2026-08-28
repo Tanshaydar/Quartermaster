@@ -31,7 +31,7 @@ agent  →  search_owned_assets(...)        finds the concrete meshes, water FX,
           import_asset_to_project(...)    unpacks into Assets/, demos stripped
 ```
 
-Every result is something you already paid for. Nothing is invented.
+Every result is something you own or can claim free — nothing is invented.
 
 ![Quartermaster spotlight search](assets/demo.gif)
 

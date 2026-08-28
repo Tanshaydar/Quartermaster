@@ -75,7 +75,7 @@ def _collect_work(max_per_asset: int = 4):
     conn = get_connection()
     for aid, cover, gjson in conn.execute(
             "SELECT id, image_url, gallery_images FROM assets "
-            "WHERE source IN ('unity','fab')"):
+            "WHERE source IN ('unity','fab','quixel')"):
         urls = []
         if cover:
             urls.append(cover)
@@ -319,7 +319,7 @@ def build(limit=None, cancel_event=None, progress=None) -> dict:
         tags_by_asset = _mine_concepts(all_vecs, asset_map, concepts, threshold_z)
         conn = get_connection()
         all_ids = {r[0] for r in conn.execute(
-            "SELECT id FROM assets WHERE source IN ('unity','fab')")}
+            "SELECT id FROM assets WHERE source IN ('unity','fab','quixel')")}
         tagged_ids = set(tags_by_asset)
         for aid in (all_ids | tagged_ids):
             tags = tags_by_asset.get(aid, [])
@@ -452,9 +452,9 @@ def _embed_clip_query(query: str):
 def status():
     conn = get_connection()
     total_assets = conn.execute(
-        "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab')").fetchone()[0]
+        "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab','quixel')").fetchone()[0]
     with_covers = conn.execute(
-        "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab') AND image_url != ''").fetchone()[0]
+        "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab','quixel') AND image_url != ''").fetchone()[0]
     try:
         vecs = conn.execute("SELECT COUNT(*) FROM image_vectors").fetchone()[0]
     except Exception:
@@ -462,7 +462,7 @@ def status():
     tagged = 0
     try:
         tagged = conn.execute(
-            "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab') AND "
+            "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab','quixel') AND "
             "vision_tags IS NOT NULL AND vision_tags != '' AND vision_tags != '[]'").fetchone()[0]
     except Exception:
         pass

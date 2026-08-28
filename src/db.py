@@ -115,6 +115,9 @@ def init_db(db_path: str = DB_PATH):
             """)
         cur.execute("PRAGMA user_version = 3")
 
+    # Prune any dangling FTS entries whose parent row in assets was removed
+    cur.execute("DELETE FROM assets_fts WHERE id NOT IN (SELECT id FROM assets)")
+
     conn.commit()
     conn.close()
 
