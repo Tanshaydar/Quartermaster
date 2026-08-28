@@ -1631,12 +1631,12 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
         "Accept": "application/json"
     }
 
-    sellers = ["Quixel Megascans", "Quixel Megaplants"]
+    sellers = ["Quixel Megascans", "Quixel Megaplants", "Quixel"]
     total_added = 0
     total_updated = 0
     page_count = 0
 
-    client = httpx.Client(headers=headers, timeout=20.0)
+    client = httpx.Client(headers=headers, timeout=25.0)
     try:
         for seller in sellers:
             if cancel_event and cancel_event.is_set():
@@ -1650,14 +1650,27 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                     _log("Quixel sync cancelled by user.")
                     break
 
-                try:
-                    r = client.get(url)
-                    if r.status_code != 200:
-                        _log(f"  [warn] Quixel sync HTTP {r.status_code} for {url}")
+                data = None
+                for attempt in range(4):
+                    try:
+                        r = client.get(url)
+                        if r.status_code in (403, 429):
+                            backoff = (attempt + 1) * 2.0
+                            _log(f"  [rate-limit] Quixel sync HTTP {r.status_code}, backing off {backoff}s...")
+                            if cancel_event and cancel_event.is_set():
+                                break
+                            _time.sleep(backoff)
+                            continue
+                        if r.status_code != 200:
+                            _log(f"  [warn] Quixel sync HTTP {r.status_code} for {url}")
+                            break
+                        data = r.json()
                         break
-                    data = r.json()
-                except Exception as e:
-                    _log(f"  [warn] Quixel fetch failed: {e}")
+                    except Exception as e:
+                        _log(f"  [warn] Quixel fetch attempt {attempt+1} failed: {e}")
+                        _time.sleep(1.0)
+
+                if not data or not isinstance(data, dict):
                     break
 
                 items = data.get("results", [])
@@ -1733,6 +1746,7 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                 _log(f"  Quixel sync: page {page_count} (+{len(items)} items, {total_added + total_updated} total)")
 
                 url = data.get("next")
+                _time.sleep(0.12)  # Polite cadence between pages to avoid Cloudflare rate triggers
     finally:
         client.close()
 
