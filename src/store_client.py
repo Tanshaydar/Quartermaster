@@ -1621,6 +1621,7 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
     Paginates through all listings and upserts into local vault database.
     """
     import httpx
+    import time
     try:
         from . import ingest, config, db
     except ImportError:
@@ -1660,7 +1661,7 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                             _log(f"  [rate-limit] Quixel sync HTTP {r.status_code}, backing off {backoff}s...")
                             if cancel_event and cancel_event.is_set():
                                 break
-                            _time.sleep(backoff)
+                            time.sleep(backoff)
                             continue
                         if r.status_code != 200:
                             _log(f"  [warn] Quixel sync HTTP {r.status_code} for {url}")
@@ -1669,7 +1670,7 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                         break
                     except Exception as e:
                         _log(f"  [warn] Quixel fetch attempt {attempt+1} failed: {e}")
-                        _time.sleep(1.0)
+                        time.sleep(1.0)
 
                 if not data or not isinstance(data, dict):
                     failed_sellers.append(seller)
@@ -1757,7 +1758,7 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
                 _log(f"  Quixel sync: page {page_count} (+{len(items)} items, {total_added + total_updated} total)")
 
                 url = data.get("next")
-                _time.sleep(0.12)  # Polite cadence between pages to avoid Cloudflare rate triggers
+                time.sleep(0.12)  # Polite cadence between pages to avoid Cloudflare rate triggers
     finally:
         client.close()
 
