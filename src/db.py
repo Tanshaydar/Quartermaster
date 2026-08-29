@@ -118,9 +118,24 @@ def init_db(db_path: str = DB_PATH):
     # Prune any dangling FTS entries whose parent row in assets was removed
     cur.execute("DELETE FROM assets_fts WHERE id NOT IN (SELECT id FROM assets)")
 
-    # Prune any dangling image_vectors whose referenced assets were removed
+    # Prune any dangling image_vectors whose referenced assets were removed.
+    # asset_id holds a ';'-joined list when several assets share one image, so a
+    # plain NOT IN would delete every shared-cover row. Keep a row if ANY of its
+    # referenced assets survives -- same rule as vision._prune in src/vision.py.
     try:
-        cur.execute("DELETE FROM image_vectors WHERE asset_id NOT IN (SELECT id FROM assets)")
+        cur.execute(
+            "DELETE FROM image_vectors "
+            "WHERE asset_id NOT LIKE '%;%' AND asset_id NOT IN (SELECT id FROM assets)"
+        )
+        joined = cur.execute(
+            "SELECT id, asset_id FROM image_vectors WHERE asset_id LIKE '%;%'"
+        ).fetchall()
+        if joined:
+            alive = {r[0] for r in cur.execute("SELECT id FROM assets")}
+            for uid, aid in joined:
+                refs = {a.strip() for a in (aid or "").split(";") if a.strip()}
+                if not refs or not (refs & alive):
+                    cur.execute("DELETE FROM image_vectors WHERE id = ?", (uid,))
     except Exception:
         pass
 
