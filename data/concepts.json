@@ -1,5 +1,5 @@
 {
-  "_comment": "Visual concept vocabulary for zero-shot tagging. Each concept is embedded with CLIP-text and scored against every gallery screenshot; images scoring well above the corpus baseline for a concept contribute that tag to the asset. Edit freely — add your own vocabulary; thresholds self-calibrate during each build.",
+  "_comment": "Visual concept vocabulary for zero-shot tagging. Each concept is embedded with CLIP-text and scored against every gallery screenshot; images scoring well above the corpus baseline for a concept contribute that tag to the asset. Edit freely — add your own vocabulary; scores are re-calibrated against your own corpus on each build, so the vocabulary adapts even though threshold_z itself is a fixed gate you can tune.",
 
   "threshold_z": 2.0,
 
