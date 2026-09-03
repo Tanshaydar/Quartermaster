@@ -43,20 +43,21 @@ def _norm(title: str) -> str:
 
 
 def _parse_scan_specs_from_text(text: str) -> Dict[str, Any]:
-    """Extract texel density, scan area, and map lists from listing HTML/markdown."""
+    """Extract texel density, scan area / physical size, and map lists from listing HTML/markdown."""
     res = {}
     if not text:
         return res
     m_td = re.search(r"Texel\s*density:?\s*(?:</strong>)?\s*([0-9]+\s*px/m)", text, re.I)
     if m_td:
         res["texel_density"] = m_td.group(1).strip()
-    m_sa = re.search(r"Scan\s*Area:?\s*(?:</strong>)?\s*([0-9xX\.\s]+m)", text, re.I)
-    if m_sa:
+    m_sa = re.search(r"(?:Scan\s*Area|Physical\s*size):?\s*(?:</strong>)?\s*([0-9xX\.\s\w]+?)(?:</p>|<br|[\n\r]|$)", text, re.I)
+    if m_sa and re.search(r"[0-9]", m_sa.group(1)):
         res["scan_area"] = m_sa.group(1).strip()
-    m_maps = re.search(r"Maps:?\s*(?:</strong>)?\s*([^<\n\r]+)", text, re.I)
+    m_maps = re.search(r"Maps:?\s*(?:</strong>)?\s*(.+?)(?:</p>|<br|[\n\r]|$)", text, re.I)
     if m_maps:
-        raw_m = m_maps.group(1).strip()
-        tokens = [w.strip() for w in re.split(r"[\s,]+", raw_m) if w.strip()]
+        clean_m = re.sub(r"<[^>]+>", " ", m_maps.group(1))
+        clean_m = re.sub(r"\([^)]*\)", " ", clean_m)
+        tokens = [w.strip() for w in re.split(r"[\s,]+", clean_m) if w.strip()]
         res["maps"] = tokens
     return res
 
@@ -287,10 +288,15 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
                         new_use = f"{spec_note}\n{new_use}".strip() if new_use else spec_note
 
                 new_sum = old_sum or ""
-                if specs.get("scan_area") and specs["scan_area"] not in new_sum:
-                    area_str = specs['scan_area']
-                    td_str = f", {specs['texel_density']}" if specs.get("texel_density") else ""
-                    new_sum = f"{new_sum} ({area_str}{td_str})".strip()
+                spec_details = []
+                if specs.get("scan_area"):
+                    spec_details.append(specs["scan_area"])
+                if specs.get("texel_density"):
+                    spec_details.append(specs["texel_density"])
+                if spec_details:
+                    new_sum = re.sub(r"\s*\((?:[^)]*px/m|[^)]*\d+x\d+\s*m)[^)]*\)$", "", new_sum)
+                    spec_str = f"({', '.join(spec_details)})"
+                    new_sum = f"{new_sum} {spec_str}".strip()
 
                 cur.execute("""
                     UPDATE assets 

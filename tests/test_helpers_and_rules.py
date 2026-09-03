@@ -118,6 +118,26 @@ class TestHelpersAndRules(unittest.TestCase):
         self.assertIn("Displacement", specs["maps"])
         self.assertIn("Roughness", specs["maps"])
 
+        # Test Physical size and embedded HTML in maps
+        sample_mesh = (
+            "<p><strong>Texel density:</strong> 4871 px/m</p>"
+            "<p><strong>Physical size:</strong> 2.53m x 1.66m x 0.18m</p>"
+            "<p><strong>Mesh type:</strong> Open mesh</p>"
+            "<p><strong>Maps:</strong> Displacement<em>(high tier only)</em> Cavity Gloss Specular Basecolor Roughness Normal AO Bump</p>"
+        )
+        specs_mesh = _parse_scan_specs_from_text(sample_mesh)
+        self.assertEqual(specs_mesh["texel_density"], "4871 px/m")
+        self.assertEqual(specs_mesh["scan_area"], "2.53m x 1.66m x 0.18m")
+        self.assertIn("Displacement", specs_mesh["maps"])
+        self.assertIn("Roughness", specs_mesh["maps"])
+        self.assertNotIn("high", specs_mesh["maps"])
+
+        # Test single spec without scan area (e.g. Castle Wall)
+        sample_density_only = "<p><strong>Texel density:</strong> 5873 px/m</p>"
+        specs_density = _parse_scan_specs_from_text(sample_density_only)
+        self.assertEqual(specs_density["texel_density"], "5873 px/m")
+        self.assertNotIn("scan_area", specs_density)
+
 
 if __name__ == "__main__":
     unittest.main()

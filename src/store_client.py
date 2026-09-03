@@ -1771,6 +1771,152 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
     }
 
 
+def enrich_quixel_specs(limit: Optional[int] = None, cancel_event=None, progress=None, db_path=DB_PATH) -> Dict[str, Any]:
+    """
+    Enrich Quixel Megascans & Megaplants catalog rows with physical scan specs
+    (texel density, scan area / physical dimensions, and map lists) directly
+    from Fab's public listing endpoint without requiring asset downloads.
+    """
+    import httpx
+    import time
+    try:
+        from . import config, db
+        from .local_scan import _parse_scan_specs_from_text
+    except ImportError:
+        import config, db
+        from local_scan import _parse_scan_specs_from_text
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.fab.com/",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin"
+    }
+
+    conn = db.get_connection(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, package_id, title, summary, usage_notes, tags, formats
+        FROM assets
+        WHERE source = 'quixel' AND (usage_notes IS NULL OR usage_notes NOT LIKE '%Texel density%')
+        ORDER BY rowid ASC
+    """)
+    rows = cur.fetchall()
+    if limit is not None and limit > 0:
+        rows = rows[:limit]
+
+    total_to_enrich = len(rows)
+    if total_to_enrich == 0:
+        _log("Quixel scan specs enrichment: all Quixel assets already have scan specs.")
+        if progress:
+            progress(0, 0, "Quixel specs: all assets already enriched.")
+        conn.close()
+        return {"status": "completed", "enriched": 0, "total": 0}
+
+    _log(f"Starting Quixel scan specs enrichment for {total_to_enrich} assets...")
+    enriched_count = 0
+    client = httpx.Client(headers=headers, follow_redirects=True, timeout=15.0)
+
+    try:
+        for idx, (aid, pkg_id, title, old_sum, old_use, old_tags_json, old_fmt_json) in enumerate(rows):
+            if cancel_event and cancel_event.is_set():
+                _log("Quixel specs enrichment cancelled by user.")
+                break
+
+            target_uid = (pkg_id or aid.replace("quixel_", "")).strip()
+            if not target_uid:
+                continue
+
+            url = f"https://www.fab.com/i/listings/{target_uid}"
+            desc = ""
+            for attempt in range(3):
+                try:
+                    r = client.get(url)
+                    if r.status_code in (403, 429):
+                        backoff = (attempt + 1) * 2.0
+                        time.sleep(backoff)
+                        continue
+                    if r.status_code == 200:
+                        data = r.json()
+                        desc = data.get("description") or ""
+                    break
+                except Exception:
+                    time.sleep(0.5)
+
+            if desc:
+                specs = _parse_scan_specs_from_text(desc)
+                if specs:
+                    try:
+                        curr_tags = json.loads(old_tags_json or "[]")
+                    except Exception:
+                        curr_tags = []
+
+                    notes_parts = []
+                    if specs.get("texel_density"):
+                        notes_parts.append(f"Texel density: {specs['texel_density']}")
+                    if specs.get("scan_area"):
+                        notes_parts.append(f"Scan area: {specs['scan_area']}")
+                    if specs.get("maps"):
+                        notes_parts.append(f"Maps: {', '.join(specs['maps'])}")
+                        for map_name in specs["maps"]:
+                            ml = map_name.lower()
+                            if ml in ("displacement", "roughness", "normal", "cavity", "ao", "specular", "fuzz") and ml not in curr_tags:
+                                curr_tags.append(ml)
+                    if specs.get("displacement_scale"):
+                        notes_parts.append(f"Displacement scale: {specs['displacement_scale']}")
+
+                    new_use = old_use or ""
+                    if notes_parts:
+                        spec_note = " · ".join(notes_parts)
+                        if "Texel density:" not in new_use:
+                            new_use = f"{spec_note}\n{new_use}".strip() if new_use else spec_note
+
+                    new_sum = old_sum or ""
+                    spec_details = []
+                    if specs.get("scan_area"):
+                        spec_details.append(specs["scan_area"])
+                    if specs.get("texel_density"):
+                        spec_details.append(specs["texel_density"])
+                    if spec_details:
+                        new_sum = re.sub(r"\s*\((?:[^)]*px/m|[^)]*\d+x\d+\s*m)[^)]*\)$", "", new_sum)
+                        spec_str = f"({', '.join(spec_details)})"
+                        new_sum = f"{new_sum} {spec_str}".strip()
+
+                    cur.execute("""
+                        UPDATE assets 
+                        SET usage_notes = ?, summary = ?, tags = ?
+                        WHERE id = ?
+                    """, (new_use, new_sum, json.dumps(curr_tags), aid))
+                    db._sync_fts(cur, aid)
+                    enriched_count += 1
+
+            if (idx + 1) % 25 == 0:
+                conn.commit()
+                if progress:
+                    progress(enriched_count, total_to_enrich, f"Enriching Quixel specs… ({enriched_count}/{total_to_enrich})")
+                _log(f"  Quixel specs: {enriched_count}/{idx + 1} enriched…")
+
+            time.sleep(0.06)
+
+        conn.commit()
+    finally:
+        client.close()
+        conn.close()
+
+    status = "cancelled" if (cancel_event and cancel_event.is_set()) else "completed"
+    _log(f"Quixel specs enrichment {status}: {enriched_count}/{total_to_enrich} assets updated.")
+    if progress:
+        progress(enriched_count, total_to_enrich, f"Quixel specs enrichment {status}: {enriched_count} updated.")
+    return {
+        "status": status,
+        "enriched": enriched_count,
+        "total": total_to_enrich
+    }
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "login" and len(sys.argv) > 2:
@@ -1779,6 +1925,9 @@ if __name__ == "__main__":
         fetch_library(sys.argv[2])
     elif cmd in ("quixel", "sync-quixel"):
         sync_quixel_catalog()
+    elif cmd in ("enrich-quixel", "enrich-specs", "quixel-specs"):
+        n = int(sys.argv[2]) if len(sys.argv) > 2 else None
+        enrich_quixel_specs(n)
     elif cmd == "enrich":
         n = int(sys.argv[2]) if len(sys.argv) > 2 else None
         enrich_assets(n)
@@ -1788,5 +1937,6 @@ if __name__ == "__main__":
         print("Usage:\n  python -m src.store_client login <unity|fab>\n"
               "  python -m src.store_client fetch <unity|fab>\n"
               "  python -m src.store_client sync-quixel\n"
+              "  python -m src.store_client enrich-quixel [limit]\n"
               "  python -m src.store_client enrich [limit]\n"
               "  python -m src.store_client fab-deep-media [limit]")

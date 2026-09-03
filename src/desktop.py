@@ -706,6 +706,12 @@ class MainWindow(QMainWindow):
             pre_status="Fetching complete Quixel Megascans & Megaplants catalog from Fab…",
             success_text="✅ Quixel Megascans catalog synced into vault.",
             with_progress=True))
+        add_sync_btn("📐 Quixel Specs", lambda: self._long_op(
+            lambda ev, cb: store_client.enrich_quixel_specs(cancel_event=ev, progress=cb),
+            "Quixel scan specs",
+            pre_status="Enriching Quixel catalog with texel density, physical scan area, and map lists…",
+            success_text="✅ Quixel physical scan specs enriched.",
+            with_progress=True))
         add_sync_btn("🖼 Enrich library", lambda: self._start_enrich_sweep())
         add_sync_btn("👁 Vision pass", lambda: self._long_op(
             lambda ev, cb: vision.build(cancel_event=ev, progress=cb), "Vision pass", with_progress=True))
