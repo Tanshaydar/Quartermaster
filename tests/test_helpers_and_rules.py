@@ -91,6 +91,20 @@ class TestHelpersAndRules(unittest.TestCase):
         self.assertEqual(val_prereq_satisfied["verdict"], "ok")
         self.assertEqual(len(val_prereq_satisfied["missing_prerequisites"]), 0)
 
+    def test_update_checker_version_comparison(self):
+        def is_newer(latest_tag: str, current_ver: str) -> bool:
+            tag = latest_tag.lstrip("v").strip()
+            cur_parts = [int(p) for p in current_ver.split(".") if p.isdigit()]
+            lat_parts = [int(p) for p in tag.split(".") if p.isdigit()]
+            return lat_parts > cur_parts
+
+        self.assertTrue(is_newer("v1.1.3", "1.1.2"))
+        self.assertTrue(is_newer("1.2.0", "1.1.2"))
+        self.assertTrue(is_newer("v2.0.0", "1.1.2"))
+        self.assertFalse(is_newer("v1.1.2", "1.1.2"))
+        self.assertFalse(is_newer("v1.1.1", "1.1.2"))
+        self.assertFalse(is_newer("v1.0.0", "1.1.2"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,7 @@ import os
 import sys
 import threading
 import time
+import webbrowser
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QEvent, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
@@ -173,6 +174,33 @@ class LongOp(QThread):
             self.done.emit(msg + " ✓", True)
         except Exception as e:
             self.done.emit(f"{self.label} failed: {e}", False)
+
+
+class UpdateChecker(QThread):
+    """Checks for latest release from GitHub API off the UI thread (non-blocking, fails gracefully)."""
+    update_available = Signal(str, str)  # (version_tag, release_url)
+
+    def run(self):
+        try:
+            import httpx
+            r = httpx.get(
+                "https://api.github.com/repos/Tanshaydar/Quartermaster/releases/latest",
+                timeout=4.0,
+                follow_redirects=True,
+                headers={"User-Agent": "Quartermaster-Desktop"}
+            )
+            if r.status_code == 200:
+                data = r.json()
+                tag = str(data.get("tag_name") or "").lstrip("v").strip()
+                if not tag:
+                    return
+                cur_parts = [int(p) for p in __version__.split(".") if p.isdigit()]
+                lat_parts = [int(p) for p in tag.split(".") if p.isdigit()]
+                if lat_parts > cur_parts:
+                    url = data.get("html_url") or "https://github.com/Tanshaydar/Quartermaster/releases/latest"
+                    self.update_available.emit(f"v{tag}", url)
+        except Exception:
+            pass
 
 
 class _ImgSignals(QObject):
@@ -609,15 +637,30 @@ class MainWindow(QMainWindow):
         logo = QLabel("Quarter<span style='color:%s'>master</span>" % ACCENT)
         logo.setTextFormat(Qt.TextFormat.RichText)
         logo.setStyleSheet("font-size:19px; font-weight:700;")
+        self.update_btn = QPushButton("")
+        self.update_btn.setVisible(False)
+        self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: #1f3b2b; color: {GREEN}; border: 1px solid #238636;
+                border-radius: 12px; padding: 2px 10px; font-size: 11px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background: #238636; color: #ffffff; }}
+        """)
         self.stats_label = QLabel("")
         self.stats_label.setStyleSheet(f"color:{MUTED};")
-        brand.addWidget(logo); brand.addStretch(); brand.addWidget(self.stats_label)
+        brand.addWidget(logo)
+        brand.addWidget(self.update_btn)
+        brand.addStretch()
+        brand.addWidget(self.stats_label)
         tl.addLayout(brand)
 
         bar = QHBoxLayout()
         bar.setSpacing(8)
         self.search = QLineEdit()
+        self.search.setClearButtonEnabled(True)
         self.search.setPlaceholderText("Search your vault…  (natural language, intent, vision, keywords)")
+        self.search.installEventFilter(self)
         self.engine = QComboBox(); self.engine.addItems(["All Engines", "Unity (Owned)", "Fab (Owned)", "Quixel (Catalog)"])
         self.pipeline = QComboBox(); self.pipeline.addItems(["All Pipelines", "HDRP", "URP", "Built-in"])
         self.category = QComboBox(); self.category.addItem("All Categories")
@@ -681,6 +724,8 @@ class MainWindow(QMainWindow):
         self.list = QListWidget()
         self.list.setWordWrap(True)
         self.list.itemClicked.connect(self._on_select)
+        self.list.itemDoubleClicked.connect(self._on_double_click)
+        self.list.installEventFilter(self)
         self.list.setStyleSheet(f"QListWidget {{ border-right: 1px solid {BORDER}; }}")
         self.list.verticalScrollBar().valueChanged.connect(self._on_scroll)
         split.addWidget(self.list, 5)
@@ -727,6 +772,9 @@ class MainWindow(QMainWindow):
 
         # auto disk-scan at startup (background), then refresh
         self._long_op(lambda ev: local_scan.scan_all(), "Startup disk scan")
+
+        # Check for latest GitHub release in background (non-blocking)
+        QTimer.singleShot(2500, self._check_for_updates)
 
     # ---------------- search & display ----------------
 
@@ -966,7 +1014,74 @@ class MainWindow(QMainWindow):
         # keep the overlay covering the content area through ANY layout change
         if obj is self.centralWidget() and ev.type() == QEvent.Type.Resize:
             self.overlay.setGeometry(self.centralWidget().rect())
+        elif obj is self.search and ev.type() == QEvent.Type.KeyPress:
+            if ev.key() == Qt.Key.Key_Down:
+                if self.list.count() > 0:
+                    if self.list.currentRow() < 0:
+                        self.list.setCurrentRow(0)
+                    self.list.setFocus()
+                    return True
+            elif ev.key() == Qt.Key.Key_Escape:
+                if self.search.text():
+                    self.search.clear()
+                    return True
+                else:
+                    self.hide()
+                    return True
+        elif obj is self.list and ev.type() == QEvent.Type.KeyPress:
+            if ev.key() == Qt.Key.Key_Up and self.list.currentRow() <= 0:
+                self.search.setFocus()
+                return True
+            elif ev.key() == Qt.Key.Key_Escape:
+                if self.search.text():
+                    self.search.clear()
+                    self.search.setFocus()
+                    return True
+                else:
+                    self.hide()
+                    return True
         return super().eventFilter(obj, ev)
+
+    def keyPressEvent(self, ev):
+        if ev.key() == Qt.Key.Key_Escape:
+            if self.search.text():
+                self.search.clear()
+                self.search.setFocus()
+                return
+            else:
+                self.hide()
+                return
+        super().keyPressEvent(ev)
+
+    def _on_double_click(self, li: QListWidgetItem):
+        item = li.data(Qt.ItemDataRole.UserRole)
+        if not item:
+            return
+        local_path = item.get("local_path")
+        if local_path and os.path.exists(local_path):
+            target_dir = os.path.dirname(local_path) if os.path.isfile(local_path) else local_path
+            if sys.platform == "win32":
+                os.startfile(target_dir)
+            elif sys.platform == "darwin":
+                import subprocess
+                subprocess.Popen(["open", target_dir])
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", target_dir])
+            return
+        store_url = item.get("store_url")
+        if store_url:
+            webbrowser.open(store_url)
+
+    def _on_update_available(self, version: str, url: str):
+        self.update_btn.setText(f"✨ {version} available")
+        self.update_btn.clicked.connect(lambda: webbrowser.open(url))
+        self.update_btn.setVisible(True)
+
+    def _check_for_updates(self):
+        self._update_worker = UpdateChecker(parent=self)
+        self._update_worker.update_available.connect(self._on_update_available)
+        self._update_worker.start()
 
     def _cancel_op(self):
         if getattr(self, "_cancel_event", None):
