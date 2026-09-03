@@ -105,6 +105,19 @@ class TestHelpersAndRules(unittest.TestCase):
         self.assertFalse(is_newer("v1.1.1", "1.1.2"))
         self.assertFalse(is_newer("v1.0.0", "1.1.2"))
 
+    def test_parse_scan_specs(self):
+        from src.local_scan import _parse_scan_specs_from_text
+        sample = (
+            "<p><strong>Texel density:</strong> 8192 px/m</p>"
+            "<p><strong>Scan Area:</strong> 1x1 m</p>"
+            "<p><strong>Maps:</strong> Basecolor Displacement Cavity AO Specular Roughness Gloss Normal Bump</p>"
+        )
+        specs = _parse_scan_specs_from_text(sample)
+        self.assertEqual(specs["texel_density"], "8192 px/m")
+        self.assertEqual(specs["scan_area"], "1x1 m")
+        self.assertIn("Displacement", specs["maps"])
+        self.assertIn("Roughness", specs["maps"])
+
 
 if __name__ == "__main__":
     unittest.main()

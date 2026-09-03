@@ -17,16 +17,18 @@ Unity cache folders carry no package IDs, so title matching is the only
 portable option.
 """
 import glob
+import json
 import os
 import re
-from typing import Any, Dict, List
+import sqlite3
+from typing import Any, Dict, List, Optional
 
 try:
-    from .db import get_connection, search_assets, DB_PATH, upsert_asset
+    from .db import get_connection, search_assets, DB_PATH, upsert_asset, _sync_fts
     from .config import load_config
     from .ingest import classify_asset
 except ImportError:
-    from db import get_connection, search_assets, DB_PATH, upsert_asset
+    from db import get_connection, search_assets, DB_PATH, upsert_asset, _sync_fts
     from config import load_config
     from ingest import classify_asset
 
@@ -38,6 +40,59 @@ EPIC_LAUNCHER_INI = os.path.join(
 def _norm(title: str) -> str:
     """Normalize a title for fuzzy disk matching."""
     return re.sub(r"[^a-z0-9]+", "", (title or "").lower())
+
+
+def _parse_scan_specs_from_text(text: str) -> Dict[str, Any]:
+    """Extract texel density, scan area, and map lists from listing HTML/markdown."""
+    res = {}
+    if not text:
+        return res
+    m_td = re.search(r"Texel\s*density:?\s*(?:</strong>)?\s*([0-9]+\s*px/m)", text, re.I)
+    if m_td:
+        res["texel_density"] = m_td.group(1).strip()
+    m_sa = re.search(r"Scan\s*Area:?\s*(?:</strong>)?\s*([0-9xX\.\s]+m)", text, re.I)
+    if m_sa:
+        res["scan_area"] = m_sa.group(1).strip()
+    m_maps = re.search(r"Maps:?\s*(?:</strong>)?\s*([^<\n\r]+)", text, re.I)
+    if m_maps:
+        raw_m = m_maps.group(1).strip()
+        tokens = [w.strip() for w in re.split(r"[\s,]+", raw_m) if w.strip()]
+        res["maps"] = tokens
+    return res
+
+
+def _parse_scan_specs_from_dir(dir_path: str) -> Dict[str, Any]:
+    """Inspect downloaded Quixel folder for internal metadata JSONs (maps, displacement scale, etc.)."""
+    res = {}
+    for root, dirs, files in os.walk(dir_path):
+        for f in files:
+            if f.endswith(".json") and not f.startswith("package"):
+                fp = os.path.join(root, f)
+                try:
+                    j = json.load(open(fp, "r", encoding="utf-8"))
+                    if "maps" in j and isinstance(j["maps"], list):
+                        raw_maps = [m.get("name") or m.get("type") for m in j["maps"] if m.get("name") or m.get("type")]
+                        seen = set()
+                        unique_maps = []
+                        for m in raw_maps:
+                            cap = m.capitalize()
+                            if cap not in seen:
+                                seen.add(cap)
+                                unique_maps.append(cap)
+                        if unique_maps:
+                            res["maps"] = unique_maps
+                        if j["maps"] and j["maps"][0].get("physicalSize"):
+                            ps = str(j["maps"][0]["physicalSize"]).strip()
+                            if not ps.endswith("m"):
+                                ps = f"{ps} m"
+                            res["scan_area"] = ps
+                    if "displacementScale" in j and j["displacementScale"] is not None:
+                        res["displacement_scale"] = round(float(j["displacementScale"]), 4)
+                    if "highest_available_res" in j and j["highest_available_res"]:
+                        res["max_res"] = f"{j['highest_available_res']}px"
+                except Exception:
+                    pass
+    return res
 
 
 def _detect_fab_vault_dirs(cfg: dict) -> List[str]:
@@ -81,31 +136,58 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
         # macOS
         os.path.expanduser("~/Library/Unity/Asset Store-5.x"),
     ]
+    unity_found = {}
     unity_count = 0
     for unity_root in unity_candidates:
         if unity_root and os.path.isdir(unity_root):
             for pkg_file in glob.glob(os.path.join(unity_root, "*", "*", "*.unitypackage")):
                 title = os.path.splitext(os.path.basename(pkg_file))[0]
                 key = _norm(title)
-                found.setdefault(key, pkg_file)
+                unity_found.setdefault(key, pkg_file)
                 unity_count += 1
 
     # ---------------- Fab ----------------
+    fab_found = []
     fab_count = 0
+    catalog_specs = {}
     for vault_dir in _detect_fab_vault_dirs(cfg):
+        # Preload catalog specs from internal listings_v1.db if present
+        listings_db = os.path.join(vault_dir, "listings_v1.db")
+        if os.path.exists(listings_db):
+            try:
+                lconn = sqlite3.connect(listings_db)
+                lcur = lconn.cursor()
+                lcur.execute("SELECT listing_uid, title, description FROM catalog WHERE description != ''")
+                for luid, ltitle, ldesc in lcur.fetchall():
+                    sp = _parse_scan_specs_from_text(ldesc)
+                    if sp:
+                        catalog_specs[luid.lower()] = sp
+                lconn.close()
+            except Exception:
+                pass
+
         try:
             entries = os.listdir(vault_dir)
-        except OSError as e:
+        except OSError:
             continue
         for entry in entries:
             path = os.path.join(vault_dir, entry)
             if not os.path.isdir(path):
                 continue
             # entry format: <Slug_Name>-<8 hex chars>
-            slug = re.sub(r"-[0-9a-f]{8}$", "", entry)
+            m = re.search(r"-([0-9a-fA-F]{8})$", entry)
+            hash_prefix = m.group(1).lower() if m else ""
+            slug = re.sub(r"-[0-9a-fA-F]{8}$", "", entry)
             title = slug.replace("_", " ").replace("-", " ")
             key = _norm(title)
-            found.setdefault(key, path)
+            fab_found.append({
+                "path": path,
+                "entry": entry,
+                "hash_prefix": hash_prefix,
+                "title": title,
+                "key": key,
+                "vault_dir": vault_dir
+            })
             fab_count += 1
 
     # ---------------- match against DB ----------------
@@ -122,7 +204,7 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
     """)
 
     # Reset previous scan marks inside transaction only after disk read succeeds
-    cur.execute("UPDATE assets SET local_path = '' WHERE source IN ('unity', 'fab')")
+    cur.execute("UPDATE assets SET local_path = '' WHERE source IN ('unity', 'fab', 'quixel')")
 
     # Prioritize matching real library assets over disk stubs
     cur.execute("SELECT id, title, source FROM assets WHERE id NOT LIKE '%_disk_%'")
@@ -133,12 +215,106 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
 
     matched = 0
     to_adopt = []
-    for key, p in found.items():
+
+    # 1. Match Fab folders by exact listing UUID hash prefix first, then fallback to title
+    for item in fab_found:
+        p = item["path"]
+        key = item["key"]
+        hash_prefix = item["hash_prefix"]
+        aid = None
+        apkg = ""
+
+        if hash_prefix:
+            cur.execute("""
+                SELECT id, title, source, package_id, summary, usage_notes, tags, formats 
+                FROM assets 
+                WHERE id LIKE ? OR id LIKE ? OR package_id LIKE ?
+            """, (f"quixel_{hash_prefix}%", f"fab_{hash_prefix}%", f"{hash_prefix}%"))
+            rows = cur.fetchall()
+            if rows:
+                row = rows[0] if len(rows) == 1 else next((r for r in rows if _norm(r[1]) == key), rows[0])
+                aid = row[0]
+                apkg = row[3] or ""
+
+        if not aid and key in real_db_norms:
+            aid, _ = real_db_norms[key]
+            apkg = ""
+
+        if aid:
+            # Extract scan specs from catalog_specs or internal folder JSONs
+            specs = {}
+            if apkg and apkg.lower() in catalog_specs:
+                specs.update(catalog_specs[apkg.lower()])
+            elif hash_prefix:
+                for luid, sp in catalog_specs.items():
+                    if luid.startswith(hash_prefix):
+                        specs.update(sp)
+                        break
+            dir_specs = _parse_scan_specs_from_dir(p)
+            specs.update({k: v for k, v in dir_specs.items() if v})
+
+            cur.execute("SELECT summary, usage_notes, tags, formats, publisher FROM assets WHERE id = ?", (aid,))
+            arow = cur.fetchone()
+            if arow:
+                old_sum, old_use, old_tags_json, old_fmt_json, pub = arow
+                try:
+                    curr_tags = json.loads(old_tags_json or "[]")
+                except Exception:
+                    curr_tags = []
+                try:
+                    curr_fmts = json.loads(old_fmt_json or "[]") if isinstance(old_fmt_json, str) else (old_fmt_json or [])
+                except Exception:
+                    curr_fmts = []
+
+                notes_parts = []
+                if specs.get("texel_density"):
+                    notes_parts.append(f"Texel density: {specs['texel_density']}")
+                if specs.get("scan_area"):
+                    notes_parts.append(f"Scan area: {specs['scan_area']}")
+                if specs.get("maps"):
+                    notes_parts.append(f"Maps: {', '.join(specs['maps'])}")
+                    for map_name in specs["maps"]:
+                        ml = map_name.lower()
+                        if ml in ("displacement", "roughness", "normal", "cavity", "ao", "specular") and ml not in curr_tags:
+                            curr_tags.append(ml)
+                if specs.get("displacement_scale"):
+                    notes_parts.append(f"Displacement scale: {specs['displacement_scale']}")
+
+                new_use = old_use or ""
+                if notes_parts:
+                    spec_note = " · ".join(notes_parts)
+                    if "Texel density:" not in new_use:
+                        new_use = f"{spec_note}\n{new_use}".strip() if new_use else spec_note
+
+                new_sum = old_sum or ""
+                if specs.get("scan_area") and specs["scan_area"] not in new_sum:
+                    area_str = specs['scan_area']
+                    td_str = f", {specs['texel_density']}" if specs.get("texel_density") else ""
+                    new_sum = f"{new_sum} ({area_str}{td_str})".strip()
+
+                cur.execute("""
+                    UPDATE assets 
+                    SET local_path = ?, usage_notes = ?, summary = ?, tags = ?, formats = ? 
+                    WHERE id = ?
+                """, (p, new_use, new_sum, json.dumps(curr_tags), json.dumps(curr_fmts), aid))
+                _sync_fts(cur, aid)
+                matched += 1
+                if key in disk_db_norms:
+                    stub_id, _ = disk_db_norms[key]
+                    cur.execute("DELETE FROM assets WHERE id = ?", (stub_id,))
+        elif key in disk_db_norms:
+            stub_id, _ = disk_db_norms[key]
+            cur.execute("UPDATE assets SET local_path = ? WHERE id = ?", (p, stub_id))
+            matched += 1
+        else:
+            to_adopt.append((key, p, item["title"], "fab", ""))
+
+    # 2. Match Unity packages by title
+    for key, p in unity_found.items():
         if key in real_db_norms:
             aid, _ = real_db_norms[key]
             cur.execute("UPDATE assets SET local_path = ? WHERE id = ?", (p, aid))
             matched += 1
-            # If an old disk stub exists for this title, clean it up
             if key in disk_db_norms:
                 stub_id, _ = disk_db_norms[key]
                 cur.execute("DELETE FROM assets WHERE id = ?", (stub_id,))
@@ -147,16 +323,9 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
             cur.execute("UPDATE assets SET local_path = ? WHERE id = ?", (p, stub_id))
             matched += 1
         else:
-            # Discovered on disk but missing from library imports -> adopt it
-            if p.endswith(".unitypackage"):
-                title = os.path.splitext(os.path.basename(p))[0]
-                source = "unity"
-                publisher = os.path.basename(os.path.dirname(os.path.dirname(p)))
-            else:
-                title = re.sub(r"-[0-9a-f]{8}$", "", os.path.basename(p)).replace("_", " ").replace("-", " ")
-                source = "fab"
-                publisher = ""
-            to_adopt.append((key, p, title, source, publisher))
+            title = os.path.splitext(os.path.basename(p))[0]
+            publisher = os.path.basename(os.path.dirname(os.path.dirname(p)))
+            to_adopt.append((key, p, title, "unity", publisher))
 
     conn.commit()  # release write lock before adopting via second connection
 
