@@ -1145,7 +1145,7 @@ class SyncDialog(QDialog):
         lay.addWidget(u_box)
 
         # 2. Fab & Quixel Section
-        f_box = QGroupBox("🌿 Epic Games Fab & Quixel Megascans")
+        f_box = QGroupBox("🌿 Epic Games Fab && Quixel Megascans")
         f_lay = QVBoxLayout(f_box)
         self.f_status = QLabel("Checking status…")
         self.f_status.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
@@ -1185,7 +1185,7 @@ class SyncDialog(QDialog):
         lay.addWidget(f_box)
 
         # 3. AI & Indexing Section
-        ai_box = QGroupBox("👁 Local Storage & AI Indexing")
+        ai_box = QGroupBox("👁 Local Storage && AI Indexing")
         ai_lay = QVBoxLayout(ai_box)
         self.ai_status = QLabel("Checking status…")
         self.ai_status.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
