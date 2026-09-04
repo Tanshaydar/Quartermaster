@@ -19,7 +19,7 @@ This project started because I wanted to prototype a dam.
 
 Nothing serious — a short demo, maybe more if it worked out. Before building anything, I wanted to see what I already owned that could speed it up. So I searched my library for "dam": nothing came back. Of course nothing came back — no asset is *called* a dam. But spread across four packages I already owned were curved concrete meshes, a water system, some rocky terrain. Everything the dam needed. I'd had most of it for years and never once connected the pieces.
 
-That's what ~1,500 assets across two stores did to me, and the library has only grown since. Almost all of it from bundles and sales, none of it remembered. And it's not just me — no AI assistant knows either. Ask one for help and it either builds everything from scratch or sends you shopping, while hundreds of dollars of exactly-the-right-thing sits on your disk.
+That's what ~1,500 assets across two stores did to me when this started — a library that has since grown past 7,500 assets across five ecosystems. Almost all of it from bundles and sales, none of it remembered. And it's not just me — no AI assistant knows either. Ask one for help and it either builds everything from scratch or sends you shopping, while hundreds of dollars of exactly-the-right-thing sits on your disk.
 
 Quartermaster indexes everything you own across the **Unity Asset Store**, **Fab**, **Quixel Megascans**, **Gumroad** and **Leartes Cosmos** — locally, on your machine — and serves it to your coding agent over MCP. It's the tool I wished existed that day: ask about a dam, get told you already own curved concrete meshes.
 
@@ -78,10 +78,7 @@ Two hard-won rules baked into the design, if you ever hack on this yourself:
 
 ## Quixel Megascans, and why your Fab library looks short
 
-Your Fab library view and the Megascans catalog are not the same list, and there
-is no export button to reconcile them. If you claimed Megascans and later went
-looking for them in Fab, the count you see is not the count you expected — which
-leaves you scrolling and searching by hand for something you already have rights to.
+Fab's library view and the Megascans catalog are not the same list. Epic made the entire 5,000+ Megascans catalog free to claim under the Epic Content License, but Fab only shows listings you have manually clicked "Get" on — leaving your acquired library looking short even though you already have rights to the entire library.
 
 Quartermaster syncs the Quixel Megascans and Megaplants catalog directly and files
 it next to everything else you own, tagged by status:
@@ -112,7 +109,7 @@ python -m src.store_client enrich-quixel    # texel density, scan area, maps
 - **Cross-modal visual understanding** via ONNX CLIP embeddings (`Qdrant/clip-ViT-B-32`) — searching *"gothic cathedral"* literally scores your screenshots and promo renders, finding assets even when their text descriptions are completely silent.
 All three signals are fused with **3-way Reciprocal Rank Fusion (RRF)** on your CPU. No GPU, no vector database process, no cloud API — ONNX Runtime and a numpy matrix, in the same process as everything else.
 
-Measured on a ~1,800-asset vault: **~480 MB peak RAM** with both models resident, **~1.5 s for the first query** (loading BGE and CLIP), **~110 ms warm** after that. The models load lazily, so an agent that never searches never pays for them.
+Measured on a ~7,500-asset vault: **~520 MB peak RAM** with both models resident, **~1.4 s for the first query** (loading BGE and CLIP), **~85 ms warm** after that. The models load lazily, so an agent that never searches never pays for them.
 
 **Ground truth about your disk.** Scans `%APPDATA%/Unity/Asset Store-5.x/` and Epic's VaultCache so every result knows whether it's already downloaded or cloud-only. Agents prefer what's local — a zero-download import beats a 4 GB one.
 
