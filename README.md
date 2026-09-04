@@ -78,10 +78,15 @@ Two hard-won rules baked into the design, if you ever hack on this yourself:
 
 ## Quixel Megascans, and why your Fab library looks short
 
-Fab's library view and the Megascans catalog are not the same list. Epic made the entire 5,000+ Megascans catalog free to claim under the Epic Content License, but Fab only shows listings you have manually clicked "Get" on — leaving your acquired library looking short even though you already have rights to the entire library.
+Fab's library view and the Megascans catalog are not the same list, and there is no
+export that reconciles them — you can hold rights to far more Megascans content than
+your library page displays. Whatever the cause, the practical result is the same:
+scrolling and hand-searching for something you already have.
 
-Quartermaster syncs the Quixel Megascans and Megaplants catalog directly and files
-it next to everything else you own, tagged by status:
+Quartermaster sidesteps it. It syncs the **Quixel Megascans** and **Quixel Megaplants**
+seller catalogs from Fab directly — 5,580 listings as of this writing — independently of
+what your library view shows, and files them next to everything else you own, tagged by
+status:
 
 - **`vault_owned`** — in your library
 - **`catalog_grant`** — claimable free under the Epic Content License, not yet acquired
