@@ -313,7 +313,17 @@ class ThumbnailManager(QObject):
             return pm
         if url in self._cache:
             pm = QPixmap()
-            if pm.loadFromData(self._cache[url]):
+            if not pm.loadFromData(self._cache[url]):
+                try:
+                    import io
+                    from PIL import Image
+                    im = Image.open(io.BytesIO(self._cache[url])).convert("RGBA")
+                    buf = io.BytesIO()
+                    im.save(buf, format="PNG")
+                    pm.loadFromData(buf.getvalue())
+                except Exception:
+                    pass
+            if not pm.isNull():
                 scaled = pm.scaled(w, h, mode, Qt.TransformationMode.SmoothTransformation)
                 self._pix_cache[k] = scaled
                 return scaled
@@ -390,10 +400,14 @@ class _ImageDownloadTask(QRunnable):
         os.makedirs(d, exist_ok=True)
         key = hashlib.sha1(url.encode()).hexdigest()
         ext = ".jpg"
-        for e in (".png", ".webp", ".gif", ".jpeg"):
+        for e in (".png", ".webp", ".gif", ".jpeg", ".avif"):
             if e in url.lower():
                 ext = e
                 break
+        for check_ext in (ext, ".jpg", ".png", ".webp", ".avif"):
+            candidate = os.path.join(d, key + check_ext)
+            if os.path.exists(candidate):
+                return candidate
         return os.path.join(d, key + ext)
 
     def run(self):
@@ -462,6 +476,13 @@ class _ImageDownloadTask(QRunnable):
             if data:
                 try:
                     qimg = QImage.fromData(data)
+                    if not qimg or qimg.isNull():
+                        import io
+                        from PIL import Image
+                        im = Image.open(io.BytesIO(data)).convert("RGBA")
+                        buf = io.BytesIO()
+                        im.save(buf, format="PNG")
+                        qimg = QImage.fromData(buf.getvalue())
                     if qimg and not qimg.isNull():
                         if qimg.width() > 512 or qimg.height() > 512:
                             qimg = qimg.scaled(512, 512, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)

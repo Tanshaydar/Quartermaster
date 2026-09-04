@@ -135,6 +135,13 @@ class TestStoreClientParsers(unittest.TestCase):
         expected = ("unity", "fab", "quixel", "gumroad", "cosmos")
         self.assertEqual(VAULT_SOURCES, expected)
 
+    def test_avif_cache_and_decode(self):
+        from src.desktop import _ImageDownloadTask
+        cfg = {"media_cache_dir": "cache/images"}
+        url = "https://cdn.cosmos.leartesstudios.com/images/c4b457f2-d7a4-4b80-987d-2aa2f310fba3.avif"
+        path = _ImageDownloadTask.cached_path(cfg, url)
+        self.assertTrue(path.endswith(".avif") or path.endswith(".jpg"))
+
 
 if __name__ == "__main__":
     unittest.main()

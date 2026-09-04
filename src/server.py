@@ -248,11 +248,18 @@ def api_image(url: str):
     cache_dir = cfg["media_cache_dir"]
     key = hashlib.sha1(url.encode()).hexdigest()
     ext = ".jpg"
-    for e in (".png", ".webp", ".gif", ".jpeg"):
+    for e in (".png", ".webp", ".gif", ".jpeg", ".avif"):
         if e in url.lower():
             ext = e
             break
     cached = os.path.join(cache_dir, key + ext)
+    if not os.path.exists(cached):
+        for alt_ext in (ext, ".jpg", ".png", ".webp", ".avif"):
+            alt_path = os.path.join(cache_dir, key + alt_ext)
+            if os.path.exists(alt_path):
+                cached = alt_path
+                ext = alt_ext
+                break
 
     if cfg["media_cache_enabled"] and os.path.exists(cached):
         with open(cached, "rb") as f:
