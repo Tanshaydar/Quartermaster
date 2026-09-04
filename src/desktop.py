@@ -1899,16 +1899,16 @@ class MainWindow(QMainWindow):
         f = QFont("Segoe UI", 34, QFont.Weight.Bold); p.setFont(f)
         p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "V"); p.end()
 
-        menu = QMenu()
+        self._tray_menu = QMenu(self)
         act_show = QAction("Show / Hide", self)
         act_show.triggered.connect(self.toggle_visible)
         act_quit = QAction("Quit", self)
         act_quit.triggered.connect(QApplication.instance().quit)
-        menu.addAction(act_show); menu.addSeparator(); menu.addAction(act_quit)
+        self._tray_menu.addAction(act_show); self._tray_menu.addSeparator(); self._tray_menu.addAction(act_quit)
 
         tray = QSystemTrayIcon(QIcon(pm), self)
         tray.setToolTip(f"Quartermaster v{__version__}")
-        tray.setContextMenu(menu)
+        tray.setContextMenu(self._tray_menu)
         tray.activated.connect(
             lambda r: self.toggle_visible() if r == QSystemTrayIcon.ActivationReason.Trigger else None)
         tray.show()
@@ -1930,6 +1930,12 @@ class MainWindow(QMainWindow):
         op = getattr(self, "op", None)
         if op is not None and op.isRunning():
             op.wait(5000)
+        sw = getattr(self, "_search_worker", None)
+        if sw is not None and sw.isRunning():
+            sw.wait(2000)
+        uw = getattr(self, "_update_worker", None)
+        if uw is not None and uw.isRunning():
+            uw.wait(2000)
 
     def closeEvent(self, ev):
         # minimize-to-tray instead of quitting if tray is available (Quit is in the tray menu / Ctrl+Q)
@@ -1994,11 +2000,18 @@ def main():
     socket.connectToServer(server_name)
     if socket.waitForConnected(400):
         # An instance is already running -> tell it to show/activate and exit cleanly
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)
+            except Exception:
+                pass
         socket.write(b"ACTIVATE\n")
         socket.flush()
         socket.waitForBytesWritten(1000)
         socket.close()
         print("Quartermaster is already running — activating existing window.")
+        time.sleep(1.0)
         sys.exit(0)
 
     # Clean up any stale pipe/server from previous crashed sessions
@@ -2023,29 +2036,26 @@ def main():
     win.show()
 
     def _activate_window():
-        win.show()
-        win.setWindowState((win.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
+        win.showNormal()
         win.raise_()
         win.activateWindow()
         if sys.platform == "win32":
             try:
                 import ctypes
-                ctypes.windll.user32.SetForegroundWindow(int(win.winId()))
+                hwnd = int(win.winId())
+                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
             except Exception:
                 pass
 
     def _on_new_connection():
         client = local_server.nextPendingConnection()
         if client:
-            client.readyRead.connect(lambda: _handle_client_msg(client))
-
-    def _handle_client_msg(client):
-        try:
-            msg = bytes(client.readAll()).decode("utf-8", errors="ignore")
-            if "ACTIVATE" in msg:
-                _activate_window()
-        finally:
-            client.close()
+            _activate_window()
+            try:
+                client.close()
+            except Exception:
+                pass
 
     local_server.newConnection.connect(_on_new_connection)
 

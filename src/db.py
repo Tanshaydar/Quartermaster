@@ -116,7 +116,10 @@ def init_db(db_path: str = DB_PATH):
         cur.execute("PRAGMA user_version = 3")
 
     # Prune any dangling FTS entries whose parent row in assets was removed
-    cur.execute("DELETE FROM assets_fts WHERE id NOT IN (SELECT id FROM assets)")
+    try:
+        cur.execute("DELETE FROM assets_fts WHERE id NOT IN (SELECT id FROM assets)")
+    except Exception:
+        pass
 
     # Prune any dangling image_vectors whose referenced assets were removed.
     # asset_id holds a ';'-joined list when several assets share one image, so a
