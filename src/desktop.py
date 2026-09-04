@@ -228,17 +228,71 @@ class UpdateChecker(QThread):
             pass
 
 
-class _ImgSignals(QObject):
-    fetched = Signal(str, bytes)
+class ThumbnailManager(QObject):
+    """Central, long-lived image pipeline with in-memory caching and bounded thread pool."""
+    image_loaded = Signal(str, bytes)  # (url, raw_bytes)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cache: Dict[str, bytes] = {}
+        self._pix_cache: Dict[tuple, QPixmap] = {}
+        self._in_flight: set = set()
+        self._shutting_down: bool = False
+        self._pool = QThreadPool(self)
+        self._pool.setMaxThreadCount(6)
+        app = QApplication.instance()
+        if app:
+            app.aboutToQuit.connect(self.shutdown)
+
+    def shutdown(self):
+        self._shutting_down = True
+        try:
+            self._pool.clear()
+            self._pool.waitForDone(400)
+        except Exception:
+            pass
+
+    def get_pixmap(self, url: str, w: int, h: int) -> Optional[QPixmap]:
+        if not url:
+            return None
+        k = (url, w, h)
+        if k in self._pix_cache:
+            return self._pix_cache[k]
+        if url in self._cache:
+            pm = QPixmap()
+            if pm.loadFromData(self._cache[url]):
+                scaled = pm.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                   Qt.TransformationMode.SmoothTransformation)
+                self._pix_cache[k] = scaled
+                return scaled
+        return None
+
+    def request(self, url: str):
+        if self._shutting_down or not url or url in self._cache or url in self._in_flight:
+            return
+        self._in_flight.add(url)
+        task = _ImageDownloadTask(url, self)
+        self._pool.start(task)
+
+    def _notify(self, url: str, data: bytes):
+        if self._shutting_down:
+            return
+        try:
+            self._in_flight.discard(url)
+            if data:
+                self._cache[url] = data
+                self.image_loaded.emit(url, data)
+        except (RuntimeError, Exception):
+            pass
 
 
-class ImageLoader(QRunnable):
-    """Downloads (or loads from disk cache) an image and emits raw bytes (thread-safe, bounded)."""
+class _ImageDownloadTask(QRunnable):
+    """Worker task run in ThumbnailManager thread pool."""
 
-    def __init__(self, url: str, key: str):
+    def __init__(self, url: str, manager: ThumbnailManager):
         super().__init__()
-        self.url, self.key = url, key
-        self.signals = _ImgSignals()
+        self.url = url
+        self.manager = manager
 
     @classmethod
     def cached_path(cls, cfg, url: str) -> str:
@@ -254,27 +308,46 @@ class ImageLoader(QRunnable):
         return os.path.join(d, key + ext)
 
     def run(self):
-        cfg = load_config()
-        path = ImageLoader.cached_path(cfg, self.url) if cfg["media_cache_enabled"] else None
+        if getattr(self.manager, "_shutting_down", False):
+            return
+        data = None
         try:
+            cfg = load_config()
+            path = self.cached_path(cfg, self.url) if cfg["media_cache_enabled"] else None
             if path and os.path.exists(path):
-                data = open(path, "rb").read()
+                with open(path, "rb") as f:
+                    data = f.read()
             else:
-                import httpx
-                r = httpx.get(self.url, timeout=15, follow_redirects=True,
-                              headers={"User-Agent": "Mozilla/5.0", "Referer": self.url})
-                r.raise_for_status()
-                if len(r.content) > 15 * 1024 * 1024:
+                if getattr(self.manager, "_shutting_down", False):
                     return
-                data = r.content
-                if path:
-                    evict_image_cache(cfg["media_cache_dir"])
-                    with open(path, "wb") as f:
-                        f.write(data)
-            if data:
-                self.signals.fetched.emit(self.key, data)
+                import httpx
+                r = httpx.get(self.url, timeout=12, follow_redirects=True,
+                              headers={"User-Agent": "Mozilla/5.0", "Referer": self.url})
+                if r.status_code == 200 and len(r.content) <= 15 * 1024 * 1024:
+                    data = r.content
+                    if path:
+                        evict_image_cache(cfg["media_cache_dir"])
+                        with open(path, "wb") as f:
+                            f.write(data)
         except Exception:
             pass
+        finally:
+            try:
+                self.manager._notify(self.url, data or b"")
+            except (RuntimeError, Exception):
+                pass
+
+
+# Global singleton instance initialized on main thread
+THUMB_MGR: Optional[ThumbnailManager] = None
+
+
+def get_thumb_manager() -> ThumbnailManager:
+    global THUMB_MGR
+    if THUMB_MGR is None:
+        THUMB_MGR = ThumbnailManager()
+    return THUMB_MGR
+
 
 
 # ---------------------------------------------------------------------------
@@ -317,28 +390,6 @@ class WinHotkeyFilter(QAbstractNativeEventFilter):
 # Widgets
 # ---------------------------------------------------------------------------
 
-_THUMB_CACHE: Dict[str, QPixmap] = {}
-
-
-def _apply_thumb_safely(label: QLabel, url: str, data: bytes, target_w: int, target_h: int):
-    try:
-        try:
-            import shiboken6
-            if not shiboken6.isValid(label):
-                return
-        except ImportError:
-            pass
-        pm = QPixmap()
-        if pm.loadFromData(data):
-            scaled = pm.scaled(target_w, target_h,
-                               Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                               Qt.TransformationMode.SmoothTransformation)
-            _THUMB_CACHE[url] = scaled
-            label.setPixmap(scaled)
-    except Exception:
-        pass
-
-
 def badge(text: str, color: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setStyleSheet(f"color:{color}; border:1px solid {color}; border-radius:8px;"
@@ -376,6 +427,7 @@ class AssetCard(QWidget):
     def __init__(self, item: dict):
         super().__init__()
         self.asset = item
+        self.image_url = (item.get("image_url") or "").strip()
         main_lay = QHBoxLayout(self)
         main_lay.setContentsMargins(8, 6, 8, 6)
         main_lay.setSpacing(12)
@@ -385,16 +437,15 @@ class AssetCard(QWidget):
         self.thumb.setFixedSize(64, 48)
         self.thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumb.setStyleSheet(f"background:{PANEL}; border:1px solid {BORDER}; border-radius:6px; font-size:16px; color:{MUTED};")
-        img_url = (item.get("image_url") or "").strip()
-        if img_url:
-            if img_url in _THUMB_CACHE:
-                self.thumb.setPixmap(_THUMB_CACHE[img_url])
+        mgr = get_thumb_manager()
+        if self.image_url:
+            pm = mgr.get_pixmap(self.image_url, 64, 48)
+            if pm:
+                self.thumb.setPixmap(pm)
             else:
                 self.thumb.setText("🖼")
-                loader = ImageLoader(img_url, f"thumb_{item['id']}")
-                loader.signals.fetched.connect(
-                    lambda _k, b, l=self.thumb, u=img_url: _apply_thumb_safely(l, u, b, 64, 48))
-                QThreadPool.globalInstance().start(loader)
+                mgr.image_loaded.connect(self._on_image_loaded)
+                mgr.request(self.image_url)
         else:
             self.thumb.setText("📦" if item.get("source") == "unity" else "🌿")
 
@@ -462,6 +513,12 @@ class AssetCard(QWidget):
         main_lay.addWidget(self.thumb)
         main_lay.addLayout(lay, 1)
 
+    def _on_image_loaded(self, url: str, data: bytes):
+        if url == self.image_url:
+            pm = get_thumb_manager().get_pixmap(self.image_url, 64, 48)
+            if pm:
+                self.thumb.setPixmap(pm)
+
 
 class AssetGridCard(QWidget):
     """Gallery card: 196x216px with 16:9 thumbnail preview, title, publisher, engine, and badges."""
@@ -469,6 +526,7 @@ class AssetGridCard(QWidget):
     def __init__(self, item: dict):
         super().__init__()
         self.asset = item
+        self.image_url = (item.get("image_url") or "").strip()
         self.setFixedSize(196, 216)
         self.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:8px;")
 
@@ -481,16 +539,15 @@ class AssetGridCard(QWidget):
         self.thumb.setFixedSize(196, 120)
         self.thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumb.setStyleSheet(f"background:{PANEL}; border-top-left-radius:7px; border-top-right-radius:7px; font-size:24px; color:{MUTED};")
-        img_url = (item.get("image_url") or "").strip()
-        if img_url:
-            if img_url in _THUMB_CACHE:
-                self.thumb.setPixmap(_THUMB_CACHE[img_url])
+        mgr = get_thumb_manager()
+        if self.image_url:
+            pm = mgr.get_pixmap(self.image_url, 196, 120)
+            if pm:
+                self.thumb.setPixmap(pm)
             else:
                 self.thumb.setText("🖼")
-                loader = ImageLoader(img_url, f"gthumb_{item['id']}")
-                loader.signals.fetched.connect(
-                    lambda _k, b, l=self.thumb, u=img_url: _apply_thumb_safely(l, u, b, 196, 120))
-                QThreadPool.globalInstance().start(loader)
+                mgr.image_loaded.connect(self._on_image_loaded)
+                mgr.request(self.image_url)
         else:
             self.thumb.setText("📦" if item.get("source") == "unity" else "🌿")
         lay.addWidget(self.thumb)
@@ -546,6 +603,12 @@ class AssetGridCard(QWidget):
             w.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
             w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
+    def _on_image_loaded(self, url: str, data: bytes):
+        if url == self.image_url:
+            pm = get_thumb_manager().get_pixmap(self.image_url, 196, 120)
+            if pm:
+                self.thumb.setPixmap(pm)
+
 
 class QuickLookDialog(QDialog):
     """Spacebar Quick-Look modal preview."""
@@ -553,6 +616,7 @@ class QuickLookDialog(QDialog):
     def __init__(self, item: dict, parent=None):
         super().__init__(parent)
         self.item = item
+        self.img_url = (item.get("image_url") or "").strip()
         self.setWindowTitle(item.get("title", "Asset Preview"))
         self.resize(760, 560)
         self.setStyleSheet(f"""
@@ -570,11 +634,14 @@ class QuickLookDialog(QDialog):
         self.img_label.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:8px;")
         lay.addWidget(self.img_label)
 
-        img_url = (item.get("image_url") or "").strip()
-        if img_url:
-            loader = ImageLoader(img_url, f"ql_{item['id']}")
-            loader.signals.fetched.connect(lambda _k, b: self._set_img(b))
-            QThreadPool.globalInstance().start(loader)
+        mgr = get_thumb_manager()
+        if self.img_url:
+            pm = mgr.get_pixmap(self.img_url, 720, 360)
+            if pm:
+                self.img_label.setPixmap(pm)
+            else:
+                mgr.image_loaded.connect(self._on_image_loaded)
+                mgr.request(self.img_url)
         else:
             self.img_label.setText("No preview image available")
 
@@ -624,22 +691,11 @@ class QuickLookDialog(QDialog):
         btns.addWidget(close_btn)
         lay.addLayout(btns)
 
-    def _set_img(self, data: bytes):
-        try:
-            import shiboken6
-            if not shiboken6.isValid(self.img_label):
-                return
-        except ImportError:
-            pass
-        try:
-            pm = QPixmap()
-            if pm.loadFromData(data):
-                scaled = pm.scaled(self.img_label.width(), self.img_label.height(),
-                                   Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
-                self.img_label.setPixmap(scaled)
-        except Exception:
-            pass
+    def _on_image_loaded(self, url: str, data: bytes):
+        if url == self.img_url:
+            pm = get_thumb_manager().get_pixmap(self.img_url, 720, 360)
+            if pm:
+                self.img_label.setPixmap(pm)
 
     def _reveal_local(self, path: str):
         target_dir = os.path.dirname(path) if os.path.isfile(path) else path
@@ -814,7 +870,9 @@ class DetailPanel(QScrollArea):
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.current: Optional[dict] = None
-        self._active_loaders: List[Any] = []
+        self.hero_url: str = ""
+        self._gallery_btns: Dict[str, QPushButton] = {}
+        get_thumb_manager().image_loaded.connect(self._on_image_loaded)
 
         inner = QWidget()
         self.lay = QVBoxLayout(inner)
@@ -859,21 +917,21 @@ class DetailPanel(QScrollArea):
     def show_asset(self, item: dict):
         self.clear_layout(self.lay)
         self.current = item
-        self._active_loaders.clear()
+        self._gallery_btns.clear()
 
         # 1. Hero Cover Image
-        img_url = (item.get("image_url") or "").strip()
-        self.hero_cover = QLabel("  loading cover…  " if img_url else "No preview image available")
+        self.hero_url = (item.get("image_url") or "").strip()
+        self.hero_cover = QLabel("  loading cover…  " if self.hero_url else "No preview image available")
         self.hero_cover.setFixedHeight(230)
         self.hero_cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hero_cover.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:8px; color:{MUTED}; font-size:13px;")
         self.lay.addWidget(self.hero_cover)
-        if img_url:
-            loader = ImageLoader(img_url, f"cover_{item['id']}")
-            self._active_loaders.append(loader)
-            loader.signals.fetched.connect(
-                lambda _k, pm, c=self.hero_cover: self._set_cover(c, pm))
-            QThreadPool.globalInstance().start(loader)
+        if self.hero_url:
+            pm = get_thumb_manager().get_pixmap(self.hero_url, 460, 230)
+            if pm:
+                self.hero_cover.setPixmap(pm)
+            else:
+                get_thumb_manager().request(self.hero_url)
 
         # 2. Interactive Gallery Thumbnails (under hero)
         gallery = item.get("gallery_images") or []
@@ -881,7 +939,7 @@ class DetailPanel(QScrollArea):
         for g in gallery:
             if g and g not in distinct_gallery:
                 distinct_gallery.append(g)
-        if len(distinct_gallery) == 1 and distinct_gallery[0] == img_url:
+        if len(distinct_gallery) == 1 and distinct_gallery[0] == self.hero_url:
             distinct_gallery = []
 
         if distinct_gallery:
@@ -893,10 +951,13 @@ class DetailPanel(QScrollArea):
                 gl.setCursor(Qt.CursorShape.PointingHandCursor)
                 gl.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:6px;")
                 gl.clicked.connect(lambda checked=False, url=g: self._switch_hero(url))
-                loader = ImageLoader(g, f"g_{item['id']}_{i}")
-                self._active_loaders.append(loader)
-                loader.signals.fetched.connect(lambda _k, pm, b=gl: self._set_btn_icon(b, pm))
-                QThreadPool.globalInstance().start(loader)
+                self._gallery_btns[g] = gl
+                pm_g = get_thumb_manager().get_pixmap(g, 68, 46)
+                if pm_g:
+                    gl.setIcon(QIcon(pm_g))
+                    gl.setIconSize(QSize(68, 46))
+                else:
+                    get_thumb_manager().request(g)
                 grow.addWidget(gl)
             grow.addStretch()
             self.lay.addLayout(grow)
@@ -1032,11 +1093,25 @@ class DetailPanel(QScrollArea):
     def _switch_hero(self, url: str):
         if not hasattr(self, "hero_cover"):
             return
-        loader = ImageLoader(url, f"hero_sw_{url}")
-        self._active_loaders.append(loader)
-        loader.signals.fetched.connect(
-            lambda _k, pm, c=self.hero_cover: self._set_cover(c, pm))
-        QThreadPool.globalInstance().start(loader)
+        self.hero_url = url
+        pm = get_thumb_manager().get_pixmap(url, 460, 230)
+        if pm:
+            self.hero_cover.setPixmap(pm)
+        else:
+            self.hero_cover.setText("  loading cover…  ")
+            get_thumb_manager().request(url)
+
+    def _on_image_loaded(self, url: str, data: bytes):
+        if hasattr(self, "hero_cover") and url == self.hero_url:
+            pm = get_thumb_manager().get_pixmap(url, 460, 230)
+            if pm:
+                self.hero_cover.setPixmap(pm)
+        if url in self._gallery_btns:
+            btn = self._gallery_btns[url]
+            pm = get_thumb_manager().get_pixmap(url, 68, 46)
+            if pm:
+                btn.setIcon(QIcon(pm))
+                btn.setIconSize(QSize(68, 46))
 
     def _reveal_local(self, path: str):
         target_dir = os.path.dirname(path) if os.path.isfile(path) else path
@@ -1078,43 +1153,6 @@ class DetailPanel(QScrollArea):
                     f"Files written: {r['written']}  ·  skipped: {r['skipped']}")
             except Exception as e:
                 QMessageBox.critical(self, "Import failed", str(e))
-
-    @staticmethod
-    def _set_cover(label: QLabel, data: bytes):
-        try:
-            import shiboken6
-            if not shiboken6.isValid(label):
-                return
-        except ImportError:
-            pass
-        try:
-            pm = QPixmap()
-            if pm.loadFromData(data):
-                w = label.width() if label.width() > 20 else 500
-                h = label.height() if label.height() > 20 else 230
-                label.setPixmap(pm.scaled(w, h,
-                                          Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                          Qt.TransformationMode.SmoothTransformation))
-        except Exception:
-            pass
-
-    @staticmethod
-    def _set_btn_icon(btn: QPushButton, data: bytes):
-        try:
-            import shiboken6
-            if not shiboken6.isValid(btn):
-                return
-        except ImportError:
-            pass
-        try:
-            pm = QPixmap()
-            if pm.loadFromData(data):
-                icon = QIcon(pm.scaled(68, 46, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                       Qt.TransformationMode.SmoothTransformation))
-                btn.setIcon(icon)
-                btn.setIconSize(QSize(68, 46))
-        except Exception:
-            pass
 
     def _copy_context(self):
         a = self.current
@@ -1960,6 +1998,7 @@ def main():
         socket.flush()
         socket.waitForBytesWritten(1000)
         socket.close()
+        print("Quartermaster is already running — activating existing window.")
         sys.exit(0)
 
     # Clean up any stale pipe/server from previous crashed sessions
@@ -1988,6 +2027,12 @@ def main():
         win.setWindowState((win.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
         win.raise_()
         win.activateWindow()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.user32.SetForegroundWindow(int(win.winId()))
+            except Exception:
+                pass
 
     def _on_new_connection():
         client = local_server.nextPendingConnection()
