@@ -252,17 +252,17 @@ class ThumbnailManager(QObject):
         except Exception:
             pass
 
-    def get_pixmap(self, url: str, w: int, h: int) -> Optional[QPixmap]:
+    def get_pixmap(self, url: str, w: int, h: int,
+                   mode: Qt.AspectRatioMode = Qt.AspectRatioMode.KeepAspectRatioByExpanding) -> Optional[QPixmap]:
         if not url:
             return None
-        k = (url, w, h)
+        k = (url, w, h, mode.value)
         if k in self._pix_cache:
             return self._pix_cache[k]
         if url in self._cache:
             pm = QPixmap()
             if pm.loadFromData(self._cache[url]):
-                scaled = pm.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                   Qt.TransformationMode.SmoothTransformation)
+                scaled = pm.scaled(w, h, mode, Qt.TransformationMode.SmoothTransformation)
                 self._pix_cache[k] = scaled
                 return scaled
         return None
@@ -958,9 +958,9 @@ class DetailPanel(QScrollArea):
         self.hero_cover.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:8px; color:{MUTED}; font-size:13px;")
         self.lay.addWidget(self.hero_cover)
         if self.hero_url:
-            pm = get_thumb_manager().get_pixmap(self.hero_url, 460, 230)
+            pm = get_thumb_manager().get_pixmap(self.hero_url, 460, 230, Qt.AspectRatioMode.KeepAspectRatio)
             if pm:
-                self.hero_cover.setPixmap(pm)
+                self._apply_hero_pixmap(pm)
             else:
                 get_thumb_manager().request(self.hero_url)
 
@@ -1121,22 +1121,35 @@ class DetailPanel(QScrollArea):
 
         self.lay.addStretch()
 
+    def _apply_hero_pixmap(self, pm: QPixmap):
+        if not hasattr(self, "hero_cover") or pm.isNull():
+            return
+        bg = CARD
+        try:
+            corner = pm.toImage().pixelColor(2, 2)
+            bg = corner.name()
+        except Exception:
+            pass
+        self.hero_cover.setStyleSheet(f"background:{bg}; border:1px solid {BORDER}; border-radius:8px;")
+        self.hero_cover.setPixmap(pm)
+
     def _switch_hero(self, url: str):
         if not hasattr(self, "hero_cover"):
             return
         self.hero_url = url
-        pm = get_thumb_manager().get_pixmap(url, 460, 230)
+        pm = get_thumb_manager().get_pixmap(url, 460, 230, Qt.AspectRatioMode.KeepAspectRatio)
         if pm:
-            self.hero_cover.setPixmap(pm)
+            self._apply_hero_pixmap(pm)
         else:
+            self.hero_cover.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:8px; color:{MUTED}; font-size:13px;")
             self.hero_cover.setText("  loading cover…  ")
             get_thumb_manager().request(url)
 
     def _on_image_loaded(self, url: str, data: bytes):
         if hasattr(self, "hero_cover") and url == self.hero_url:
-            pm = get_thumb_manager().get_pixmap(url, 460, 230)
+            pm = get_thumb_manager().get_pixmap(url, 460, 230, Qt.AspectRatioMode.KeepAspectRatio)
             if pm:
-                self.hero_cover.setPixmap(pm)
+                self._apply_hero_pixmap(pm)
         if url in self._gallery_btns:
             btn = self._gallery_btns[url]
             pm = get_thumb_manager().get_pixmap(url, 68, 46)
