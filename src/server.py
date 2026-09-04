@@ -282,7 +282,7 @@ def api_image(url: str):
 
                 r.raise_for_status()
                 ctype = r.headers.get("content-type", "").lower()
-                if not any(t in ctype for t in ("image/", "application/octet-stream", "binary/octet-stream")):
+                if not any(t in ctype for t in ("image/", "application/octet-stream", "binary/octet-stream", "media-type")):
                     r.close()
                     raise HTTPException(400, f"Invalid content-type: {ctype}. Only image resources are proxied.")
 

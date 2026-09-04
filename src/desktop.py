@@ -438,7 +438,7 @@ class _ImageDownloadTask(QRunnable):
 
                         if r.status_code == 200:
                             ctype = r.headers.get("content-type", "").lower()
-                            if not any(t in ctype for t in ("image/", "application/octet-stream", "binary/octet-stream")):
+                            if not any(t in ctype for t in ("image/", "application/octet-stream", "binary/octet-stream", "media-type")):
                                 r.close()
                                 break
                             chunks = []
