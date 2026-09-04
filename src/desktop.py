@@ -227,6 +227,10 @@ class LongOp(QThread):
             msg = self.label
             if isinstance(result, dict) and "matched_to_library" in result:
                 msg += f" — {result['matched_to_library']} on disk"
+            elif isinstance(result, dict) and "total_synced" in result:
+                msg += f" — {result['total_synced']} synced ({result.get('pages', 0)} pages)"
+            elif isinstance(result, dict) and "enriched" in result:
+                msg += f" — {result['enriched']}/{result.get('total', result['enriched'])} enriched"
             elif isinstance(result, int):
                 msg += f" — {result}"
             self.done.emit(msg + " ✓", True)
@@ -1260,12 +1264,14 @@ class SyncDialog(QDialog):
         b_q_sync.clicked.connect(lambda: self._run_op(
             lambda ev, cb: store_client.sync_quixel_catalog(cancel_event=ev, progress=cb),
             "Sync Quixel",
+            pre_status="Connecting to Fab API directly (runs in background, no browser needed)…",
             with_progress=True
         ))
         b_q_specs = QPushButton("📐 Quixel Specs")
         b_q_specs.clicked.connect(lambda: self._run_op(
             lambda ev, cb: store_client.enrich_quixel_specs(cancel_event=ev, progress=cb),
             "Quixel scan specs",
+            pre_status="Extracting physical scan specs (texel density, dimensions) directly via API…",
             with_progress=True
         ))
         b_f_gallery = QPushButton("🖼 Fab Galleries")

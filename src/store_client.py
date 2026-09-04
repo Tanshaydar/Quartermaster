@@ -2118,6 +2118,8 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
             encoded_seller = seller.replace(" ", "+")
             url = f"https://www.fab.com/i/listings/search?seller={encoded_seller}&count=50"
             _log(f"Starting Quixel sync for '{seller}'...")
+            if progress:
+                progress(total_added + total_updated, None, f"Querying Fab for '{seller}' (headless API)…")
 
             while url:
                 if cancel_event and cancel_event.is_set():
