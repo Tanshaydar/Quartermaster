@@ -22,12 +22,12 @@ import weakref
 from typing import Any, Callable, Dict, List, Optional
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QEvent, QPoint, QRect, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QFont, QFontMetrics, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QFormLayout, QFrame, QGridLayout, QGroupBox,
     QHBoxLayout, QLabel, QLayout, QLineEdit, QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSystemTrayIcon, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStyle, QStyledItemDelegate, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
 try:
@@ -243,6 +243,13 @@ class ThumbnailManager(QObject):
         self._targets: Dict[str, List[tuple]] = {}
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(6)
+        try:
+            cfg = load_config()
+            self.media_cache_dir = cfg.get("media_cache_dir", "cache/images")
+            self.media_cache_enabled = cfg.get("media_cache_enabled", True)
+        except Exception:
+            self.media_cache_dir = "cache/images"
+            self.media_cache_enabled = True
         self.image_loaded.connect(self._on_image_ready)
         app = QApplication.instance()
         if app:
@@ -345,9 +352,9 @@ class _ImageDownloadTask(QRunnable):
         self.manager = manager
 
     @classmethod
-    def cached_path(cls, cfg, url: str) -> str:
+    def cached_path(cls, cache_dir_or_cfg, url: str) -> str:
         import hashlib
-        d = cfg["media_cache_dir"]
+        d = cache_dir_or_cfg["media_cache_dir"] if isinstance(cache_dir_or_cfg, dict) else str(cache_dir_or_cfg)
         os.makedirs(d, exist_ok=True)
         key = hashlib.sha1(url.encode()).hexdigest()
         ext = ".jpg"
@@ -363,8 +370,9 @@ class _ImageDownloadTask(QRunnable):
         data = None
         qimg = None
         try:
-            cfg = load_config()
-            path = self.cached_path(cfg, self.url) if cfg["media_cache_enabled"] else None
+            cache_dir = getattr(self.manager, "media_cache_dir", "cache/images")
+            cache_enabled = getattr(self.manager, "media_cache_enabled", True)
+            path = self.cached_path(cache_dir, self.url) if cache_enabled else None
             if path and os.path.exists(path):
                 with open(path, "rb") as f:
                     data = f.read()
@@ -377,7 +385,7 @@ class _ImageDownloadTask(QRunnable):
                 if r.status_code == 200 and len(r.content) <= 15 * 1024 * 1024:
                     data = r.content
                     if path:
-                        evict_image_cache(cfg["media_cache_dir"])
+                        evict_image_cache(cache_dir)
                         with open(path, "wb") as f:
                             f.write(data)
             if data:
@@ -570,6 +578,221 @@ def _extract_scan_specs(item: dict) -> dict:
 RE_SPEC_TEASER = re.compile(r"\(([^)]*(?:px/m|m)[^)]*)\)")
 CARD_SIZE_LIST = QSize(0, 60)
 CARD_SIZE_GRID = QSize(196, 216)
+
+
+class AssetDelegate(QStyledItemDelegate):
+    """Zero-widget delegate for buttery-smooth 60+ FPS scrolling in both list and grid modes."""
+
+    def __init__(self, parent=None, get_view_mode: Callable[[], str] = lambda: "list"):
+        super().__init__(parent)
+        self.get_view_mode = get_view_mode
+        self.font_title = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
+        self.fm_title = QFontMetrics(self.font_title)
+        self.font_sub = QFont("Segoe UI", 9)
+        self.fm_sub = QFontMetrics(self.font_sub)
+        self.font_badge = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+        self.fm_badge = QFontMetrics(self.font_badge)
+        self.font_grid_title = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
+
+        # Coalesce thumbnail arrival updates to avoid viewport repaint spamming
+        self._update_timer = QTimer(self)
+        self._update_timer.setSingleShot(True)
+        self._update_timer.setInterval(30)
+        self._update_timer.timeout.connect(self._do_update)
+
+    def _do_update(self):
+        p = self.parent()
+        if p and hasattr(p, "viewport"):
+            p.viewport().update()
+
+    def _schedule_update(self, _pm=None):
+        if not self._update_timer.isActive():
+            self._update_timer.start(30)
+
+    def sizeHint(self, option, index):
+        if self.get_view_mode() == "grid":
+            return CARD_SIZE_GRID
+        return CARD_SIZE_LIST
+
+    def _draw_badge(self, p: QPainter, text: str, color_hex: str, x: int, y: int, h: int = 18) -> int:
+        p.setFont(self.font_badge)
+        w = self.fm_badge.horizontalAdvance(text) + 12
+        r = QRect(x, y, w, h)
+        p.setPen(QPen(QColor(color_hex), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(r, 6, 6)
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
+        return w + 6
+
+    def paint(self, painter: QPainter, option, index):
+        item = index.data(Qt.ItemDataRole.UserRole)
+        if not item:
+            return
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+        r = option.rect
+        if self.get_view_mode() == "grid":
+            self._paint_grid(painter, option, item, r)
+        else:
+            self._paint_list(painter, option, item, r)
+        painter.restore()
+
+    def _paint_list(self, p: QPainter, opt, item: dict, r: QRect):
+        if opt.state & QStyle.StateFlag.State_Selected:
+            p.fillRect(r, QColor("#1c2d42"))
+            p.setPen(QPen(QColor("#388bfd"), 1))
+            p.drawRect(r.adjusted(0, 0, -1, -1))
+        elif opt.state & QStyle.StateFlag.State_MouseOver:
+            p.fillRect(r, QColor("#161b22"))
+
+        tr = QRect(r.x() + 8, r.y() + 6, 64, 48)
+        p.setPen(QPen(QColor(BORDER), 1))
+        p.setBrush(QColor(PANEL))
+        p.drawRoundedRect(tr, 6, 6)
+
+        url = item.get("image_url")
+        pm = get_thumb_manager().get_pixmap(url, 64, 48) if url else None
+        if pm:
+            path = QPainterPath()
+            path.addRoundedRect(tr.x(), tr.y(), 64, 48, 6, 6)
+            p.save()
+            p.setClipPath(path)
+            p.drawPixmap(tr.x(), tr.y(), pm)
+            p.restore()
+            p.setPen(QPen(QColor(BORDER), 1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(tr, 6, 6)
+        else:
+            p.setPen(QColor(MUTED))
+            p.drawText(tr, Qt.AlignmentFlag.AlignCenter, "📦" if item.get("source") == "unity" else "🌿")
+            if url:
+                get_thumb_manager().request_thumbnail(url, 64, 48, self._schedule_update)
+
+        x = r.x() + 82
+        y = r.y() + 8
+        p.setFont(self.font_title)
+        p.setPen(QColor(TEXT))
+        title = item.get("title", "")
+        max_title_w = max(150, r.width() - 300)
+        elided_title = self.fm_title.elidedText(title, Qt.TextElideMode.ElideRight, max_title_w)
+        p.drawText(x, y + 16, elided_title)
+
+        bx = x + self.fm_title.horizontalAdvance(elided_title) + 10
+        by = y + 2
+        if item.get("local_path"):
+            bx += self._draw_badge(p, "⚡ Local", GREEN, bx, by)
+
+        src = item.get("source")
+        if src == "unity":
+            bx += self._draw_badge(p, "Unity", "#7c9c47", bx, by)
+        elif src == "fab":
+            bx += self._draw_badge(p, "Fab", "#388bfd", bx, by)
+        elif src == "quixel":
+            bx += self._draw_badge(p, "Quixel", "#e3b341", bx, by)
+        elif src:
+            bx += self._draw_badge(p, str(src).title(), "#c7c7c7", bx, by)
+
+        y2 = r.y() + 32
+        p.setFont(self.font_sub)
+        p.setPen(QColor(MUTED))
+        pub = item.get("publisher") or "—"
+        elided_pub = self.fm_sub.elidedText(pub, Qt.TextElideMode.ElideRight, 180)
+        p.drawText(x, y2 + 15, elided_pub)
+
+        bx2 = x + self.fm_sub.horizontalAdvance(elided_pub) + 10
+        by2 = y2 + 2
+        cat = item.get("category")
+        if cat:
+            bx2 += self._draw_badge(p, cat, "#a371f7", bx2, by2)
+        if item.get("match"):
+            bx2 += self._draw_badge(p, item["match"], "#58a6ff", bx2, by2)
+
+        spec_text = ""
+        summary = item.get("summary") or ""
+        m_spec = RE_SPEC_TEASER.search(summary)
+        if m_spec:
+            spec_text = m_spec.group(1)
+        elif item.get("size_str"):
+            spec_text = item["size_str"]
+
+        if spec_text:
+            p.setFont(self.font_sub)
+            p.setPen(QColor(MUTED))
+            p.drawText(bx2, y2 + 15, spec_text)
+
+    def _paint_grid(self, p: QPainter, opt, item: dict, r: QRect):
+        card_w = 196
+        card_h = 216
+        card_x = r.x() + (r.width() - card_w) // 2
+        card_y = r.y() + (r.height() - card_h) // 2
+        card_r = QRect(card_x, card_y, card_w, card_h)
+
+        if opt.state & QStyle.StateFlag.State_Selected:
+            p.setPen(QPen(QColor("#388bfd"), 2))
+            p.setBrush(QColor("#1c2d42"))
+        elif opt.state & QStyle.StateFlag.State_MouseOver:
+            p.setPen(QPen(QColor("#58a6ff"), 1))
+            p.setBrush(QColor(CARD))
+        else:
+            p.setPen(QPen(QColor(BORDER), 1))
+            p.setBrush(QColor(CARD))
+        p.drawRoundedRect(card_r, 8, 8)
+
+        tr = QRect(card_r.x(), card_r.y(), card_r.width(), 120)
+        path = QPainterPath()
+        path.addRoundedRect(card_r.x(), card_r.y(), card_r.width(), 120, 8, 8)
+        p.fillPath(path, QColor(PANEL))
+
+        url = item.get("image_url")
+        pm = get_thumb_manager().get_pixmap(url, tr.width(), 120) if url else None
+        if pm:
+            p.save()
+            p.setClipPath(path)
+            p.drawPixmap(tr.x(), tr.y(), pm)
+            p.restore()
+        else:
+            p.setPen(QColor(MUTED))
+            p.drawText(tr, Qt.AlignmentFlag.AlignCenter, "📦" if item.get("source") == "unity" else "🌿")
+            if url:
+                get_thumb_manager().request_thumbnail(url, tr.width(), 120, self._schedule_update)
+
+        bx = card_r.x() + 8
+        by = card_r.y() + 128
+        p.setFont(self.font_grid_title)
+        p.setPen(QColor(TEXT))
+        title = item.get("title", "")
+        p.drawText(QRect(bx, by, card_r.width() - 16, 36), Qt.TextFlag.TextWordWrap, title)
+
+        by2 = card_r.y() + 168
+        p.setFont(self.font_badge)
+        p.setPen(QColor(MUTED))
+        pub = item.get("publisher") or "—"
+        p.drawText(bx, by2 + 13, self.fm_badge.elidedText(pub, Qt.TextElideMode.ElideRight, 110))
+
+        src = item.get("source")
+        if src == "unity":
+            self._draw_badge(p, "Unity", "#7c9c47", card_r.right() - 54, by2)
+        elif src == "fab":
+            self._draw_badge(p, "Fab", "#388bfd", card_r.right() - 44, by2)
+        elif src == "quixel":
+            self._draw_badge(p, "Quixel", "#e3b341", card_r.right() - 54, by2)
+        elif src:
+            self._draw_badge(p, str(src).title(), "#c7c7c7", card_r.right() - 54, by2)
+
+        by3 = card_r.y() + 190
+        lx = bx
+        if item.get("local_path"):
+            lx += self._draw_badge(p, "⚡ Local", GREEN, lx, by3, h=16)
+
+        summary = item.get("summary") or ""
+        m_spec = RE_SPEC_TEASER.search(summary)
+        spec_text = m_spec.group(1) if m_spec else (item.get("size_str") or "")
+        if spec_text:
+            p.setFont(self.font_badge)
+            p.setPen(QColor(MUTED))
+            p.drawText(lx + 4, by3 + 12, spec_text)
 
 
 class AssetCard(QWidget):
@@ -1531,6 +1754,8 @@ class MainWindow(QMainWindow):
         split.setSpacing(0)
 
         self.list = QListWidget()
+        self.list.setItemDelegate(AssetDelegate(self.list, lambda: self.view_mode))
+        self.list.setMouseTracking(True)
         self.list.itemClicked.connect(self._on_item_clicked)
         self.list.currentItemChanged.connect(self._on_current_item_changed)
         self.list.itemDoubleClicked.connect(self._on_double_click)
@@ -1583,7 +1808,7 @@ class MainWindow(QMainWindow):
         self._pending_select_item: Optional[QListWidgetItem] = None
 
         self._rendered_count = 0
-        self._batch_size = 40
+        self._batch_size = 60
         self._is_rendering = False
 
         self.refresh_categories()
@@ -1686,17 +1911,13 @@ class MainWindow(QMainWindow):
 
             self.list.setUpdatesEnabled(False)
             try:
+                is_grid = self.view_mode == "grid"
+                hint = CARD_SIZE_GRID if is_grid else CARD_SIZE_LIST
                 for item in next_items:
                     li = QListWidgetItem(self.list)
                     li.setData(Qt.ItemDataRole.UserRole, item)
                     li.setToolTip(item.get("local_path") or item.get("title", ""))
-                    if self.view_mode == "grid":
-                        card = AssetGridCard(item)
-                        li.setSizeHint(CARD_SIZE_GRID)
-                    else:
-                        card = AssetCard(item)
-                        li.setSizeHint(CARD_SIZE_LIST)
-                    self.list.setItemWidget(li, card)
+                    li.setSizeHint(hint)
             finally:
                 self.list.setUpdatesEnabled(True)
 
