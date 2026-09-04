@@ -1481,7 +1481,7 @@ class DetailPanel(QScrollArea):
         if distinct_gallery:
             g_cont = QWidget()
             g_flow = FlowLayout(g_cont, margin=0, spacing=6)
-            for i, g in enumerate(distinct_gallery[:6]):
+            for i, g in enumerate(distinct_gallery[:24]):
                 gl = QPushButton()
                 gl.setFixedSize(70, 48)
                 gl.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -2110,9 +2110,7 @@ class MainWindow(QMainWindow):
             return
         if self.detail.current and self.detail.current.get("id") == item.get("id"):
             return
-        full = item
-        if "summary" not in item and "gallery_images" not in item:
-            full = get_asset_by_id(item["id"]) or item
+        full = get_asset_by_id(item["id"]) or item
         self.detail.show_asset(full)
 
     def refresh_categories(self):

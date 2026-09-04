@@ -199,12 +199,22 @@ def upsert_asset(asset: Dict[str, Any], db_path: str = DB_PATH):
         store_url=excluded.store_url,
         category=excluded.category,
         render_pipelines=excluded.render_pipelines,
-        tags=excluded.tags,
+        tags=CASE
+            WHEN assets.enriched = 1 AND excluded.enriched = 0 AND assets.tags != '[]' AND assets.tags != '' THEN assets.tags
+            WHEN excluded.tags != '[]' AND excluded.tags != '' THEN excluded.tags
+            ELSE assets.tags
+        END,
         vision_tags=CASE WHEN excluded.vision_tags != '[]' AND excluded.vision_tags != '' THEN excluded.vision_tags ELSE assets.vision_tags END,
         summary=CASE WHEN assets.enriched = 1 AND excluded.enriched = 0 THEN assets.summary ELSE (CASE WHEN excluded.summary != '' THEN excluded.summary ELSE assets.summary END) END,
         usage_notes=CASE WHEN assets.enriched = 1 AND excluded.enriched = 0 THEN assets.usage_notes ELSE (CASE WHEN excluded.usage_notes != '' THEN excluded.usage_notes ELSE assets.usage_notes END) END,
         image_url=CASE WHEN excluded.image_url != '' THEN excluded.image_url ELSE assets.image_url END,
-        gallery_images=CASE WHEN excluded.gallery_images != '[]' THEN excluded.gallery_images ELSE assets.gallery_images END,
+        gallery_images=CASE
+            WHEN (CASE WHEN json_valid(assets.gallery_images) THEN json_array_length(assets.gallery_images) ELSE 0 END) >
+                 (CASE WHEN json_valid(excluded.gallery_images) THEN json_array_length(excluded.gallery_images) ELSE 0 END)
+                THEN assets.gallery_images
+            WHEN excluded.gallery_images != '[]' AND excluded.gallery_images != '' THEN excluded.gallery_images
+            ELSE assets.gallery_images
+        END,
         video_links=CASE WHEN assets.enriched = 1 AND excluded.enriched = 0 THEN assets.video_links ELSE (CASE WHEN excluded.video_links != '[]' THEN excluded.video_links ELSE assets.video_links END) END,
         formats=excluded.formats,
         license=excluded.license,

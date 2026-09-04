@@ -1225,7 +1225,7 @@ def run_fab_deep_media(limit: Optional[int] = None, cancel_event=None, progress=
     return enriched
 
 
-def fetch_library(provider: str, cancel_event=None) -> int:
+def fetch_library(provider: str, cancel_event=None, progress=None) -> int:
     """Open the store library page with the saved session (headed), intercept
     JSON responses, upsert discovered assets. Raises visible errors instead of
     failing silently."""
