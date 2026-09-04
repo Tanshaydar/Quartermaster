@@ -1,5 +1,5 @@
 import unittest
-from src.store_client import _extract_store_url, _extract_media_images, _extract_publisher
+from src.store_client import _extract_store_url, _extract_media_images, _extract_publisher, LOGIN_URLS, LIBRARY_URLS
 from src.config import ALLOWED_IMAGE_DOMAINS
 from src.desktop import _source_icon, _format_engine_name
 from src.mcp_server import _slim
@@ -124,6 +124,12 @@ class TestStoreClientParsers(unittest.TestCase):
         self.assertEqual(_slim({"id": "u1", "title": "U", "source": "unity"})["ownership"], "vault_owned")
         self.assertEqual(_slim({"id": "f1", "title": "F", "source": "fab"})["ownership"], "vault_owned")
         self.assertEqual(_slim({"id": "q1", "title": "Q", "source": "quixel"})["ownership"], "catalog_grant")
+
+    def test_login_and_library_urls(self):
+        self.assertEqual(LOGIN_URLS["cosmos"], "https://cosmos.leartesstudios.com/signin")
+        self.assertEqual(LOGIN_URLS["gumroad"], "https://gumroad.com/login")
+        self.assertIn("https://cosmos.leartesstudios.com/profile/my-assets", LIBRARY_URLS["cosmos"])
+        self.assertIn("https://gumroad.com/library", LIBRARY_URLS["gumroad"])
 
 
 if __name__ == "__main__":

@@ -65,7 +65,7 @@ LOGIN_URLS = {
     "unity": "https://id.unity.com/en/login?redirect_url=https%3A%2F%2Fassetstore.unity.com%2F",
     "fab": "https://www.epicgames.com/id/login",
     "gumroad": "https://gumroad.com/login",
-    "cosmos": "https://cosmos.leartesstudios.com/login",
+    "cosmos": "https://cosmos.leartesstudios.com/signin",
 }
 
 LIBRARY_URLS = {
