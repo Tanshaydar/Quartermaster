@@ -7,16 +7,16 @@
   --bg-card-hover: #22272e;
   --border-subtle: #21262d;
   --border-default: #30363d;
-  --border-active: #4f8cff;
+  --border-active: #e06c3a;
   
   --text-primary: #f0f6fc;
   --text-secondary: #8b949e;
   --text-muted: #6e7681;
   
-  --accent-blue: #4f8cff;
+  --accent-blue: #e06c3a;
   --accent-purple: #a371f7;
   --accent-green: #3fb950;
-  --accent-orange: #d29922;
+  --accent-orange: #d4a34b;
   --accent-red: #f85149;
   
   --unity-color: #81c784;
@@ -25,7 +25,7 @@
   --font-main: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.4);
-  --shadow-glow: 0 0 15px rgba(79, 140, 255, 0.25);
+  --shadow-glow: 0 0 15px rgba(224, 108, 58, 0.25);
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -71,13 +71,10 @@ body {
 .logo-icon {
   width: 34px;
   height: 34px;
-  background: linear-gradient(135deg, #2b5cff, #a371f7);
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  box-shadow: 0 0 12px rgba(43, 92, 255, 0.4);
+  border-radius: 8px;
+  display: block;
+  object-fit: cover;
+  box-shadow: 0 0 12px rgba(224, 108, 58, 0.35);
 }
 .logo-text h2 {
   font-size: 17px;
@@ -136,7 +133,7 @@ body {
   color: var(--text-primary);
 }
 .nav-item.active {
-  background: rgba(79, 140, 255, 0.15);
+  background: rgba(224, 108, 58, 0.15);
   color: var(--accent-blue);
   font-weight: 600;
 }
@@ -233,7 +230,7 @@ body {
   text-align: left;
 }
 .cat-item:hover { background: var(--bg-surface); color: var(--text-primary); }
-.cat-item.active { background: rgba(79, 140, 255, 0.15); color: var(--accent-blue); font-weight: 600; }
+.cat-item.active { background: rgba(224, 108, 58, 0.15); color: var(--accent-blue); font-weight: 600; }
 .cat-count { font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); }
 
 .sidebar-footer {
@@ -311,7 +308,7 @@ body {
 }
 .search-box input:focus {
   border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.18);
+  box-shadow: 0 0 0 3px rgba(224, 108, 58, 0.2);
   background: var(--bg-card);
 }
 .search-box input::placeholder { color: var(--text-muted); }
@@ -569,8 +566,8 @@ body {
 .category-badge {
   font-size: 11px;
   color: var(--accent-blue);
-  background: rgba(79, 140, 255, 0.1);
-  border: 1px solid rgba(79, 140, 255, 0.25);
+  background: rgba(224, 108, 58, 0.12);
+  border: 1px solid rgba(224, 108, 58, 0.3);
   border-radius: 4px;
   padding: 2px 6px;
 }
@@ -979,7 +976,7 @@ body {
   white-space: pre-wrap;
 }
 .btn-copy-ai {
-  background: rgba(79, 140, 255, 0.15);
+  background: rgba(224, 108, 58, 0.15);
   border: 1px solid var(--accent-blue);
   color: var(--accent-blue);
   border-radius: var(--radius-sm);

@@ -42,7 +42,9 @@ except ImportError:
 ICON_PATH = ICON_ICO_PATH
 ICON_PNG = ICON_PNG_PATH
 
-ACCENT = "#4f8cff"
+ACCENT = "#e06c3a"          # Terracotta warm industrial amber from brand icon
+ACCENT_BG = "#261d19"       # Warm dark charcoal for active/selected states
+BRASS = "#d4a34b"           # Brushed brass / warm gold from brand icon
 GREEN = "#3fb950"
 BG = "#0d1117"
 PANEL = "#161b22"
@@ -70,7 +72,7 @@ QPushButton.chip, QPushButton[class="chip"] {{
 }}
 QPushButton.chip:hover, QPushButton[class="chip"]:hover {{ color: {TEXT}; border-color: {ACCENT}; background: {CARD}; }}
 QPushButton.chip:checked, QPushButton[class="chip"]:checked {{
-    background: #1f2a3c; color: {ACCENT}; border: 1px solid {ACCENT}; font-weight: 600;
+    background: {ACCENT_BG}; color: {ACCENT}; border: 1px solid {ACCENT}; font-weight: 600;
 }}
 QPushButton.view_toggle, QPushButton[class="view_toggle"] {{
     background: {PANEL}; border: 1px solid {BORDER}; border-radius: 6px;
@@ -78,7 +80,7 @@ QPushButton.view_toggle, QPushButton[class="view_toggle"] {{
 }}
 QPushButton.view_toggle:hover, QPushButton[class="view_toggle"]:hover {{ color: {TEXT}; border-color: {ACCENT}; }}
 QPushButton.view_toggle:checked, QPushButton[class="view_toggle"]:checked {{
-    background: #1f2a3c; color: {ACCENT}; border: 1px solid {ACCENT}; font-weight: 700;
+    background: {ACCENT_BG}; color: {ACCENT}; border: 1px solid {ACCENT}; font-weight: 700;
 }}
 QListWidget {{
     background: {BG}; border: none; outline: none;
@@ -641,8 +643,8 @@ class AssetDelegate(QStyledItemDelegate):
 
     def _paint_list(self, p: QPainter, opt, item: dict, r: QRect):
         if opt.state & QStyle.StateFlag.State_Selected:
-            p.fillRect(r, QColor("#1c2d42"))
-            p.setPen(QPen(QColor("#388bfd"), 1))
+            p.fillRect(r, QColor(ACCENT_BG))
+            p.setPen(QPen(QColor(ACCENT), 1))
             p.drawRect(r.adjusted(0, 0, -1, -1))
         elif opt.state & QStyle.StateFlag.State_MouseOver:
             p.fillRect(r, QColor("#161b22"))
@@ -730,10 +732,10 @@ class AssetDelegate(QStyledItemDelegate):
         card_r = QRect(card_x, card_y, card_w, card_h)
 
         if opt.state & QStyle.StateFlag.State_Selected:
-            p.setPen(QPen(QColor("#388bfd"), 2))
-            p.setBrush(QColor("#1c2d42"))
+            p.setPen(QPen(QColor(ACCENT), 2))
+            p.setBrush(QColor(ACCENT_BG))
         elif opt.state & QStyle.StateFlag.State_MouseOver:
-            p.setPen(QPen(QColor("#58a6ff"), 1))
+            p.setPen(QPen(QColor(BRASS), 1))
             p.setBrush(QColor(CARD))
         else:
             p.setPen(QPen(QColor(BORDER), 1))
@@ -1624,9 +1626,16 @@ class MainWindow(QMainWindow):
         row1 = QHBoxLayout()
         row1.setSpacing(10)
 
+        logo_icon = QLabel()
+        logo_icon.setFixedSize(26, 26)
+        pm_icon = QPixmap(ICON_PNG)
+        if not pm_icon.isNull():
+            logo_icon.setPixmap(pm_icon.scaled(26, 26, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        logo_icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
         logo = QLabel("Quarter<span style='color:%s'>master</span>" % ACCENT)
         logo.setTextFormat(Qt.TextFormat.RichText)
-        logo.setStyleSheet("font-size:19px; font-weight:700;")
+        logo.setStyleSheet("font-size:18px; font-weight:700;")
 
         self.search = QLineEdit()
         self.search.setClearButtonEnabled(True)
@@ -1677,6 +1686,7 @@ class MainWindow(QMainWindow):
         self.stats_label = QLabel("")
         self.stats_label.setStyleSheet(f"color:{MUTED}; font-size:12px;")
 
+        row1.addWidget(logo_icon)
         row1.addWidget(logo)
         row1.addWidget(self.search, 1)
         row1.addWidget(self.btn_view_list)
