@@ -19,9 +19,9 @@ This project started because I wanted to prototype a dam.
 
 Nothing serious — a short demo, maybe more if it worked out. Before building anything, I wanted to see what I already owned that could speed it up. So I searched my library for "dam": nothing came back. Of course nothing came back — no asset is *called* a dam. But spread across four packages I already owned were curved concrete meshes, a water system, some rocky terrain. Everything the dam needed. I'd had most of it for years and never once connected the pieces.
 
-That's what ~1,500 assets across two stores does to you. Almost all of it from bundles and sales, none of it remembered. And it's not just me — no AI assistant knows either. Ask one for help and it either builds everything from scratch or sends you shopping, while hundreds of dollars of exactly-the-right-thing sits on your disk.
+That's what ~1,500 assets across two stores did to me, and the library has only grown since. Almost all of it from bundles and sales, none of it remembered. And it's not just me — no AI assistant knows either. Ask one for help and it either builds everything from scratch or sends you shopping, while hundreds of dollars of exactly-the-right-thing sits on your disk.
 
-Quartermaster indexes your entire Unity Asset Store and Fab library locally, and serves it to your coding agent over MCP. It's the tool I wished existed that day: ask about a dam, get told you already own curved concrete meshes.
+Quartermaster indexes everything you own across the **Unity Asset Store**, **Fab**, **Quixel Megascans**, **Gumroad** and **Leartes Cosmos** — locally, on your machine — and serves it to your coding agent over MCP. It's the tool I wished existed that day: ask about a dam, get told you already own curved concrete meshes.
 
 ```
 you    →  "I want to build a dam — what do I have to work with?"
@@ -38,6 +38,21 @@ Every result is something you own or can claim free — nothing is invented.
 *Typing a description, not a name — none of those results share a word with the query.*
 
 Why *Quartermaster*? A quartermaster's job was never remembering what's in stores — it's making sure you're equipped when it's time to move. That's nearer the real problem than forgetting is. I hadn't lost anything; I knew I owned *stuff*. What I couldn't do was get from "I want to prototype a dam" to "open these four packages" without an hour of digging first — and *maybe more if it worked out* doesn't survive an hour of digging. Ideas that arrive that way don't get rejected. They just quietly don't happen, and you never find out whether they would have.
+
+
+## What it indexes
+
+| Source | What comes in | How |
+| :--- | :--- | :--- |
+| **Unity Asset Store** | Owned packages, descriptions, gallery art | Authenticated harvest |
+| **Fab** (Epic) | Owned Unreal and Unity listings | Authenticated harvest |
+| **Quixel Megascans / Megaplants** | The catalog, with texel density, scan area and map lists | Public catalog sync |
+| **Gumroad** | Owned products | Authenticated harvest |
+| **Leartes Cosmos** | Owned and claimable Cosmos inventory | Authenticated harvest |
+
+Everything lands in one SQLite table behind one search surface, so a query crosses
+all of them at once. Nothing is engine-scoped: a Megascans surface and a Unity
+shader come back from the same question if they both answer it.
 
 
 ## The part nobody tells you
@@ -59,6 +74,34 @@ Two hard-won rules baked into the design, if you ever hack on this yourself:
 
 - Browsers must close *gracefully* (`taskkill` without `/F`). An abrupt kill loses Unity's device-trust cookie and you'll get MFA-challenged on every future session.
 - Never run a library fetch headless. Headless triggers Unity's risk system even with valid cookies.
+
+
+## Quixel Megascans, and why your Fab library looks short
+
+Your Fab library view and the Megascans catalog are not the same list, and there
+is no export button to reconcile them. If you claimed Megascans and later went
+looking for them in Fab, the count you see is not the count you expected — which
+leaves you scrolling and searching by hand for something you already have rights to.
+
+Quartermaster syncs the Quixel Megascans and Megaplants catalog directly and files
+it next to everything else you own, tagged by status:
+
+- **`vault_owned`** — in your library
+- **`catalog_grant`** — claimable free under the Epic Content License, not yet acquired
+
+Both are searchable, and every result says which it is, so an agent can tell "you
+own this" from "you can have this for nothing" without guessing.
+
+Megascans rows also carry their physical specs where the listing publishes them —
+**texel density**, **scan area**, and the **map list** (basecolor, normal,
+displacement, cavity, AO, roughness…). That is the difference between an agent
+telling you it found a rock and an agent telling you it found a 1×1 m scan at
+8192 px/m with displacement — which is the part that decides whether it's usable.
+
+```bash
+python -m src.store_client sync-quixel      # catalog
+python -m src.store_client enrich-quixel    # texel density, scan area, maps
+```
 
 
 ## What you get
@@ -102,6 +145,8 @@ as they always do. Close it when you're done and the session persists locally.
 ```bash
 python -m src.store_client login unity
 python -m src.store_client login fab
+python -m src.store_client login gumroad     # optional
+python -m src.store_client login cosmos      # optional — Leartes Cosmos
 ```
 
 **2. Harvest and enrich.** Long-running, resumable, safe to re-run — each picks up where it stopped.
@@ -109,7 +154,11 @@ python -m src.store_client login fab
 ```bash
 python -m src.store_client fetch unity
 python -m src.store_client fetch fab
+python -m src.store_client fetch gumroad     # if you signed in above
+python -m src.store_client fetch cosmos      # if you signed in above
+python -m src.store_client sync-quixel       # Megascans/Megaplants catalog — no login needed
 python -m src.store_client enrich            # descriptions and cover art, politely batched
+python -m src.store_client enrich-quixel     # Megascans scan specs
 python -m src.store_client fab-deep-media    # Fab only: plain HTTP is 403'd, galleries need the authed browser
 ```
 
@@ -193,7 +242,7 @@ Claude Desktop reads `%APPDATA%/Claude/claude_desktop_config.json`, Cursor `~/.c
 | `audit_project(project_dir)` | Engine, version, render pipeline of a target project. |
 | `import_asset_to_project(asset_id, project_dir)` | Unpack a local package into `Assets/`. |
 | `list_asset_categories()` | Category breakdown and counts. |
-| `get_vault_stats()` | Totals by engine and category, local vs cloud. |
+| `get_vault_stats()` | Totals by source and category, local vs cloud. |
 
 Two files let you teach Quartermaster your own vocabulary, no code changes needed:
 
@@ -238,7 +287,7 @@ Optional keys in `config.json` (created on first run):
 
 ## Honest limitations
 
-- **Windows-first.** Cache scanning assumes Windows paths. MCP search works anywhere; local-import detection doesn't.
+- **Windows-first, Linux-capable.** Windows is the tested platform, and the `Win+Alt+V` hotkey is Windows-only. A `linux-x64` build ships and disk scanning knows the Linux and macOS cache roots, but they see far less mileage than the Windows paths do. There is no macOS build.
 - **One machine, one user.** No sync, no server mode. Deliberate.
 - **Harvesting is scraping.** Unity and Fab change their internals whenever they feel like it, and have — the chunk sizes, endpoints, and GraphQL shapes in here are correct as of the day I shipped, not forever. When a fetch comes back empty, `data/store_harvest.log` records every JSON response seen; that's where to start digging.
 - **Taxonomy is heuristic.** Categories are inferred via a multimodal blend of word-boundary tokens, store tags, and zero-shot CLIP visual concept mining from screenshots. Highly stylized titles without screenshots default to `Tools & Utilities`, though semantic vector search and hybrid search always cover the entire vault regardless of assigned category. Tuning the visual vocabulary is documented in [`docs/concepts.md`](docs/concepts.md).
@@ -274,8 +323,9 @@ Quartermaster reads **your own account, from your own machine, in a browser you 
 no credentials, ships nothing to any server of mine, and has no telemetry — the session lives in a local browser
 profile and the library in a local SQLite file. There is no shared backend to leak.
 
-It is not affiliated with, endorsed by, or connected to Unity Technologies or Epic Games. Unity, the Unity Asset
-Store, Fab and Unreal Engine are trademarks of their respective owners. Automating access to any service is your
+It is not affiliated with, endorsed by, or connected to Unity Technologies, Epic Games, Gumroad or Leartes Studios.
+Unity, the Unity Asset Store, Fab, Unreal Engine, Quixel, Megascans, Gumroad, Leartes and Cosmos are trademarks of
+their respective owners. Automating access to any service is your
 call to make against that service's terms, and this tool doesn't make it for you.
 
 

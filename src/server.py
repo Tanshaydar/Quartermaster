@@ -293,7 +293,7 @@ def api_image(url: str):
                     total_bytes += len(chunk)
                     if total_bytes > MAX_IMAGE_BYTES:
                         r.close()
-                        raise HTTPException(413, "Image exceeds maximum allowed size (15MB).")
+                        raise HTTPException(413, f"Image exceeds maximum allowed size ({MAX_IMAGE_BYTES // (1024 * 1024)}MB).")
                     chunks.append(chunk)
                 r.close()
                 content = b"".join(chunks)

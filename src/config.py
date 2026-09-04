@@ -71,7 +71,7 @@ ALLOWED_IMAGE_DOMAINS = (
     "cosmos.leartesstudios.com", "cdn.cosmos.leartesstudios.com",
 )
 
-MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 15MB cap
+MAX_IMAGE_BYTES = 35 * 1024 * 1024  # 35MB cap (supports uncompressed 4K studio PNGs)
 
 
 def is_safe_image_url(target_url: str) -> bool:
