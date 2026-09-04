@@ -13,28 +13,29 @@ Backend modules are shared with the MCP server; nothing else changes.
 """
 import json
 import os
+import re
 import sys
 import threading
 import time
 import webbrowser
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QEvent, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QEvent, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
-    QScrollArea, QSizePolicy, QSystemTrayIcon, QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QComboBox, QDialog, QFormLayout, QFrame, QGridLayout, QGroupBox,
+    QHBoxLayout, QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
+    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
 try:
     from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from .config import load_config, rotate_log_if_large, evict_image_cache, __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH
+    from .config import load_config, save_config_partial, rotate_log_if_large, evict_image_cache, __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH
     from . import store_client, local_scan, vision, semantic
 except ImportError:
     from db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from config import load_config, rotate_log_if_large, evict_image_cache, __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH
+    from config import load_config, save_config_partial, rotate_log_if_large, evict_image_cache, __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH
     import store_client, local_scan, vision, semantic
 
 ICON_PATH = ICON_ICO_PATH
@@ -59,18 +60,35 @@ QLineEdit, QComboBox {{
 QLineEdit:focus {{ border-color: {ACCENT}; }}
 QPushButton {{
     background: {CARD}; border: 1px solid {BORDER}; border-radius: 6px;
-    padding: 7px 14px; color: {TEXT};
+    padding: 7px 14px; color: {TEXT}; font-weight: 500;
 }}
 QPushButton:hover {{ border-color: {ACCENT}; }}
+QPushButton.chip, QPushButton[class="chip"] {{
+    background: {PANEL}; border: 1px solid {BORDER}; border-radius: 13px;
+    padding: 4px 12px; color: {MUTED}; font-size: 12px; font-weight: 500;
+}}
+QPushButton.chip:hover, QPushButton[class="chip"]:hover {{ color: {TEXT}; border-color: {ACCENT}; background: {CARD}; }}
+QPushButton.chip:checked, QPushButton[class="chip"]:checked {{
+    background: #1f2a3c; color: {ACCENT}; border: 1px solid {ACCENT}; font-weight: 600;
+}}
+QPushButton.view_toggle, QPushButton[class="view_toggle"] {{
+    background: {PANEL}; border: 1px solid {BORDER}; border-radius: 6px;
+    padding: 5px 10px; color: {MUTED}; font-size: 13px; font-weight: 600;
+}}
+QPushButton.view_toggle:hover, QPushButton[class="view_toggle"]:hover {{ color: {TEXT}; border-color: {ACCENT}; }}
+QPushButton.view_toggle:checked, QPushButton[class="view_toggle"]:checked {{
+    background: #1f2a3c; color: {ACCENT}; border: 1px solid {ACCENT}; font-weight: 700;
+}}
 QListWidget {{
     background: {BG}; border: none; outline: none;
 }}
-QListWidget::item {{ margin: 4px 8px; border-radius: 8px; }}
+QListWidget::item {{ margin: 3px 6px; border-radius: 8px; }}
 QListWidget::item:selected {{ background: {CARD}; border: 1px solid {ACCENT}; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; min-height: 30px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
-a {{ color: {ACCENT}; }}
+a {{ color: {ACCENT}; text-decoration: none; }}
+a:hover {{ text-decoration: underline; }}
 """
 
 
@@ -83,7 +101,7 @@ class SearchWorker(QThread):
     results_ready = Signal(int, list, str)
 
     def __init__(self, query_id: int, query: str, eng: Optional[str], pipe: Optional[str],
-                 cat: Optional[str], sort_mode: str, parent=None):
+                 cat: Optional[str], sort_mode: str, local_only: bool = False, parent=None):
         super().__init__(parent)
         self.query_id = query_id
         self.query = query
@@ -91,6 +109,7 @@ class SearchWorker(QThread):
         self.pipe = pipe
         self.cat = cat
         self.sort_mode = sort_mode
+        self.local_only = local_only
 
     def run(self):
         try:
@@ -101,6 +120,8 @@ class SearchWorker(QThread):
 
                 filtered = []
                 for item in items:
+                    if self.local_only and not item.get("local_path"):
+                        continue
                     if self.eng and item.get("source") != self.eng:
                         continue
                     if self.cat and item.get("category") != self.cat:
@@ -126,11 +147,15 @@ class SearchWorker(QThread):
                 db_sort = self.sort_mode if self.sort_mode != "relevance" else "title_asc"
                 items = search_assets(query=None, source=self.eng, pipeline=self.pipe,
                                       category=self.cat, sort_by=db_sort, limit=5000)
+                if self.local_only:
+                    items = [it for it in items if it.get("local_path")]
                 self.results_ready.emit(self.query_id, items, "browse")
         except Exception:
             db_sort = self.sort_mode if self.sort_mode != "relevance" else "title_asc"
             items = search_assets(query=self.query or None, source=self.eng, pipeline=self.pipe,
                                   category=self.cat, sort_by=db_sort, limit=5000)
+            if self.local_only:
+                items = [it for it in items if it.get("local_path")]
             self.results_ready.emit(self.query_id, items, "keyword")
 
 
@@ -292,69 +317,497 @@ class WinHotkeyFilter(QAbstractNativeEventFilter):
 # Widgets
 # ---------------------------------------------------------------------------
 
+_THUMB_CACHE: Dict[str, QPixmap] = {}
+
+
+def _apply_thumb_safely(label: QLabel, url: str, data: bytes, target_w: int, target_h: int):
+    try:
+        try:
+            import shiboken6
+            if not shiboken6.isValid(label):
+                return
+        except ImportError:
+            pass
+        pm = QPixmap()
+        if pm.loadFromData(data):
+            scaled = pm.scaled(target_w, target_h,
+                               Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                               Qt.TransformationMode.SmoothTransformation)
+            _THUMB_CACHE[url] = scaled
+            label.setPixmap(scaled)
+    except Exception:
+        pass
+
+
 def badge(text: str, color: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setStyleSheet(f"color:{color}; border:1px solid {color}; border-radius:8px;"
-                      f"padding:1px 7px; font-size:11px;")
+                      f"padding:1px 7px; font-size:11px; font-weight:600;")
     lbl.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
     return lbl
 
 
+def _extract_scan_specs(item: dict) -> dict:
+    usage = item.get("usage_notes") or ""
+    summary = item.get("summary") or ""
+    text = f"{usage} {summary}"
+    specs = {}
+    m_td = re.search(r"Texel\s*density:?\s*([0-9]+\s*px/m)", text, re.I)
+    if m_td:
+        specs["texel_density"] = m_td.group(1).strip()
+    m_sa = re.search(r"(?:Scan\s*area|Physical\s*size):?\s*([0-9xX\.\s\w]+?)(?:·|\n|\)|$)", text, re.I)
+    if m_sa and re.search(r"[0-9]", m_sa.group(1)):
+        specs["scan_area"] = m_sa.group(1).strip()
+    m_ds = re.search(r"Displacement\s*scale:?\s*([0-9\.]+)", text, re.I)
+    if m_ds:
+        specs["displacement_scale"] = m_ds.group(1).strip()
+    m_maps = re.search(r"Maps:?\s*([^·\n\r]+)", text, re.I)
+    if m_maps:
+        raw_m = re.sub(r"<[^>]+>", " ", m_maps.group(1))
+        raw_m = re.sub(r"\([^)]*\)", " ", raw_m)
+        tokens = [w.strip() for w in re.split(r"[\s,]+", raw_m) if w.strip()]
+        specs["maps"] = tokens
+    return specs
+
+
 class AssetCard(QWidget):
-    """Compact list card: title / publisher+engine / category+local badges."""
+    """Compact list card: 64x48 rounded thumbnail + title / badges / specs teaser."""
 
     def __init__(self, item: dict):
         super().__init__()
         self.asset = item
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(4)
+        main_lay = QHBoxLayout(self)
+        main_lay.setContentsMargins(8, 6, 8, 6)
+        main_lay.setSpacing(12)
 
-        title = QLabel(item["title"])
-        title.setStyleSheet(f"font-weight:600; font-size:14px; color:{TEXT};")
-        title.setWordWrap(True)
-
-        meta = QHBoxLayout()
-        pub = QLabel(item.get("publisher") or "")
-        pub.setStyleSheet(f"color:{MUTED}; font-size:12px;")
-        if item.get("source") == "unity":
-            eng = badge("Unity (Owned)", "#7c9c47")
-        elif item.get("source") == "fab":
-            eng = badge("Fab (Owned)", "#388bfd")
-        elif item.get("source") == "quixel":
-            eng = badge("Quixel (Catalog)", "#e3b341")
+        # Thumbnail
+        self.thumb = QLabel()
+        self.thumb.setFixedSize(64, 48)
+        self.thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.thumb.setStyleSheet(f"background:{PANEL}; border:1px solid {BORDER}; border-radius:6px; font-size:16px; color:{MUTED};")
+        img_url = (item.get("image_url") or "").strip()
+        if img_url:
+            if img_url in _THUMB_CACHE:
+                self.thumb.setPixmap(_THUMB_CACHE[img_url])
+            else:
+                self.thumb.setText("🖼")
+                loader = ImageLoader(img_url, f"thumb_{item['id']}")
+                loader.signals.fetched.connect(
+                    lambda _k, b, l=self.thumb, u=img_url: _apply_thumb_safely(l, u, b, 64, 48))
+                QThreadPool.globalInstance().start(loader)
         else:
-            eng = badge(str(item.get("source", "")).title(), "#c7c7c7")
-        meta.addWidget(pub); meta.addStretch(); meta.addWidget(eng)
+            self.thumb.setText("📦" if item.get("source") == "unity" else "🌿")
 
-        row2 = QHBoxLayout()
-        cat = badge(item.get("category", ""), "#a371f7")
-        row2.addWidget(cat)
-        if item.get("match"):
-            m_badge = badge(item["match"], "#58a6ff")
-            row2.addWidget(m_badge)
+        lay = QVBoxLayout()
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(3)
+
+        row1 = QHBoxLayout()
+        row1.setSpacing(6)
+        title = QLabel(item["title"])
+        title.setStyleSheet(f"font-weight:600; font-size:13px; color:{TEXT};")
+        title.setWordWrap(False)
+        row1.addWidget(title, 1)
+
         if item.get("local_path"):
             loc = badge("⚡ Local", GREEN)
             loc.setToolTip(item["local_path"])
-            row2.addWidget(loc)
-        if item.get("size_str"):
-            sz = QLabel(item["size_str"])
+            row1.addWidget(loc)
+
+        if item.get("source") == "unity":
+            eng = badge("Unity", "#7c9c47")
+        elif item.get("source") == "fab":
+            eng = badge("Fab", "#388bfd")
+        elif item.get("source") == "quixel":
+            eng = badge("Quixel", "#e3b341")
+        else:
+            eng = badge(str(item.get("source", "")).title(), "#c7c7c7")
+        row1.addWidget(eng)
+
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
+        pub = QLabel(item.get("publisher") or "")
+        pub.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+        row2.addWidget(pub)
+
+        cat = badge(item.get("category", ""), "#a371f7")
+        row2.addWidget(cat)
+
+        if item.get("match"):
+            m_badge = badge(item["match"], "#58a6ff")
+            row2.addWidget(m_badge)
+
+        spec_text = ""
+        summary = item.get("summary") or ""
+        m_spec = re.search(r"\(([^)]*(?:px/m|m)[^)]*)\)", summary)
+        if m_spec:
+            spec_text = m_spec.group(1)
+        elif item.get("size_str"):
+            spec_text = item["size_str"]
+
+        if spec_text:
+            sz = QLabel(spec_text)
             sz.setStyleSheet(f"color:{MUTED}; font-size:11px;")
             row2.addWidget(sz)
+
         row2.addStretch()
 
-        for w in (title, *meta.children(), *row2.children()):
-            if isinstance(w, QLabel):
-                w.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-                w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        for w in (title, pub, self.thumb):
+            w.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+            w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
-        lay.addWidget(title)
-        lay.addLayout(meta)
+        lay.addLayout(row1)
         lay.addLayout(row2)
+
+        main_lay.addWidget(self.thumb)
+        main_lay.addLayout(lay, 1)
+
+
+class AssetGridCard(QWidget):
+    """Gallery card: 196x216px with 16:9 thumbnail preview, title, publisher, engine, and badges."""
+
+    def __init__(self, item: dict):
+        super().__init__()
+        self.asset = item
+        self.setFixedSize(196, 216)
+        self.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:8px;")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        # Thumbnail
+        self.thumb = QLabel()
+        self.thumb.setFixedSize(196, 120)
+        self.thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.thumb.setStyleSheet(f"background:{PANEL}; border-top-left-radius:7px; border-top-right-radius:7px; font-size:24px; color:{MUTED};")
+        img_url = (item.get("image_url") or "").strip()
+        if img_url:
+            if img_url in _THUMB_CACHE:
+                self.thumb.setPixmap(_THUMB_CACHE[img_url])
+            else:
+                self.thumb.setText("🖼")
+                loader = ImageLoader(img_url, f"gthumb_{item['id']}")
+                loader.signals.fetched.connect(
+                    lambda _k, b, l=self.thumb, u=img_url: _apply_thumb_safely(l, u, b, 196, 120))
+                QThreadPool.globalInstance().start(loader)
+        else:
+            self.thumb.setText("📦" if item.get("source") == "unity" else "🌿")
+        lay.addWidget(self.thumb)
+
+        # Body
+        body = QWidget()
+        body.setStyleSheet("background: transparent; border: none;")
+        blay = QVBoxLayout(body)
+        blay.setContentsMargins(8, 6, 8, 8)
+        blay.setSpacing(3)
+
+        title = QLabel(item["title"])
+        title.setStyleSheet(f"font-weight:600; font-size:12px; color:{TEXT}; line-height: 1.2;")
+        title.setWordWrap(True)
+        title.setFixedHeight(32)
+        blay.addWidget(title)
+
+        meta = QHBoxLayout()
+        meta.setSpacing(4)
+        pub = QLabel(item.get("publisher") or "")
+        pub.setStyleSheet(f"color:{MUTED}; font-size:11px;")
+        meta.addWidget(pub, 1)
+
+        if item.get("source") == "unity":
+            eng = badge("Unity", "#7c9c47")
+        elif item.get("source") == "fab":
+            eng = badge("Fab", "#388bfd")
+        elif item.get("source") == "quixel":
+            eng = badge("Quixel", "#e3b341")
+        else:
+            eng = badge(str(item.get("source", "")).title(), "#c7c7c7")
+        meta.addWidget(eng)
+        blay.addLayout(meta)
+
+        row3 = QHBoxLayout()
+        row3.setSpacing(4)
+        if item.get("local_path"):
+            loc = badge("⚡ Local", GREEN)
+            row3.addWidget(loc)
+
+        summary = item.get("summary") or ""
+        m_spec = re.search(r"\(([^)]*(?:px/m|m)[^)]*)\)", summary)
+        if m_spec:
+            spec_lbl = QLabel(m_spec.group(1))
+            spec_lbl.setStyleSheet(f"color:{MUTED}; font-size:10px;")
+            row3.addWidget(spec_lbl)
+        row3.addStretch()
+        blay.addLayout(row3)
+
+        lay.addWidget(body)
+
+        for w in (title, pub, self.thumb):
+            w.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+            w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+
+class QuickLookDialog(QDialog):
+    """Spacebar Quick-Look modal preview."""
+
+    def __init__(self, item: dict, parent=None):
+        super().__init__(parent)
+        self.item = item
+        self.setWindowTitle(item.get("title", "Asset Preview"))
+        self.resize(760, 560)
+        self.setStyleSheet(f"""
+            QDialog {{ background: {PANEL}; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 10px; }}
+            QLabel {{ background: transparent; }}
+        """)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 16, 16, 16)
+        lay.setSpacing(10)
+
+        # Image preview
+        self.img_label = QLabel("Loading preview…")
+        self.img_label.setFixedHeight(360)
+        self.img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.img_label.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:8px;")
+        lay.addWidget(self.img_label)
+
+        img_url = (item.get("image_url") or "").strip()
+        if img_url:
+            loader = ImageLoader(img_url, f"ql_{item['id']}")
+            loader.signals.fetched.connect(lambda _k, b: self._set_img(b))
+            QThreadPool.globalInstance().start(loader)
+        else:
+            self.img_label.setText("No preview image available")
+
+        title = QLabel(f"<h2 style='margin:0; color:{TEXT}'>{item['title']}</h2>")
+        title.setWordWrap(True)
+        lay.addWidget(title)
+
+        eng = "Unity Asset Store" if item.get("source") == "unity" else ("Fab (Unreal)" if item.get("source") == "fab" else "Quixel Megascans")
+        sub = f"{item.get('publisher') or '—'} · {eng} · {item.get('category', '')}"
+        if item.get("size_str"):
+            sub += f" · {item['size_str']}"
+        sub_lbl = QLabel(sub)
+        sub_lbl.setStyleSheet(f"color:{MUTED}; font-size:12px;")
+        lay.addWidget(sub_lbl)
+
+        # Specs
+        specs = _extract_scan_specs(item)
+        if specs.get("scan_area") or specs.get("texel_density"):
+            spec_parts = []
+            if specs.get("scan_area"):
+                spec_parts.append(f"Scan area: {specs['scan_area']}")
+            if specs.get("texel_density"):
+                spec_parts.append(f"Texel density: {specs['texel_density']}")
+            if specs.get("displacement_scale"):
+                spec_parts.append(f"Displacement scale: {specs['displacement_scale']}")
+            sl = QLabel(" · ".join(spec_parts))
+            sl.setStyleSheet(f"color:{ACCENT}; font-size:12px; font-weight:600;")
+            lay.addWidget(sl)
+
+        # Buttons
+        btns = QHBoxLayout()
+        btns.setSpacing(8)
+        local = item.get("local_path")
+        if local and os.path.exists(local):
+            rev_btn = QPushButton("⚡ Reveal in Explorer")
+            rev_btn.clicked.connect(lambda: self._reveal_local(local))
+            btns.addWidget(rev_btn)
+
+        if item.get("store_url"):
+            store_btn = QPushButton("↗ Open in Store")
+            store_btn.clicked.connect(lambda: webbrowser.open(item["store_url"]))
+            btns.addWidget(store_btn)
+
+        btns.addStretch()
+        close_btn = QPushButton("Close (Esc)")
+        close_btn.clicked.connect(self.accept)
+        btns.addWidget(close_btn)
+        lay.addLayout(btns)
+
+    def _set_img(self, data: bytes):
+        try:
+            import shiboken6
+            if not shiboken6.isValid(self.img_label):
+                return
+        except ImportError:
+            pass
+        try:
+            pm = QPixmap()
+            if pm.loadFromData(data):
+                scaled = pm.scaled(self.img_label.width(), self.img_label.height(),
+                                   Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
+                self.img_label.setPixmap(scaled)
+        except Exception:
+            pass
+
+    def _reveal_local(self, path: str):
+        target_dir = os.path.dirname(path) if os.path.isfile(path) else path
+        if sys.platform == "win32":
+            os.startfile(target_dir)
+        elif sys.platform == "darwin":
+            import subprocess
+            subprocess.Popen(["open", target_dir])
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", target_dir])
+
+    def keyPressEvent(self, ev):
+        if ev.key() in (Qt.Key.Key_Space, Qt.Key.Key_Escape):
+            self.accept()
+            return
+        super().keyPressEvent(ev)
+
+
+class SyncDialog(QDialog):
+    """Clean, structured modal for library sync, logins, and AI index maintenance."""
+
+    def __init__(self, main_win, parent=None):
+        super().__init__(parent or main_win)
+        self.main_win = main_win
+        self.setWindowTitle("Library Sync & Maintenance")
+        self.resize(680, 500)
+        self.setStyleSheet(f"""
+            QDialog {{ background: {BG}; color: {TEXT}; }}
+            QGroupBox {{
+                background: {PANEL};
+                border: 1px solid {BORDER};
+                border-radius: 8px;
+                margin-top: 14px;
+                padding-top: 14px;
+                font-weight: 600;
+                font-size: 13px;
+                color: {ACCENT};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 6px;
+            }}
+        """)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(12)
+
+        head = QLabel("<h2 style='margin:0'>Library Sync & Maintenance</h2>")
+        sub = QLabel("Manage your store sessions, download caches, and AI search indexes.")
+        sub.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        lay.addWidget(head)
+        lay.addWidget(sub)
+
+        # 1. Unity Section
+        u_box = QGroupBox("📦 Unity Asset Store")
+        u_lay = QVBoxLayout(u_box)
+        self.u_status = QLabel("Checking status…")
+        self.u_status.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        u_btns = QHBoxLayout()
+        b_u_login = QPushButton("🔐 Sign in Unity")
+        b_u_login.clicked.connect(lambda: self._run_op(
+            lambda ev: store_client.interactive_login("unity", cancel_event=ev),
+            "Unity login",
+            pre_status="Sign into Unity Asset Store in browser window, then close window when done."
+        ))
+        b_u_fetch = QPushButton("⟳ Fetch Library")
+        b_u_fetch.clicked.connect(lambda: self.main_win._fetch_op("unity"))
+        b_u_scan = QPushButton("⚡ Scan Cache")
+        b_u_scan.clicked.connect(lambda: self._run_op(
+            lambda ev: local_scan.scan_all(), "Unity cache scan"
+        ))
+        for b in (b_u_login, b_u_fetch, b_u_scan):
+            u_btns.addWidget(b)
+        u_btns.addStretch()
+        u_lay.addWidget(self.u_status)
+        u_lay.addLayout(u_btns)
+        lay.addWidget(u_box)
+
+        # 2. Fab & Quixel Section
+        f_box = QGroupBox("🌿 Epic Games Fab & Quixel Megascans")
+        f_lay = QVBoxLayout(f_box)
+        self.f_status = QLabel("Checking status…")
+        self.f_status.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        f_btns = QHBoxLayout()
+        b_f_login = QPushButton("🔐 Sign in Fab")
+        b_f_login.clicked.connect(lambda: self._run_op(
+            lambda ev: store_client.interactive_login("fab", cancel_event=ev),
+            "Fab login",
+            pre_status="Complete Epic login in browser, then close window when done."
+        ))
+        b_f_fetch = QPushButton("⟳ Fetch Fab")
+        b_f_fetch.clicked.connect(lambda: self.main_win._fetch_op("fab"))
+        b_q_sync = QPushButton("🌿 Sync Quixel")
+        b_q_sync.clicked.connect(lambda: self._run_op(
+            lambda ev, cb: store_client.sync_quixel_catalog(cancel_event=ev, progress=cb),
+            "Sync Quixel",
+            with_progress=True
+        ))
+        b_q_specs = QPushButton("📐 Quixel Specs")
+        b_q_specs.clicked.connect(lambda: self._run_op(
+            lambda ev, cb: store_client.enrich_quixel_specs(cancel_event=ev, progress=cb),
+            "Quixel scan specs",
+            with_progress=True
+        ))
+        for b in (b_f_login, b_f_fetch, b_q_sync, b_q_specs):
+            f_btns.addWidget(b)
+        f_btns.addStretch()
+        f_lay.addWidget(self.f_status)
+        f_lay.addLayout(f_btns)
+        lay.addWidget(f_box)
+
+        # 3. AI & Indexing Section
+        ai_box = QGroupBox("👁 Local Storage & AI Indexing")
+        ai_lay = QVBoxLayout(ai_box)
+        self.ai_status = QLabel("Checking status…")
+        self.ai_status.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        ai_btns = QHBoxLayout()
+        b_ai_scan = QPushButton("⚡ Full Disk Scan")
+        b_ai_scan.clicked.connect(lambda: self._run_op(
+            lambda ev: local_scan.scan_all(), "Full disk scan"
+        ))
+        b_ai_enrich = QPushButton("🖼 Enrich Media")
+        b_ai_enrich.clicked.connect(lambda: self.main_win._start_enrich_sweep())
+        b_ai_vision = QPushButton("👁 Vision Pass (CLIP)")
+        b_ai_vision.clicked.connect(lambda: self._run_op(
+            lambda ev, cb: vision.build(cancel_event=ev, progress=cb), "Vision pass", with_progress=True
+        ))
+        for b in (b_ai_scan, b_ai_enrich, b_ai_vision):
+            ai_btns.addWidget(b)
+        ai_btns.addStretch()
+        ai_lay.addWidget(self.ai_status)
+        ai_lay.addLayout(ai_btns)
+        lay.addWidget(ai_box)
+
+        # Bottom row
+        bot = QHBoxLayout()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        bot.addStretch()
+        bot.addWidget(close_btn)
+        lay.addLayout(bot)
+
+        self.refresh_info()
+
+    def refresh_info(self):
+        try:
+            stats = get_stats()
+            total = stats.get("total", 0)
+            by_src = stats.get("by_source", {})
+            u_owned = by_src.get("unity", 0)
+            f_owned = by_src.get("fab", 0)
+            q_catalog = by_src.get("quixel", 0)
+            self.u_status.setText(f"{u_owned} owned packages in vault · Session: {'Saved' if store_client.has_saved_session('unity') else 'Not saved'}")
+            self.f_status.setText(f"{f_owned} owned Fab · {q_catalog} Quixel catalog entries · Session: {'Saved' if store_client.has_saved_session('fab') else 'Not saved'}")
+            self.ai_status.setText(f"{total} indexed assets in SQLite · 3-way hybrid search (FTS5 + BGE + CLIP) ready")
+        except Exception:
+            pass
+
+    def _run_op(self, fn, label, pre_status=None, with_progress=False):
+        self.accept()
+        self.main_win._long_op(fn, label, pre_status=pre_status, with_progress=with_progress)
 
 
 class DetailPanel(QScrollArea):
-    """Right-hand asset detail view."""
+    """Right-hand asset detail view with hero viewer, action bar, and physical specs cards."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -385,8 +838,8 @@ class DetailPanel(QScrollArea):
 
     def show_placeholder(self):
         self.clear_layout(self.lay)
-        lbl = QLabel("Select an asset to inspect it.\n\nWin+Alt+V shows/hides this window.")
-        lbl.setStyleSheet(f"color:{MUTED}; font-size:14px;")
+        lbl = QLabel("Select an asset to inspect it.\n\nSpace: Quick-Look preview · Win+Alt+V: toggle window")
+        lbl.setStyleSheet(f"color:{MUTED}; font-size:14px; line-height: 1.5;")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lay.addWidget(lbl)
         self.lay.addStretch()
@@ -408,42 +861,140 @@ class DetailPanel(QScrollArea):
         self.current = item
         self._active_loaders.clear()
 
+        # 1. Hero Cover Image
         img_url = (item.get("image_url") or "").strip()
-        cover = QLabel("  loading cover…  " if img_url else "No preview image available")
-        cover.setFixedHeight(190)
-        cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover.setStyleSheet(f"background:{CARD}; border-radius:8px; color:{MUTED}; font-size:13px;")
-        self.lay.addWidget(cover)
+        self.hero_cover = QLabel("  loading cover…  " if img_url else "No preview image available")
+        self.hero_cover.setFixedHeight(230)
+        self.hero_cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hero_cover.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:8px; color:{MUTED}; font-size:13px;")
+        self.lay.addWidget(self.hero_cover)
         if img_url:
             loader = ImageLoader(img_url, f"cover_{item['id']}")
             self._active_loaders.append(loader)
             loader.signals.fetched.connect(
-                lambda _k, pm, c=cover: self._set_cover(c, pm))
+                lambda _k, pm, c=self.hero_cover: self._set_cover(c, pm))
             QThreadPool.globalInstance().start(loader)
 
-        title = QLabel(f"<h2 style='margin:0'>{item['title']}</h2>")
+        # 2. Interactive Gallery Thumbnails (under hero)
+        gallery = item.get("gallery_images") or []
+        distinct_gallery = []
+        for g in gallery:
+            if g and g not in distinct_gallery:
+                distinct_gallery.append(g)
+        if len(distinct_gallery) == 1 and distinct_gallery[0] == img_url:
+            distinct_gallery = []
+
+        if distinct_gallery:
+            grow = QHBoxLayout()
+            grow.setSpacing(6)
+            for i, g in enumerate(distinct_gallery[:6]):
+                gl = QPushButton()
+                gl.setFixedSize(70, 48)
+                gl.setCursor(Qt.CursorShape.PointingHandCursor)
+                gl.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:6px;")
+                gl.clicked.connect(lambda checked=False, url=g: self._switch_hero(url))
+                loader = ImageLoader(g, f"g_{item['id']}_{i}")
+                self._active_loaders.append(loader)
+                loader.signals.fetched.connect(lambda _k, pm, b=gl: self._set_btn_icon(b, pm))
+                QThreadPool.globalInstance().start(loader)
+                grow.addWidget(gl)
+            grow.addStretch()
+            self.lay.addLayout(grow)
+
+        # 3. Action Bar Buttons
+        act_bar = QHBoxLayout()
+        act_bar.setSpacing(8)
+        local = item.get("local_path")
+        if local and os.path.exists(local):
+            rev_btn = QPushButton("⚡ Reveal in Explorer")
+            rev_btn.setStyleSheet(f"background:#1f3b2b; color:{GREEN}; border:1px solid #238636; font-weight:600;")
+            rev_btn.clicked.connect(lambda: self._reveal_local(local))
+            act_bar.addWidget(rev_btn)
+
+        if (item.get("local_path") or "").lower().endswith(".unitypackage"):
+            unpack_btn = QPushButton("📥 Unpack to Unity…")
+            unpack_btn.clicked.connect(self._unpack_to_project)
+            act_bar.addWidget(unpack_btn)
+
+        if item.get("store_url"):
+            store_btn = QPushButton("↗ Open Store")
+            store_btn.clicked.connect(lambda: webbrowser.open(item["store_url"]))
+            act_bar.addWidget(store_btn)
+
+        copy_btn = QPushButton("📋 Copy Context")
+        copy_btn.clicked.connect(self._copy_context)
+        act_bar.addWidget(copy_btn)
+        act_bar.addStretch()
+        self.lay.addLayout(act_bar)
+
+        # 4. Header: Title & Meta Subtitle
+        title = QLabel(f"<h2 style='margin:4px 0 0 0; color:{TEXT};'>{item['title']}</h2>")
         title.setWordWrap(True)
         self.lay.addWidget(title)
 
-        eng = "Unity Asset Store" if item["source"] == "unity" else "Fab (Unreal)"
+        eng = "Unity Asset Store" if item["source"] == "unity" else ("Fab (Unreal)" if item["source"] == "fab" else "Quixel Megascans")
         sub = f"{item.get('publisher') or '—'} · {eng}"
         if item.get("version"):
             sub += f" · v{item['version']}"
         if item.get("size_str"):
             sub += f" · {item['size_str']}"
         subl = QLabel(sub)
-        subl.setStyleSheet(f"color:{MUTED};")
+        subl.setStyleSheet(f"color:{MUTED}; font-size:12px;")
         subl.setWordWrap(True)
         self.lay.addWidget(subl)
 
+        # 5. Physical Scan Specs Cards (if available)
+        specs = _extract_scan_specs(item)
+        if specs.get("scan_area") or specs.get("texel_density") or specs.get("maps"):
+            head_sp = QLabel("PHYSICAL SCAN SPECIFICATIONS")
+            head_sp.setStyleSheet(f"color:{ACCENT}; font-size:11px; letter-spacing:1px; font-weight:700; margin-top:6px;")
+            self.lay.addWidget(head_sp)
+
+            metric_box = QHBoxLayout()
+            metric_box.setSpacing(8)
+
+            def make_metric(lbl_title: str, val: str):
+                c = QFrame()
+                c.setStyleSheet(f"background:{PANEL}; border:1px solid {BORDER}; border-radius:6px; padding:6px;")
+                cl = QVBoxLayout(c)
+                cl.setContentsMargins(4, 4, 4, 4)
+                cl.setSpacing(2)
+                t = QLabel(lbl_title.upper())
+                t.setStyleSheet(f"color:{MUTED}; font-size:10px; font-weight:700;")
+                v = QLabel(val)
+                v.setStyleSheet(f"color:{TEXT}; font-size:13px; font-weight:600;")
+                cl.addWidget(t)
+                cl.addWidget(v)
+                return c
+
+            if specs.get("scan_area"):
+                metric_box.addWidget(make_metric("Scan Area", specs["scan_area"]))
+            if specs.get("texel_density"):
+                metric_box.addWidget(make_metric("Texel Density", specs["texel_density"]))
+            if specs.get("displacement_scale"):
+                metric_box.addWidget(make_metric("Displacement Scale", specs["displacement_scale"]))
+            metric_box.addStretch()
+            self.lay.addLayout(metric_box)
+
+            if specs.get("maps"):
+                maps_row = QHBoxLayout()
+                maps_row.setSpacing(6)
+                for m in specs["maps"]:
+                    mpill = badge(m, "#58a6ff" if m.lower() in ("displacement", "roughness", "normal") else "#8b949e")
+                    maps_row.addWidget(mpill)
+                maps_row.addStretch()
+                self.lay.addLayout(maps_row)
+
+        # 6. Form Details (Category, Pipelines, Formats, License, Acquired, Local)
         form = QFormLayout()
         form.setHorizontalSpacing(14)
-        form.setVerticalSpacing(3)
+        form.setVerticalSpacing(4)
 
         def kv(k, v):
-            kl = QLabel(k); kl.setStyleSheet(f"color:{MUTED};")
+            kl = QLabel(k); kl.setStyleSheet(f"color:{MUTED}; font-size:12px;")
             vl = QLabel(v); vl.setWordWrap(True)
             vl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            vl.setStyleSheet(f"color:{TEXT}; font-size:12px;")
             form.addRow(kl, vl)
 
         kv("Category", item.get("category", ""))
@@ -455,10 +1006,10 @@ class DetailPanel(QScrollArea):
             kv("License", item["license"])
         if item.get("claimed_date"):
             kv("Acquired", item["claimed_date"])
-        local = item.get("local_path")
         kv("On disk", ("⚡ " + local) if local else "☁ cloud only")
         self.lay.addLayout(form)
 
+        # 7. Summary & Usage Notes
         if item.get("summary"):
             _, b = self.section("About"); b.setText(item["summary"])
         if item.get("usage_notes"):
@@ -476,47 +1027,27 @@ class DetailPanel(QScrollArea):
             b.setOpenExternalLinks(True)
             b.setText("<br>".join(f"<a href='{v}'>{v}</a>" for v in videos))
 
-        gallery = item.get("gallery_images") or []
-        distinct_gallery = []
-        for g in gallery:
-            if g and g not in distinct_gallery:
-                distinct_gallery.append(g)
-        if len(distinct_gallery) == 1 and distinct_gallery[0] == img_url:
-            distinct_gallery = []
-
-        if distinct_gallery:
-            head = QLabel("GALLERY")
-            head.setStyleSheet(f"color:{ACCENT}; font-size:11px; font-weight:700;")
-            self.lay.addWidget(head)
-            row = QHBoxLayout()
-            row.setSpacing(6)
-            for i, g in enumerate(distinct_gallery[:6]):
-                gl = QLabel("…")
-                gl.setFixedSize(120, 68)
-                gl.setStyleSheet(f"background:{CARD}; border-radius:6px;")
-                loader = ImageLoader(g, f"g_{item['id']}_{i}")
-                self._active_loaders.append(loader)
-                loader.signals.fetched.connect(lambda _k, pm, l=gl: self._set_thumb(l, pm))
-                QThreadPool.globalInstance().start(loader)
-                row.addWidget(gl)
-            row.addStretch()
-            self.lay.addLayout(row)
-
-        if item.get("store_url"):
-            link = QLabel(f"<a href='{item['store_url']}'>Open store listing ↗</a>")
-            link.setOpenExternalLinks(True)
-            self.lay.addWidget(link)
-
-        if (item.get("local_path") or "").lower().endswith(".unitypackage"):
-            unpack_btn = QPushButton("📥 Unpack into Unity project…")
-            unpack_btn.clicked.connect(self._unpack_to_project)
-            self.lay.addWidget(unpack_btn)
-
-        copy_btn = QPushButton("📋 Copy context for AI")
-        copy_btn.clicked.connect(self._copy_context)
-        self.lay.addWidget(copy_btn)
-
         self.lay.addStretch()
+
+    def _switch_hero(self, url: str):
+        if not hasattr(self, "hero_cover"):
+            return
+        loader = ImageLoader(url, f"hero_sw_{url}")
+        self._active_loaders.append(loader)
+        loader.signals.fetched.connect(
+            lambda _k, pm, c=self.hero_cover: self._set_cover(c, pm))
+        QThreadPool.globalInstance().start(loader)
+
+    def _reveal_local(self, path: str):
+        target_dir = os.path.dirname(path) if os.path.isfile(path) else path
+        if sys.platform == "win32":
+            os.startfile(target_dir)
+        elif sys.platform == "darwin":
+            import subprocess
+            subprocess.Popen(["open", target_dir])
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", target_dir])
 
     def _unpack_to_project(self):
         from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -551,40 +1082,38 @@ class DetailPanel(QScrollArea):
     @staticmethod
     def _set_cover(label: QLabel, data: bytes):
         try:
-            # Shiboken C++ liveness check against deleted QLabel widgets
-            try:
-                import shiboken6
-                if not shiboken6.isValid(label):
-                    return
-            except ImportError:
-                pass
+            import shiboken6
+            if not shiboken6.isValid(label):
+                return
+        except ImportError:
+            pass
+        try:
             pm = QPixmap()
             if pm.loadFromData(data):
-                w = label.width() if label.width() > 20 else 460
-                h = label.height() if label.height() > 20 else 190
+                w = label.width() if label.width() > 20 else 500
+                h = label.height() if label.height() > 20 else 230
                 label.setPixmap(pm.scaled(w, h,
                                           Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                           Qt.TransformationMode.SmoothTransformation))
-        except (RuntimeError, Exception):
+        except Exception:
             pass
 
     @staticmethod
-    def _set_thumb(label: QLabel, data: bytes):
+    def _set_btn_icon(btn: QPushButton, data: bytes):
         try:
-            try:
-                import shiboken6
-                if not shiboken6.isValid(label):
-                    return
-            except ImportError:
-                pass
+            import shiboken6
+            if not shiboken6.isValid(btn):
+                return
+        except ImportError:
+            pass
+        try:
             pm = QPixmap()
             if pm.loadFromData(data):
-                w = label.width() if label.width() > 20 else 120
-                h = label.height() if label.height() > 20 else 68
-                label.setPixmap(pm.scaled(w, h,
-                                          Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                          Qt.TransformationMode.SmoothTransformation))
-        except (RuntimeError, Exception):
+                icon = QIcon(pm.scaled(68, 46, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                       Qt.TransformationMode.SmoothTransformation))
+                btn.setIcon(icon)
+                btn.setIconSize(QSize(68, 46))
+        except Exception:
             pass
 
     def _copy_context(self):
@@ -616,6 +1145,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.cfg = load_config()
         self.results: List[dict] = []
+        self.view_mode = self.cfg.get("desktop_view_mode", "list")
+        self.selected_engine: Optional[str] = None
+        self.local_only: bool = False
         self.setWindowTitle("Quartermaster")
         self.resize(1280, 800)
         self.setMinimumSize(900, 560)
@@ -633,10 +1165,49 @@ class MainWindow(QMainWindow):
         tl.setContentsMargins(16, 12, 16, 10)
         tl.setSpacing(8)
 
-        brand = QHBoxLayout()
+        # Row 1: Brand logo, spotlight search, view toggle buttons, sync dialog button, update badge, stats label
+        row1 = QHBoxLayout()
+        row1.setSpacing(10)
+
         logo = QLabel("Quarter<span style='color:%s'>master</span>" % ACCENT)
         logo.setTextFormat(Qt.TextFormat.RichText)
         logo.setStyleSheet("font-size:19px; font-weight:700;")
+
+        self.search = QLineEdit()
+        self.search.setClearButtonEnabled(True)
+        self.search.setPlaceholderText("Search 6,700+ assets… (Ctrl+K)")
+        self.search.installEventFilter(self)
+
+        self.btn_view_list = QPushButton("☰")
+        self.btn_view_list.setToolTip("List View (Compact)")
+        self.btn_view_list.setCheckable(True)
+        self.btn_view_list.setProperty("class", "view_toggle")
+        self.btn_view_list.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.btn_view_grid = QPushButton("☷")
+        self.btn_view_grid.setToolTip("Grid View (Visual Discovery)")
+        self.btn_view_grid.setCheckable(True)
+        self.btn_view_grid.setProperty("class", "view_toggle")
+        self.btn_view_grid.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.view_group = QButtonGroup(self)
+        self.view_group.setExclusive(True)
+        self.view_group.addButton(self.btn_view_list)
+        self.view_group.addButton(self.btn_view_grid)
+
+        if self.view_mode == "grid":
+            self.btn_view_grid.setChecked(True)
+        else:
+            self.btn_view_list.setChecked(True)
+
+        self.btn_view_list.clicked.connect(lambda: self.set_view_mode("list"))
+        self.btn_view_grid.clicked.connect(lambda: self.set_view_mode("grid"))
+
+        self.sync_btn = QPushButton("⚙ Sync")
+        self.sync_btn.setToolTip("Library Sync, Logins & AI Indexing")
+        self.sync_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.sync_btn.clicked.connect(self._open_sync_dialog)
+
         self.update_btn = QPushButton("")
         self.update_btn.setVisible(False)
         self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -647,78 +1218,78 @@ class MainWindow(QMainWindow):
             }}
             QPushButton:hover {{ background: #238636; color: #ffffff; }}
         """)
+
         self.stats_label = QLabel("")
-        self.stats_label.setStyleSheet(f"color:{MUTED};")
-        brand.addWidget(logo)
-        brand.addWidget(self.update_btn)
-        brand.addStretch()
-        brand.addWidget(self.stats_label)
-        tl.addLayout(brand)
+        self.stats_label.setStyleSheet(f"color:{MUTED}; font-size:12px;")
 
-        bar = QHBoxLayout()
-        bar.setSpacing(8)
-        self.search = QLineEdit()
-        self.search.setClearButtonEnabled(True)
-        self.search.setPlaceholderText("Search your vault…  (natural language, intent, vision, keywords)")
-        self.search.installEventFilter(self)
-        self.engine = QComboBox(); self.engine.addItems(["All Engines", "Unity (Owned)", "Fab (Owned)", "Quixel (Catalog)"])
-        self.pipeline = QComboBox(); self.pipeline.addItems(["All Pipelines", "HDRP", "URP", "Built-in"])
-        self.category = QComboBox(); self.category.addItem("All Categories")
-        self.sort_by = QComboBox(); self.sort_by.addItems(["Relevance", "Name (A-Z)", "Name (Z-A)", "Recently Acquired", "Size (Largest)"])
-        self.sync_btn = QPushButton("⚙ Sync")
-        for w in (self.search, self.engine, self.pipeline, self.category, self.sort_by, self.sync_btn):
-            bar.addWidget(w)
-        bar.setStretch(0, 1)
-        tl.addLayout(bar)
+        row1.addWidget(logo)
+        row1.addWidget(self.search, 1)
+        row1.addWidget(self.btn_view_list)
+        row1.addWidget(self.btn_view_grid)
+        row1.addWidget(self.sync_btn)
+        row1.addWidget(self.update_btn)
+        row1.addWidget(self.stats_label)
+        tl.addLayout(row1)
 
-        # ---- sync panel (hidden by default) ----
+        # Row 2: Filter chips & dropdowns
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+
+        self.chip_group = QButtonGroup(self)
+        self.chip_group.setExclusive(True)
+
+        self.chip_all = QPushButton("All Sources")
+        self.chip_unity = QPushButton("Unity")
+        self.chip_fab = QPushButton("Fab")
+        self.chip_quixel = QPushButton("Quixel")
+
+        chips = [
+            (self.chip_all, None),
+            (self.chip_unity, "unity"),
+            (self.chip_fab, "fab"),
+            (self.chip_quixel, "quixel"),
+        ]
+
+        for chip, eng_val in chips:
+            chip.setCheckable(True)
+            chip.setProperty("class", "chip")
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.chip_group.addButton(chip)
+            row2.addWidget(chip)
+            chip.clicked.connect(lambda _checked=False, val=eng_val: self._on_engine_chip(val))
+
+        self.chip_all.setChecked(True)
+
+        self.chip_local = QPushButton("⚡ Local Only")
+        self.chip_local.setCheckable(True)
+        self.chip_local.setProperty("class", "chip")
+        self.chip_local.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.chip_local.toggled.connect(self._on_local_chip_toggled)
+        row2.addWidget(self.chip_local)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setStyleSheet(f"color: {BORDER}; margin: 2px 4px;")
+        row2.addWidget(sep)
+
+        self.pipeline = QComboBox()
+        self.pipeline.addItems(["All Pipelines", "HDRP", "URP", "Built-in"])
+        self.category = QComboBox()
+        self.category.addItem("All Categories")
+        self.sort_by = QComboBox()
+        self.sort_by.addItems(["Relevance", "Name (A-Z)", "Name (Z-A)", "Recently Acquired", "Size (Largest)"])
+
+        row2.addWidget(self.pipeline)
+        row2.addWidget(self.category)
+        row2.addWidget(self.sort_by)
+        row2.addStretch()
+
+        tl.addLayout(row2)
+
+        # Compatibility stubs for sync operations
         self.sync_panel = QWidget()
-        self.sync_panel.setVisible(False)
-        sp = QHBoxLayout(self.sync_panel)
-        sp.setContentsMargins(16, 8, 16, 8)
-        sp.setSpacing(8)
-        self.sync_status = QLabel("Log in with your own accounts; sessions stay on this machine.")
-        self.sync_status.setStyleSheet(f"color:{MUTED};")
-
-        def add_sync_btn(text, fn):
-            b = QPushButton(text)
-            b.clicked.connect(fn)
-            sp.addWidget(b)
-            return b
-
-        add_sync_btn("🔐 Login Unity", lambda: self._long_op(
-            lambda ev: store_client.interactive_login("unity", cancel_event=ev),
-            "Unity login",
-            success_text="✅ Session saved. Now press ⟳ Fetch Unity.",
-            pre_status="A NORMAL browser window opens (zero automation). Sign in with MFA, then CLOSE that window yourself — that's the signal.",
-            cancellable=False))
-        add_sync_btn("⟳ Fetch Unity", lambda: self._fetch_op("unity"))
-        add_sync_btn("🔐 Login Fab", lambda: self._long_op(
-            lambda ev: store_client.interactive_login("fab", cancel_event=ev),
-            "Fab login",
-            success_text="✅ Session saved. Now press ⟳ Fetch Fab.",
-            pre_status="A NORMAL browser window opens (zero automation). Complete captcha + Epic sign-in, then CLOSE that window yourself.",
-            cancellable=False))
-        add_sync_btn("⟳ Fetch Fab", lambda: self._fetch_op("fab"))
-        add_sync_btn("🌿 Sync Quixel", lambda: self._long_op(
-            lambda ev, cb: store_client.sync_quixel_catalog(cancel_event=ev, progress=cb),
-            "Sync Quixel Megascans",
-            pre_status="Fetching complete Quixel Megascans & Megaplants catalog from Fab…",
-            success_text="✅ Quixel Megascans catalog synced into vault.",
-            with_progress=True))
-        add_sync_btn("📐 Quixel Specs", lambda: self._long_op(
-            lambda ev, cb: store_client.enrich_quixel_specs(cancel_event=ev, progress=cb),
-            "Quixel scan specs",
-            pre_status="Enriching Quixel catalog with texel density, physical scan area, and map lists…",
-            success_text="✅ Quixel physical scan specs enriched.",
-            with_progress=True))
-        add_sync_btn("🖼 Enrich library", lambda: self._start_enrich_sweep())
-        add_sync_btn("👁 Vision pass", lambda: self._long_op(
-            lambda ev, cb: vision.build(cancel_event=ev, progress=cb), "Vision pass", with_progress=True))
-        add_sync_btn("⚡ Scan local", lambda: self._long_op(
-            lambda ev: local_scan.scan_all(), "Disk scan"))
-        sp.addWidget(self.sync_status, 1)
-        tl.addWidget(self.sync_panel)
+        self.sync_status = QLabel("")
 
         root.addWidget(top)
 
@@ -728,12 +1299,13 @@ class MainWindow(QMainWindow):
         split.setSpacing(0)
 
         self.list = QListWidget()
-        self.list.setWordWrap(True)
         self.list.itemClicked.connect(self._on_select)
+        self.list.currentItemChanged.connect(lambda cur, _prev: self._on_select(cur) if cur else None)
         self.list.itemDoubleClicked.connect(self._on_double_click)
         self.list.installEventFilter(self)
         self.list.setStyleSheet(f"QListWidget {{ border-right: 1px solid {BORDER}; }}")
         self.list.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        self._apply_view_mode()
         split.addWidget(self.list, 5)
 
         self.detail = DetailPanel()
@@ -741,6 +1313,12 @@ class MainWindow(QMainWindow):
         root.addLayout(split, 1)
 
         self.statusBar().setStyleSheet(f"color:{MUTED}; background:{BG};")
+
+        # Global search shortcuts Ctrl+K and Ctrl+F
+        act_search = QAction(self)
+        act_search.setShortcuts(["Ctrl+K", "Ctrl+F"])
+        act_search.triggered.connect(lambda: (self.search.setFocus(), self.search.selectAll()))
+        self.addAction(act_search)
 
         # track resizes on the central widget so the overlay always covers it
         self.centralWidget().installEventFilter(self)
@@ -755,10 +1333,8 @@ class MainWindow(QMainWindow):
         # ---- wiring ----
         self.search.textChanged.connect(self._debounce_search)
         self.search.returnPressed.connect(self.do_search)
-        for cb in (self.engine, self.pipeline, self.category, self.sort_by):
+        for cb in (self.pipeline, self.category, self.sort_by):
             cb.currentIndexChanged.connect(self.do_search)
-        self.sync_btn.clicked.connect(
-            lambda: self.sync_panel.setVisible(not self.sync_panel.isVisible()))
 
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
@@ -784,13 +1360,54 @@ class MainWindow(QMainWindow):
 
     # ---------------- search & display ----------------
 
+    def _on_engine_chip(self, eng: Optional[str]):
+        self.selected_engine = eng
+        self.do_search()
+
+    def _on_local_chip_toggled(self, checked: bool):
+        self.local_only = checked
+        self.do_search()
+
+    def _open_sync_dialog(self):
+        dlg = SyncDialog(self, parent=self)
+        dlg.exec()
+
+    def set_view_mode(self, mode: str):
+        if mode not in ("list", "grid") or mode == self.view_mode:
+            return
+        self.view_mode = mode
+        try:
+            save_config_partial({"desktop_view_mode": mode})
+        except Exception:
+            pass
+        self._apply_view_mode()
+        self.list.clear()
+        self._rendered_count = 0
+        self._render_next_batch()
+
+    def _apply_view_mode(self):
+        if self.view_mode == "grid":
+            self.btn_view_grid.setChecked(True)
+            self.list.setViewMode(QListView.ViewMode.IconMode)
+            self.list.setResizeMode(QListView.ResizeMode.Adjust)
+            self.list.setGridSize(QSize(208, 228))
+            self.list.setSpacing(8)
+            self.list.setWordWrap(True)
+        else:
+            self.btn_view_list.setChecked(True)
+            self.list.setViewMode(QListView.ViewMode.ListMode)
+            self.list.setResizeMode(QListView.ResizeMode.Fixed)
+            self.list.setGridSize(QSize())
+            self.list.setSpacing(2)
+            self.list.setWordWrap(False)
+
     def _debounce_search(self):
         self.search_timer.start()
 
     def do_search(self):
         self._search_id += 1
         q = self.search.text().strip()
-        eng = {0: None, 1: "unity", 2: "fab", 3: "quixel"}[self.engine.currentIndex()]
+        eng = self.selected_engine
         pipe = {0: None, 1: "HDRP", 2: "URP", 3: "Built-in"}[self.pipeline.currentIndex()]
         cat = None if self.category.currentIndex() <= 0 else self.category.currentText()
         sort_mode = {0: "relevance", 1: "title_asc", 2: "title_desc", 3: "claimed_desc", 4: "size_desc"}[self.sort_by.currentIndex()]
@@ -799,7 +1416,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Searching for '{q}'…" if q else "Browsing vault…")
 
         # Launch background SearchWorker
-        worker = SearchWorker(self._search_id, q, eng, pipe, cat, sort_mode, parent=self)
+        worker = SearchWorker(self._search_id, q, eng, pipe, cat, sort_mode, local_only=self.local_only, parent=self)
         worker.results_ready.connect(self._on_search_results)
         self._search_worker = worker
         worker.start()
@@ -829,7 +1446,10 @@ class MainWindow(QMainWindow):
                 for item in next_items:
                     li = QListWidgetItem(self.list)
                     li.setData(Qt.ItemDataRole.UserRole, item)
-                    card = AssetCard(item)
+                    if self.view_mode == "grid":
+                        card = AssetGridCard(item)
+                    else:
+                        card = AssetCard(item)
                     li.setSizeHint(card.sizeHint())
                     self.list.setItemWidget(li, card)
             finally:
@@ -850,8 +1470,12 @@ class MainWindow(QMainWindow):
         if sb.maximum() - value < 150:
             self._render_next_batch()
 
-    def _on_select(self, li: QListWidgetItem):
+    def _on_select(self, li: Optional[QListWidgetItem]):
+        if not li:
+            return
         item = li.data(Qt.ItemDataRole.UserRole)
+        if not item:
+            return
         full = get_asset_by_id(item["id"]) or item
         self.detail.show_asset(full)
 
@@ -870,6 +1494,7 @@ class MainWindow(QMainWindow):
         conn.close()
         srcs = " · ".join(f"{k}: {v}" for k, v in (st.get("sources") or {}).items())
         self.stats_label.setText(f"{st['total']} assets · {srcs} · ⚡{n_local} local")
+        self.search.setPlaceholderText(f"Search {st['total']}+ assets… (Ctrl+K)")
 
     # ---------------- long operations ----------------
 
@@ -1018,11 +1643,13 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj, ev):
         # keep the overlay covering the content area through ANY layout change
-        if obj is self.centralWidget() and ev.type() == QEvent.Type.Resize:
-            self.overlay.setGeometry(self.centralWidget().rect())
-        elif obj is self.search and ev.type() == QEvent.Type.KeyPress:
+        cw = getattr(self, "centralWidget", None)
+        if cw and obj is cw() and ev.type() == QEvent.Type.Resize:
+            if hasattr(self, "overlay"):
+                self.overlay.setGeometry(cw().rect())
+        elif hasattr(self, "search") and obj is self.search and ev.type() == QEvent.Type.KeyPress:
             if ev.key() == Qt.Key.Key_Down:
-                if self.list.count() > 0:
+                if hasattr(self, "list") and self.list.count() > 0:
                     if self.list.currentRow() < 0:
                         self.list.setCurrentRow(0)
                     self.list.setFocus()
@@ -1034,12 +1661,27 @@ class MainWindow(QMainWindow):
                 else:
                     self.hide()
                     return True
-        elif obj is self.list and ev.type() == QEvent.Type.KeyPress:
-            if ev.key() == Qt.Key.Key_Up and self.list.currentRow() <= 0:
-                self.search.setFocus()
+        elif hasattr(self, "list") and obj is self.list and ev.type() == QEvent.Type.KeyPress:
+            if ev.key() == Qt.Key.Key_Space:
+                curr = self.list.currentItem()
+                if curr:
+                    item = curr.data(Qt.ItemDataRole.UserRole)
+                    if item:
+                        full = get_asset_by_id(item["id"]) or item
+                        ql = QuickLookDialog(full, self)
+                        ql.exec()
+                        return True
+            elif ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                curr = self.list.currentItem()
+                if curr:
+                    self._on_double_click(curr)
+                    return True
+            elif ev.key() == Qt.Key.Key_Up and self.list.currentRow() <= 0:
+                if hasattr(self, "search"):
+                    self.search.setFocus()
                 return True
             elif ev.key() == Qt.Key.Key_Escape:
-                if self.search.text():
+                if hasattr(self, "search") and self.search.text():
                     self.search.clear()
                     self.search.setFocus()
                     return True
@@ -1104,10 +1746,12 @@ class MainWindow(QMainWindow):
         import threading as _threading
         # single-flight: two ops would fight over the same browser profile
         if getattr(self, "_op_running", False):
+            self.statusBar().showMessage("⚠ Another operation is already running — wait for it to finish.", 4000)
             self.sync_status.setText("⚠ Another operation is already running — wait for it to finish.")
             return
         self._op_running = True
         self.sync_panel.setEnabled(False)
+        self.sync_btn.setEnabled(False)
         self._cancel_event = _threading.Event()
 
         self.sync_status.setText(f"{label}…")
@@ -1137,8 +1781,10 @@ class MainWindow(QMainWindow):
         def finished(msg, ok):
             self._op_running = False
             self.sync_panel.setEnabled(True)
+            self.sync_btn.setEnabled(True)
             self._hide_overlay()
             self.sync_status.setText(msg)
+            self.statusBar().showMessage(msg, 5000)
             cancelled = msg.startswith("Operation cancelled") or "cancelled" in msg.lower()
             if ok and not cancelled:
                 if refresh_after:
