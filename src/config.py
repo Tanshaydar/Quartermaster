@@ -48,7 +48,7 @@ AUTH_TOKEN_PATH = os.path.join(DATA_DIR, "data", ".auth_token")
 CRASH_LOG_PATH = os.path.join(DATA_DIR, "data", "crash.log")
 HARVEST_LOG_PATH = os.path.join(DATA_DIR, "data", "store_harvest.log")
 
-__version__ = "1.1.2"
+__version__ = "1.2.0"
 
 
 # --------------------------- SSRF & Image Security -------------------------
