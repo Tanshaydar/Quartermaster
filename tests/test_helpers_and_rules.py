@@ -139,9 +139,12 @@ class TestHelpersAndRules(unittest.TestCase):
         self.assertNotIn("scan_area", specs_density)
 
     def test_desktop_scan_specs_and_flow_layout(self):
-        from src.desktop import _extract_scan_specs, FlowLayout
-        from PySide6.QtWidgets import QApplication, QWidget, QLabel
-        from PySide6.QtCore import QRect
+        try:
+            from src.desktop import _extract_scan_specs, FlowLayout
+            from PySide6.QtWidgets import QApplication, QWidget, QLabel
+            from PySide6.QtCore import QRect
+        except (ImportError, OSError, RuntimeError) as e:
+            self.skipTest(f"Qt GUI runtime not available: {e}")
 
         # Test noise filtering in maps extraction (e.g. Aloe Vera by Quixel Megascans)
         item = {
