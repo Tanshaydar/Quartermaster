@@ -441,14 +441,23 @@ class _ImageDownloadTask(QRunnable):
                             if not any(t in ctype for t in ("image/", "application/octet-stream", "binary/octet-stream")):
                                 r.close()
                                 break
-                            content = r.read()
-                            if len(content) <= MAX_IMAGE_BYTES:
-                                data = content
+                            chunks = []
+                            total_bytes = 0
+                            for chunk in r.iter_bytes(chunk_size=65536):
+                                total_bytes += len(chunk)
+                                if total_bytes > MAX_IMAGE_BYTES:
+                                    chunks.clear()
+                                    break
+                                chunks.append(chunk)
+                            r.close()
+                            if chunks:
+                                data = b"".join(chunks)
                                 if path:
                                     evict_image_cache(cache_dir)
                                     with open(path, "wb") as f:
                                         f.write(data)
-                        r.close()
+                        else:
+                            r.close()
                         break
             if data:
                 try:

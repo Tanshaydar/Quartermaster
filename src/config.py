@@ -50,6 +50,8 @@ HARVEST_LOG_PATH = os.path.join(DATA_DIR, "data", "store_harvest.log")
 
 __version__ = "1.2.1"
 
+VAULT_SOURCES = ("unity", "fab", "quixel", "gumroad", "cosmos")
+
 
 # --------------------------- SSRF & Image Security -------------------------
 

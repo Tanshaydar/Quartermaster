@@ -39,10 +39,12 @@ import numpy as np
 
 try:
     from .db import get_connection, DB_PATH
-    from .config import load_config, CONCEPTS_PATH, is_safe_image_url, MAX_IMAGE_BYTES
+    from .config import load_config, CONCEPTS_PATH, is_safe_image_url, MAX_IMAGE_BYTES, VAULT_SOURCES
 except ImportError:
     from db import get_connection, DB_PATH
-    from config import load_config, CONCEPTS_PATH, is_safe_image_url, MAX_IMAGE_BYTES
+    from config import load_config, CONCEPTS_PATH, is_safe_image_url, MAX_IMAGE_BYTES, VAULT_SOURCES
+
+_SOURCES_SQL = "','".join(VAULT_SOURCES)
 
 VISION_MODEL = "Qdrant/clip-ViT-B-32-vision"
 CLIP_TEXT_MODEL = "Qdrant/clip-ViT-B-32-text"
@@ -75,7 +77,7 @@ def _collect_work(max_per_asset: int = 4):
     conn = get_connection()
     for aid, cover, gjson in conn.execute(
             "SELECT id, image_url, gallery_images FROM assets "
-            "WHERE source IN ('unity','fab','quixel')"):
+            f"WHERE source IN ('{_SOURCES_SQL}')"):
         urls = []
         if cover:
             urls.append(cover)
@@ -106,10 +108,23 @@ def _download_worker(client, url: str, cancel_event=None):
     if not is_safe_image_url(normalized):
         return None
     try:
-        r = client.get(normalized)
-        if r.status_code != 200 or len(r.content) > MAX_IMAGE_BYTES:
+        req = client.build_request("GET", normalized)
+        r = client.send(req, stream=True)
+        if r.status_code != 200:
+            r.close()
             return None
-        return r.content
+        chunks = []
+        total_bytes = 0
+        for chunk in r.iter_bytes(chunk_size=65536):
+            total_bytes += len(chunk)
+            if total_bytes > MAX_IMAGE_BYTES:
+                chunks.clear()
+                break
+            chunks.append(chunk)
+        r.close()
+        if not chunks:
+            return None
+        return b"".join(chunks)
     except Exception:
         return None
 
@@ -319,7 +334,7 @@ def build(limit=None, cancel_event=None, progress=None) -> dict:
         tags_by_asset = _mine_concepts(all_vecs, asset_map, concepts, threshold_z)
         conn = get_connection()
         all_ids = {r[0] for r in conn.execute(
-            "SELECT id FROM assets WHERE source IN ('unity','fab','quixel')")}
+            f"SELECT id FROM assets WHERE source IN ('{_SOURCES_SQL}')")}
         tagged_ids = set(tags_by_asset)
         for aid in (all_ids | tagged_ids):
             tags = tags_by_asset.get(aid, [])
@@ -452,9 +467,9 @@ def _embed_clip_query(query: str):
 def status():
     conn = get_connection()
     total_assets = conn.execute(
-        "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab','quixel')").fetchone()[0]
+        f"SELECT COUNT(*) FROM assets WHERE source IN ('{_SOURCES_SQL}')").fetchone()[0]
     with_covers = conn.execute(
-        "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab','quixel') AND image_url != ''").fetchone()[0]
+        f"SELECT COUNT(*) FROM assets WHERE source IN ('{_SOURCES_SQL}') AND image_url != ''").fetchone()[0]
     try:
         vecs = conn.execute("SELECT COUNT(*) FROM image_vectors").fetchone()[0]
     except Exception:
@@ -462,7 +477,7 @@ def status():
     tagged = 0
     try:
         tagged = conn.execute(
-            "SELECT COUNT(*) FROM assets WHERE source IN ('unity','fab','quixel') AND "
+            f"SELECT COUNT(*) FROM assets WHERE source IN ('{_SOURCES_SQL}') AND "
             "vision_tags IS NOT NULL AND vision_tags != '' AND vision_tags != '[]'").fetchone()[0]
     except Exception:
         pass

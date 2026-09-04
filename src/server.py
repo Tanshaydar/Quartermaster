@@ -29,11 +29,11 @@ from fastapi.staticfiles import StaticFiles
 
 try:
     from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from .config import load_config, get_or_create_auth_token, evict_image_cache, __version__, WEB_DIR, is_safe_image_url, MAX_IMAGE_BYTES
+    from .config import load_config, get_or_create_auth_token, evict_image_cache, __version__, WEB_DIR, is_safe_image_url, MAX_IMAGE_BYTES, VAULT_SOURCES
     from . import store_client, local_scan, unpacker, stack_rules, semantic
 except ImportError:
     from db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from config import load_config, get_or_create_auth_token, evict_image_cache, __version__, WEB_DIR, is_safe_image_url, MAX_IMAGE_BYTES
+    from config import load_config, get_or_create_auth_token, evict_image_cache, __version__, WEB_DIR, is_safe_image_url, MAX_IMAGE_BYTES, VAULT_SOURCES
     import store_client, local_scan, unpacker, stack_rules, semantic
 
 init_db()
@@ -234,50 +234,6 @@ def api_categories():
 
 # --------------------------- media proxy cache (SSRF Protected) -----------------------------
 
-ALLOWED_IMAGE_DOMAINS = (
-    ".unity3d.com", "unity3d.com",
-    ".unity.com", "unity.com",
-    ".fab.com", "fab.com",
-    ".epicgames.com", "epicgames.com",
-    ".unrealengine.com", "unrealengine.com",
-    ".artstation.com", "artstation.com",
-    ".sketchfab.com", "sketchfab.com",
-    ".ytimg.com", "ytimg.com",
-    ".youtube.com", "youtube.com",
-)
-
-MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 15MB cap to prevent cache-fill exhaustion
-
-
-def is_safe_image_url(target_url: str) -> bool:
-    """
-    Validates that a URL is strictly HTTP(S), targets an allowlisted CDN domain,
-    and does not point to localhost, RFC1918 private ranges, or cloud metadata endpoints.
-    """
-    import urllib.parse
-    import ipaddress
-    try:
-        parsed = urllib.parse.urlparse(target_url)
-        if parsed.scheme not in ("http", "https"):
-            return False
-        host = (parsed.hostname or "").lower()
-        if not host or host == "localhost":
-            return False
-
-        # Block any IP-based host directly (prevent 127.0.0.1, 169.254.169.254, 10.x, 192.168.x)
-        try:
-            ip = ipaddress.ip_address(host)
-            return False
-        except ValueError:
-            pass
-
-        # Verify against allowed CDN domain suffixes
-        return any(host == d or host.endswith(d if d.startswith(".") else "." + d)
-                   for d in ALLOWED_IMAGE_DOMAINS)
-    except Exception:
-        return False
-
-
 @app.get("/api/image")
 def api_image(url: str):
     """
@@ -330,10 +286,17 @@ def api_image(url: str):
                     r.close()
                     raise HTTPException(400, f"Invalid content-type: {ctype}. Only image resources are proxied.")
 
-                # Read with size cap
-                content = r.read()
-                if len(content) > MAX_IMAGE_BYTES:
-                    raise HTTPException(413, "Image exceeds maximum allowed size (15MB).")
+                # Stream with size cap
+                chunks = []
+                total_bytes = 0
+                for chunk in r.iter_bytes(chunk_size=65536):
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_IMAGE_BYTES:
+                        r.close()
+                        raise HTTPException(413, "Image exceeds maximum allowed size (15MB).")
+                    chunks.append(chunk)
+                r.close()
+                content = b"".join(chunks)
 
                 if cfg["media_cache_enabled"]:
                     os.makedirs(cache_dir, exist_ok=True)
@@ -354,8 +317,9 @@ def api_image(url: str):
 
 @app.post("/api/login/{provider}", dependencies=[Depends(verify_auth)])
 def api_login(provider: str):
-    if provider not in ("unity", "fab"):
-        raise HTTPException(400, "provider must be 'unity' or 'fab'")
+    valid_providers = tuple(p for p in VAULT_SOURCES if p != "quixel")
+    if provider not in valid_providers:
+        raise HTTPException(400, f"provider must be one of: {', '.join(valid_providers)}")
 
     def run():
         ok = store_client.interactive_login(provider)
@@ -368,8 +332,9 @@ def api_login(provider: str):
 
 @app.post("/api/fetch/{provider}", dependencies=[Depends(verify_auth)])
 def api_fetch(provider: str):
-    if provider not in ("unity", "fab"):
-        raise HTTPException(400, "provider must be 'unity' or 'fab'")
+    valid_providers = tuple(p for p in VAULT_SOURCES if p != "quixel")
+    if provider not in valid_providers:
+        raise HTTPException(400, f"provider must be one of: {', '.join(valid_providers)}")
     if not store_client.has_saved_session(provider):
         raise HTTPException(409, {"error": f"No saved login for {provider}. Call /api/login/{provider} first."})
     count = store_client.fetch_library(provider)

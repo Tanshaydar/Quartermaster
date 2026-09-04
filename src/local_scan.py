@@ -25,11 +25,11 @@ from typing import Any, Dict, List, Optional
 
 try:
     from .db import get_connection, search_assets, DB_PATH, upsert_asset, _sync_fts
-    from .config import load_config
+    from .config import load_config, VAULT_SOURCES
     from .ingest import classify_asset
 except ImportError:
     from db import get_connection, search_assets, DB_PATH, upsert_asset, _sync_fts
-    from config import load_config
+    from config import load_config, VAULT_SOURCES
     from ingest import classify_asset
 
 EPIC_LAUNCHER_INI = os.path.join(
@@ -224,7 +224,8 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
     """)
 
     # Reset previous scan marks inside transaction only after disk read succeeds
-    cur.execute("UPDATE assets SET local_path = '' WHERE source IN ('unity', 'fab', 'quixel')")
+    _srcs_sql = "','".join(VAULT_SOURCES)
+    cur.execute(f"UPDATE assets SET local_path = '' WHERE source IN ('{_srcs_sql}')")
 
     # Prioritize matching real library assets over disk stubs
     cur.execute("SELECT id, title, source FROM assets WHERE id NOT LIKE '%_disk_%'")
