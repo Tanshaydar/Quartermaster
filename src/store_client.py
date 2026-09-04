@@ -64,7 +64,7 @@ LOGIN_URLS = {
     # cookie, severed further by Edge's default third-party cookie blocking).
     "unity": "https://id.unity.com/en/login?redirect_url=https%3A%2F%2Fassetstore.unity.com%2F",
     "fab": "https://www.epicgames.com/id/login",
-    "gumroad": "https://app.gumroad.com/login",
+    "gumroad": "https://gumroad.com/login",
     "cosmos": "https://cosmos.leartesstudios.com/login",
 }
 
@@ -73,7 +73,7 @@ LIBRARY_URLS = {
     # /account/downloads redirects here; this is the owned-packages page.
     "unity": ["https://assetstore.unity.com/account/assets"],
     "fab": ["https://www.fab.com/library"],
-    "gumroad": ["https://app.gumroad.com/library"],
+    "gumroad": ["https://gumroad.com/library"],
     "cosmos": ["https://cosmos.leartesstudios.com/profile/my-assets"],
 }
 
@@ -393,7 +393,7 @@ def _extract_store_url(item: dict, provider: str) -> str:
                 elif provider == "fab":
                     return f"https://www.fab.com{u}"
                 elif provider == "gumroad":
-                    return f"https://app.gumroad.com{u}"
+                    return f"https://gumroad.com{u}"
                 elif provider == "cosmos":
                     return f"https://cosmos.leartesstudios.com{u}"
                 return f"https://www.fab.com{u}"
@@ -405,7 +405,7 @@ def _extract_store_url(item: dict, provider: str) -> str:
         elif provider == "fab":
             return f"https://www.fab.com/listings/{slug.strip('/')}"
         elif provider == "gumroad":
-            return f"https://app.gumroad.com/library?item={slug.strip('/')}"
+            return f"https://gumroad.com/library?item={slug.strip('/')}"
         elif provider == "cosmos":
             return f"https://cosmos.leartesstudios.com/product/{slug.strip('/')}"
     pkg_id = item.get("id") or item.get("listingId") or item.get("packageId")
@@ -415,7 +415,11 @@ def _extract_store_url(item: dict, provider: str) -> str:
         elif provider == "fab":
             return f"https://www.fab.com/listings/{pkg_id}"
         elif provider == "gumroad":
-            return f"https://app.gumroad.com/library?item={pkg_id}"
+            # If 32-char hex token, it's a direct download/library page
+            clean_id = str(pkg_id).strip()
+            if len(clean_id) == 32 and all(c in "0123456789abcdefABCDEF" for c in clean_id):
+                return f"https://gumroad.com/d/{clean_id}"
+            return f"https://gumroad.com/library?item={clean_id}"
         elif provider == "cosmos":
             return f"https://cosmos.leartesstudios.com/product/{pkg_id}"
     return ""
@@ -711,6 +715,80 @@ def harvest_fab_library(page, known_titles: Optional[set] = None) -> List[Dict[s
 
 _GUMROAD_FETCH_JS = """
 (() => {
+    // 1. Inertia.js (Gumroad's modern architecture)
+    try {
+        const pageEl = document.querySelector('[data-page]');
+        if (pageEl) {
+            const initial = JSON.parse(pageEl.getAttribute('data-page') || '{}');
+            const props = initial.props || {};
+            const results = props.results || [];
+            const totalPages = props.pagination?.pages || 1;
+
+            const allItems = [];
+            function extractItems(resList) {
+                if (!Array.isArray(resList)) return;
+                for (const r of resList) {
+                    const prod = r.product || {};
+                    const pur = r.purchase || {};
+                    const dlUrl = pur.download_url || '';
+                    let uid = '';
+                    if (dlUrl) {
+                        const m = dlUrl.match(/\\/d\\/([a-zA-Z0-9_-]+)/);
+                        if (m) uid = m[1];
+                    }
+                    if (!uid && pur.id) uid = pur.id;
+                    if (!uid && prod.name) uid = prod.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+                    const name = prod.name || '';
+                    if (!name) continue;
+
+                    const creatorName = prod.creator?.name || r.creator_name || '';
+                    const cover = prod.thumbnail_url || prod.cover_image || '';
+                    const storeUrl = dlUrl || (uid ? ('https://gumroad.com/d/' + uid) : '');
+
+                    let desc = '';
+                    if (pur.variants) {
+                        desc = 'License / Variant: ' + pur.variants;
+                    }
+
+                    allItems.push({
+                        id: uid,
+                        name: name.trim(),
+                        publisher: creatorName.trim(),
+                        description: desc,
+                        cover_image: cover,
+                        url: storeUrl,
+                        variants: pur.variants || '',
+                    });
+                }
+            }
+
+            extractItems(results);
+
+            // Return a promise to fetch and parse subsequent pages via DOMParser
+            return (async () => {
+                for (let pageNum = 2; pageNum <= totalPages; pageNum++) {
+                    try {
+                        const res = await fetch('/library?page=' + pageNum);
+                        const html = await res.text();
+                        const doc = new DOMParser().parseFromString(html, 'text/html');
+                        const nextEl = doc.querySelector('[data-page]');
+                        if (nextEl) {
+                            const nextData = JSON.parse(nextEl.getAttribute('data-page') || '{}');
+                            extractItems(nextData.props?.results || []);
+                        }
+                    } catch (err) {
+                        console.error('Gumroad fetch page ' + pageNum + ' failed:', err);
+                    }
+                }
+                return allItems;
+            })();
+        }
+    } catch (e) {
+        console.error('Gumroad Inertia extraction error:', e);
+    }
+
+    // 2. Next.js state fallback
     try {
         const nextEl = document.getElementById('__NEXT_DATA__');
         if (nextEl) {
@@ -725,7 +803,7 @@ _GUMROAD_FETCH_JS = """
                     publisher: String(p.creator?.name || p.seller?.name || p.creator_name || p.product?.creator?.name || ''),
                     description: String(p.product?.description || p.description || ''),
                     cover_image: String(p.product?.preview_url || p.product?.thumbnail_url || p.thumbnail_url || p.preview_url || ''),
-                    url: p.permalink ? ('https://app.gumroad.com/library?item=' + p.permalink) : String(p.url || ''),
+                    url: p.permalink ? ('https://gumroad.com/library?item=' + p.permalink) : String(p.url || ''),
                     createdAt: String(p.created_at || p.purchase_date || ''),
                     tags: p.product?.tags || [],
                 }));
@@ -733,25 +811,10 @@ _GUMROAD_FETCH_JS = """
         }
     } catch (e) {}
 
-    try {
-        const st = window.initial_state || window.__INITIAL_STATE__ || window.gumroad;
-        const purchases = st?.purchases || st?.library?.purchases || [];
-        if (Array.isArray(purchases) && purchases.length > 0) {
-            return purchases.map(p => ({
-                id: String(p.id || p.permalink || p.product_id || ''),
-                name: String(p.product?.name || p.name || p.product_name || ''),
-                publisher: String(p.creator?.name || p.seller?.name || p.creator_name || ''),
-                description: String(p.product?.description || p.description || ''),
-                cover_image: String(p.product?.preview_url || p.product?.thumbnail_url || p.thumbnail_url || ''),
-                url: p.permalink ? ('https://app.gumroad.com/library?item=' + p.permalink) : String(p.url || ''),
-                createdAt: String(p.created_at || p.purchase_date || ''),
-            }));
-        }
-    } catch (e) {}
-
+    // 3. Fallback: DOM scraping
     const items = [];
     try {
-        const cards = document.querySelectorAll('.library-item, [data-component="LibraryItem"], article, .product-card, a[href*="/library?item="]');
+        const cards = document.querySelectorAll('article, .library-item, [data-component="LibraryItem"], .product-card, a[href*="/library?item="]');
         for (const card of cards) {
             const titleEl = card.querySelector('h3, h4, .product-title, .title, [class*="title"], [class*="Title"]') || card;
             const title = (titleEl.textContent || '').trim();
@@ -759,7 +822,7 @@ _GUMROAD_FETCH_JS = """
 
             const linkEl = card.tagName === 'A' ? card : card.querySelector('a[href*="/library"], a[href*="/d/"], a[href*="/l/"], a');
             const href = linkEl ? linkEl.getAttribute('href') : '';
-            const fullUrl = href ? (href.startsWith('http') ? href : ('https://app.gumroad.com' + href)) : '';
+            const fullUrl = href ? (href.startsWith('http') ? href : ('https://gumroad.com' + href)) : '';
 
             const authorEl = card.querySelector('.seller-name, .creator-name, [class*="seller"], [class*="creator"], [class*="author"]');
             const author = authorEl ? authorEl.textContent.trim() : '';
@@ -1273,45 +1336,57 @@ def fetch_library(provider: str, cancel_event=None) -> int:
         except Exception as e:
             _log(f"warn: goto {first_url}: {e}")
         page.wait_for_timeout(5000)
+        check_urls_for_login_redirect()
+
+        # ---- Early authoritative native harvest:
+        # Gumroad renders via Inertia.js with pagination across all pages in seconds.
+        if provider == "gumroad" and not landed_on_login:
+            try:
+                gumroad_items = harvest_gumroad_library(page)
+                harvested.extend(gumroad_items)
+                _log(f"  gumroad native harvest returned {len(gumroad_items)} items")
+            except Exception as e:
+                _log(f"  gumroad native harvest failed: {e}")
 
         # Scroll to bottom repeatedly until content stops growing: the page
         # lazy-loads more GraphQL batches as you reach the end. JS scrolling
         # works where synthetic wheel events rubber-band without scrolling.
-        stable_rounds = 0
-        last_sig = None
-        login_streak = 0
-        started = time.time()
-        for i in range(120):
-            if cancel_event is not None and cancel_event.is_set():
-                _log(f"{provider} fetch cancelled.")
-                break
-            check_urls_for_login_redirect()
-            if landed_on_login:
-                login_streak += 1
-                # SSO chains pass auth-looking URLs transiently; only trust
-                # the verdict after several consecutive polls, and never
-                # abort within the first 15s of the redirect dance
-                if login_streak >= 4 and time.time() - started > 15:
-                    _log("  looks like we landed on a login page; stopping.")
+        if not (provider == "gumroad" and harvested):
+            stable_rounds = 0
+            last_sig = None
+            login_streak = 0
+            started = time.time()
+            for i in range(120):
+                if cancel_event is not None and cancel_event.is_set():
+                    _log(f"{provider} fetch cancelled.")
                     break
-            else:
-                login_streak = 0
-            try:
-                where = page.evaluate(_SCROLL_JS)
-                page.wait_for_timeout(1500)
-                sig = f"{len(harvested)}|{page.evaluate('document.documentElement.scrollHeight')}"
-                if i % 10 == 0:
-                    _log(f"  scroll round {i}: via={where} harvested={len(harvested)} sig={sig}")
-                if sig == last_sig:
-                    stable_rounds += 1
-                    if stable_rounds >= 10:
+                check_urls_for_login_redirect()
+                if landed_on_login:
+                    login_streak += 1
+                    # SSO chains pass auth-looking URLs transiently; only trust
+                    # the verdict after several consecutive polls, and never
+                    # abort within the first 15s of the redirect dance
+                    if login_streak >= 4 and time.time() - started > 15:
+                        _log("  looks like we landed on a login page; stopping.")
                         break
                 else:
-                    stable_rounds = 0
-                last_sig = sig
-            except Exception as e:
-                _log(f"  scroll stopped: {e}")
-                break
+                    login_streak = 0
+                try:
+                    where = page.evaluate(_SCROLL_JS)
+                    page.wait_for_timeout(1500)
+                    sig = f"{len(harvested)}|{page.evaluate('document.documentElement.scrollHeight')}"
+                    if i % 10 == 0:
+                        _log(f"  scroll round {i}: via={where} harvested={len(harvested)} sig={sig}")
+                    if sig == last_sig:
+                        stable_rounds += 1
+                        if stable_rounds >= 10:
+                            break
+                    else:
+                        stable_rounds = 0
+                    last_sig = sig
+                except Exception as e:
+                    _log(f"  scroll stopped: {e}")
+                    break
 
         # remaining library URLs (if any) as extra tabs
         for extra_url in LIBRARY_URLS[provider][1:]:
@@ -1471,8 +1546,8 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             except Exception as e:
                 _log(f"  fab native harvest failed: {e}")
 
-        # ---- Gumroad native harvest
-        if provider == "gumroad" and not landed_on_login:
+        # ---- Gumroad native harvest (fallback if early harvest didn't run)
+        if provider == "gumroad" and not landed_on_login and not harvested:
             try:
                 gumroad_items = harvest_gumroad_library(page)
                 harvested.extend(gumroad_items)
@@ -1518,11 +1593,12 @@ def fetch_library(provider: str, cancel_event=None) -> int:
         if not title:
             unknown += 1
             continue
-        if title in processed_titles:
-            continue
-        processed_titles.add(title)
-
         pkg_id = str(item.get("uid") or item.get("id") or item.get("listingId") or item.get("packageId") or "").strip()
+        dedup_key = (pkg_id, title) if pkg_id else title
+        if dedup_key in processed_titles:
+            continue
+        processed_titles.add(dedup_key)
+
         store_url = _extract_store_url(item, provider)
         publisher = _extract_publisher(item)
 
@@ -1578,6 +1654,10 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             asset["summary"] = rich[:800]
         elif item.get("_deep_summary"):
             asset["summary"] = str(item["_deep_summary"])[:800]
+        elif rich:
+            asset["summary"] = rich[:800]
+        if item.get("variants"):
+            asset["usage_notes"] = f"Variant / License: {item['variants']}"
         upsert_asset(asset)
         count += 1
 

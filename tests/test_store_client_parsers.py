@@ -10,17 +10,22 @@ class TestStoreClientParsers(unittest.TestCase):
         # Permalinks / slugs
         self.assertEqual(
             _extract_store_url({"permalink": "modular-scifi-corridor"}, "gumroad"),
-            "https://app.gumroad.com/library?item=modular-scifi-corridor"
+            "https://gumroad.com/library?item=modular-scifi-corridor"
         )
         # Relative URLs
         self.assertEqual(
             _extract_store_url({"url": "/l/cyberpunk-pack"}, "gumroad"),
-            "https://app.gumroad.com/l/cyberpunk-pack"
+            "https://gumroad.com/l/cyberpunk-pack"
         )
-        # IDs
+        # 32-char hex IDs (direct download/library item page)
+        self.assertEqual(
+            _extract_store_url({"id": "f254f82b90f5243d7ea1c1a4abb7e322"}, "gumroad"),
+            "https://gumroad.com/d/f254f82b90f5243d7ea1c1a4abb7e322"
+        )
+        # General IDs
         self.assertEqual(
             _extract_store_url({"id": "item_abc123"}, "gumroad"),
-            "https://app.gumroad.com/library?item=item_abc123"
+            "https://gumroad.com/library?item=item_abc123"
         )
         # Absolute URL passthrough
         self.assertEqual(
