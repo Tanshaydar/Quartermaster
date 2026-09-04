@@ -94,6 +94,43 @@ class TestVisionAndHybridSearch(unittest.TestCase):
         self.assertIn("match", top)
         self.assertIn("relevance", top)
 
+    def test_fts_sync_vision_tags_migration_v4(self):
+        # Insert an asset without vision tags
+        upsert_asset({
+            "id": "asset_drift",
+            "source": "gumroad",
+            "title": "Drifting Sci-Fi Drone",
+            "publisher": "Vendor",
+            "category": "3D Models",
+            "vision_tags": [],
+        }, db_path=self.db_path)
+
+        conn = get_connection(self.db_path)
+        # Simulate out-of-band vision tag write (e.g. from vision.py concept mining)
+        conn.execute("UPDATE assets SET vision_tags = ? WHERE id = ?",
+                     (json.dumps(["cyberpunk hovering drone"]), "asset_drift"))
+        conn.commit()
+
+        # FTS still has empty vision_tags before sync
+        hit_before = conn.execute("SELECT id FROM assets_fts WHERE assets_fts MATCH 'hovering'").fetchall()
+        self.assertEqual(len(hit_before), 0)
+
+        # Reset user_version to 3 to trigger v4 migration on init_db
+        conn.execute("PRAGMA user_version = 3")
+        conn.commit()
+        conn.close()
+
+        # Re-initialize to trigger migration v4
+        init_db(self.db_path)
+
+        conn = get_connection(self.db_path)
+        ver = conn.execute("PRAGMA user_version").fetchone()[0]
+        self.assertGreaterEqual(ver, 4)
+        hit_after = conn.execute("SELECT id FROM assets_fts WHERE assets_fts MATCH 'hovering'").fetchall()
+        self.assertEqual(len(hit_after), 1)
+        self.assertEqual(hit_after[0][0], "asset_drift")
+        conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

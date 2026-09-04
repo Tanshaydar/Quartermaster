@@ -115,6 +115,16 @@ def init_db(db_path: str = DB_PATH):
             """)
         cur.execute("PRAGMA user_version = 3")
 
+    if ver < 4:
+        try:
+            cur.execute("""
+                UPDATE assets_fts
+                SET vision_tags = COALESCE((SELECT vision_tags FROM assets WHERE assets.id = assets_fts.id), '')
+            """)
+            cur.execute("PRAGMA user_version = 4")
+        except Exception:
+            pass
+
     # Prune any dangling FTS entries whose parent row in assets was removed
     try:
         cur.execute("DELETE FROM assets_fts WHERE id NOT IN (SELECT id FROM assets)")

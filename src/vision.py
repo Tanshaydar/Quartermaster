@@ -340,6 +340,13 @@ def build(limit=None, cancel_event=None, progress=None) -> dict:
             tags = tags_by_asset.get(aid, [])
             conn.execute("UPDATE assets SET vision_tags = ? WHERE id = ?",
                          (json.dumps(tags), aid))
+        try:
+            conn.execute("""
+                UPDATE assets_fts
+                SET vision_tags = COALESCE((SELECT vision_tags FROM assets WHERE assets.id = assets_fts.id), '')
+            """)
+        except Exception:
+            pass
         conn.commit()
         conn.close()
         stats["assets_tagged"] = len(tags_by_asset)
