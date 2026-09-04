@@ -10,6 +10,9 @@ import unittest
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
+if sys.platform.startswith("linux"):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 if __name__ == "__main__":
     loader = unittest.TestLoader()
     suite = loader.discover(os.path.join(BASE_DIR, "tests"), pattern="test_*.py")
