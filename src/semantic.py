@@ -75,20 +75,47 @@ def index_size(db_path: str = DB_PATH) -> int:
     return n
 
 
-def build_index(batch_size: int = 64, db_path: str = DB_PATH) -> int:
-    """Embed all assets. Returns number indexed."""
-    model = _model()
+def build_index(batch_size: int = 64, db_path: str = DB_PATH, force: bool = False,
+                cancel_event=None, progress=None) -> int:
+    """Embed assets with fastembed BGE-small. Returns number newly indexed."""
     conn = get_connection(db_path)
     _ensure_table(conn)
 
-    cur = conn.execute(
-        "SELECT id, title, publisher, category, tags, summary, usage_notes, render_pipelines FROM assets")
-    rows = [dict(r) for r in cur.fetchall()]
-    print(f"[semantic] embedding {len(rows)} assets…")
+    # Prune stale vectors for assets that disappeared
+    all_asset_ids = {r[0] for r in conn.execute("SELECT id FROM assets")}
+    stale = [aid for (aid,) in conn.execute("SELECT asset_id FROM asset_vectors")
+             if aid not in all_asset_ids]
+    if stale:
+        conn.executemany("DELETE FROM asset_vectors WHERE asset_id = ?", [(a,) for a in stale])
+        conn.commit()
 
+    if force:
+        cur = conn.execute(
+            "SELECT id, title, publisher, category, tags, summary, usage_notes, render_pipelines FROM assets")
+    else:
+        # Incremental: only embed assets missing from asset_vectors
+        cur = conn.execute(
+            "SELECT id, title, publisher, category, tags, summary, usage_notes, render_pipelines "
+            "FROM assets WHERE id NOT IN (SELECT asset_id FROM asset_vectors)")
+    rows = [dict(r) for r in cur.fetchall()]
+    total = len(rows)
+
+    if total == 0:
+        conn.close()
+        invalidate_vector_cache()
+        if progress:
+            progress(1, 1, "Semantic index already fully up to date.")
+        print("[semantic] All assets already indexed.")
+        return 0
+
+    model = _model()
+    print(f"[semantic] embedding {total} assets…")
     docs = [_doc_text(r) for r in rows]
     done = 0
     for start in range(0, len(docs), batch_size):
+        if cancel_event and cancel_event.is_set():
+            print("[semantic] Indexing cancelled.")
+            break
         batch = docs[start:start + batch_size]
         vecs = list(model.embed(batch))
         for r, v in zip(rows[start:start + batch_size], vecs):
@@ -98,15 +125,10 @@ def build_index(batch_size: int = 64, db_path: str = DB_PATH) -> int:
                 "ON CONFLICT(asset_id) DO UPDATE SET dim=excluded.dim, vec=excluded.vec",
                 (r["id"], len(v), blob))
         done += len(batch)
+        if progress:
+            progress(done, total, f"Semantic embedding: {done}/{total} assets")
         if done % 256 < batch_size:
-            print(f"  {done}/{len(docs)}")
-    conn.commit()
-
-    # drop vectors for assets that disappeared
-    ids = set(r["id"] for r in rows)
-    stale = [aid for (aid,) in conn.execute("SELECT asset_id FROM asset_vectors")
-             if aid not in ids]
-    conn.executemany("DELETE FROM asset_vectors WHERE asset_id = ?", [(a,) for a in stale])
+            print(f"  {done}/{total}")
     conn.commit()
     conn.close()
     invalidate_vector_cache()

@@ -803,7 +803,14 @@ class SyncDialog(QDialog):
             "Quixel scan specs",
             with_progress=True
         ))
-        for b in (b_f_login, b_f_fetch, b_q_sync, b_q_specs):
+        b_f_gallery = QPushButton("🖼 Fab Galleries")
+        b_f_gallery.clicked.connect(lambda: self._run_op(
+            lambda ev, cb: store_client.run_fab_deep_media(cancel_event=ev, progress=cb),
+            "Fab gallery sweep",
+            pre_status="Visiting pending Fab listings in browser for screenshot galleries…",
+            with_progress=True
+        ))
+        for b in (b_f_login, b_f_fetch, b_q_sync, b_q_specs, b_f_gallery):
             f_btns.addWidget(b)
         f_btns.addStretch()
         f_lay.addWidget(self.f_status)
@@ -822,11 +829,15 @@ class SyncDialog(QDialog):
         ))
         b_ai_enrich = QPushButton("🖼 Enrich Media")
         b_ai_enrich.clicked.connect(self._on_enrich_clicked)
+        b_ai_semantic = QPushButton("🧠 Semantic (BGE)")
+        b_ai_semantic.clicked.connect(lambda: self._run_op(
+            lambda ev, cb: semantic.build_index(cancel_event=ev, progress=cb), "Semantic pass", with_progress=True
+        ))
         b_ai_vision = QPushButton("👁 Vision Pass (CLIP)")
         b_ai_vision.clicked.connect(lambda: self._run_op(
             lambda ev, cb: vision.build(cancel_event=ev, progress=cb), "Vision pass", with_progress=True
         ))
-        for b in (b_ai_scan, b_ai_enrich, b_ai_vision):
+        for b in (b_ai_scan, b_ai_enrich, b_ai_semantic, b_ai_vision):
             ai_btns.addWidget(b)
         ai_btns.addStretch()
         ai_lay.addWidget(self.ai_status)
@@ -868,10 +879,11 @@ class SyncDialog(QDialog):
             q_catalog = by_src.get("quixel", 0)
             pending = store_client.count_unenriched()
             fab_pending = store_client.fab_deep_media_pending()
-            enrich_info = "✅ Media fully enriched" if (pending == 0 and fab_pending == 0) else f"⚡ {pending + fab_pending} pending enrichment"
+            sem_count = semantic.index_size()
+            enrich_info = "✅ Media enriched" if (pending == 0 and fab_pending == 0) else f"⚡ {pending + fab_pending} pending media"
             self.u_status.setText(f"{u_owned} owned packages in vault · Session: {'Saved' if store_client.has_saved_session('unity') else 'Not saved'}")
             self.f_status.setText(f"{f_owned} owned Fab · {q_catalog} Quixel catalog entries · Session: {'Saved' if store_client.has_saved_session('fab') else 'Not saved'}")
-            self.ai_status.setText(f"{total} indexed assets in SQLite · {enrich_info} · Hybrid search ready")
+            self.ai_status.setText(f"{total} assets in SQLite · {enrich_info} · 🧠 {sem_count}/{total} BGE · Hybrid search ready")
         except Exception:
             pass
 
