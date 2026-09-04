@@ -58,6 +58,38 @@ class TestConcurrencyAndSecurity(unittest.TestCase):
             sc._release_profile_lock(tmp_prof)
             self.assertFalse(os.path.exists(lock))
 
+    def test_desktop_thumbnail_ssrf_blocking(self):
+        from src.desktop import _ImageDownloadTask
+        class MockManager:
+            def __init__(self, tmp_dir):
+                self.media_cache_dir = tmp_dir
+                self.media_cache_enabled = True
+                self._shutting_down = False
+                self.notified = []
+
+            def _notify(self, url, data, qimg):
+                self.notified.append((url, data, qimg))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            mgr = MockManager(tmp_dir)
+
+            # 1. Non-allowlisted host / cloud metadata endpoint
+            task_evil = _ImageDownloadTask("http://169.254.169.254/latest/meta-data/img.jpg", mgr)
+            task_evil.run()
+            self.assertEqual(len(mgr.notified), 1)
+            self.assertEqual(mgr.notified[0][1], b"")
+            self.assertIsNone(mgr.notified[0][2])
+            self.assertEqual(len(os.listdir(tmp_dir)), 0)
+
+            # 2. Localhost probing
+            mgr.notified.clear()
+            task_local = _ImageDownloadTask("http://127.0.0.1:8080/secret.png", mgr)
+            task_local.run()
+            self.assertEqual(len(mgr.notified), 1)
+            self.assertEqual(mgr.notified[0][1], b"")
+            self.assertIsNone(mgr.notified[0][2])
+            self.assertEqual(len(os.listdir(tmp_dir)), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2176,9 +2176,10 @@ def enrich_quixel_specs(limit: Optional[int] = None, cancel_event=None, progress
                     if specs.get("texel_density"):
                         spec_details.append(specs["texel_density"])
                     if spec_details:
-                        new_sum = re.sub(r"\s*\((?:[^)]*px/m|[^)]*\d+x\d+\s*m)[^)]*\)$", "", new_sum)
                         spec_str = f"({', '.join(spec_details)})"
-                        new_sum = f"{new_sum} {spec_str}".strip()
+                        if not new_sum.endswith(spec_str):
+                            base_sum = re.sub(r"\s*\((?:[^)]*px/m|[^)]*\d+x\d+\s*m)[^)]*\)$", "", new_sum)
+                            new_sum = f"{base_sum} {spec_str}".strip() if base_sum else spec_str
 
                     cur.execute("""
                         UPDATE assets 

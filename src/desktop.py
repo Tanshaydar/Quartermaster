@@ -32,11 +32,15 @@ from PySide6.QtWidgets import (
 
 try:
     from .db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from .config import load_config, save_config_partial, rotate_log_if_large, evict_image_cache, __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH
+    from .config import (load_config, save_config_partial, rotate_log_if_large, evict_image_cache,
+                         __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH,
+                         is_safe_image_url, MAX_IMAGE_BYTES)
     from . import store_client, local_scan, vision, semantic
 except ImportError:
     from db import init_db, search_assets, get_asset_by_id, get_stats, get_categories
-    from config import load_config, save_config_partial, rotate_log_if_large, evict_image_cache, __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH
+    from config import (load_config, save_config_partial, rotate_log_if_large, evict_image_cache,
+                        __version__, ICON_ICO_PATH, ICON_PNG_PATH, CRASH_LOG_PATH,
+                        is_safe_image_url, MAX_IMAGE_BYTES)
     import store_client, local_scan, vision, semantic
 
 ICON_PATH = ICON_ICO_PATH
@@ -407,15 +411,45 @@ class _ImageDownloadTask(QRunnable):
             else:
                 if getattr(self.manager, "_shutting_down", False):
                     return
+                if not is_safe_image_url(self.url):
+                    return
+
                 import httpx
-                r = httpx.get(self.url, timeout=12, follow_redirects=True,
-                              headers={"User-Agent": "Mozilla/5.0", "Referer": self.url})
-                if r.status_code == 200 and len(r.content) <= 15 * 1024 * 1024:
-                    data = r.content
-                    if path:
-                        evict_image_cache(cache_dir)
-                        with open(path, "wb") as f:
-                            f.write(data)
+                import urllib.parse
+                current_url = self.url
+                with httpx.Client(timeout=12.0, headers={"User-Agent": "Mozilla/5.0", "Referer": self.url}) as client:
+                    for _ in range(5):  # max 5 redirects
+                        if getattr(self.manager, "_shutting_down", False):
+                            return
+                        if not is_safe_image_url(current_url):
+                            return
+
+                        req = client.build_request("GET", current_url)
+                        r = client.send(req, stream=True)
+
+                        if r.is_redirect:
+                            loc = r.headers.get("location")
+                            if not loc:
+                                r.close()
+                                break
+                            current_url = urllib.parse.urljoin(current_url, loc)
+                            r.close()
+                            continue
+
+                        if r.status_code == 200:
+                            ctype = r.headers.get("content-type", "").lower()
+                            if not any(t in ctype for t in ("image/", "application/octet-stream", "binary/octet-stream")):
+                                r.close()
+                                break
+                            content = r.read()
+                            if len(content) <= MAX_IMAGE_BYTES:
+                                data = content
+                                if path:
+                                    evict_image_cache(cache_dir)
+                                    with open(path, "wb") as f:
+                                        f.write(data)
+                        r.close()
+                        break
             if data:
                 try:
                     qimg = QImage.fromData(data)
