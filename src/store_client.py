@@ -1723,7 +1723,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             if not cover_img and gallery_imgs:
                 cover_img = gallery_imgs[0]
         stable_id = _stable_id(provider, pkg_id, title)
-        is_already_enriched = bool(cover_img and provider in ("gumroad", "cosmos", "fab"))
+        is_already_enriched = bool(cover_img and provider in ("gumroad", "fab"))
         asset = {
             "id": stable_id,
             "source": provider,
@@ -1763,6 +1763,13 @@ def fetch_library(provider: str, cancel_event=None) -> int:
     _log(f"{provider} fetch done: {count} assets upserted "
          f"({unknown} entries had no usable title).")
 
+    if provider == "cosmos" and count > 0:
+        try:
+            _log("Auto-enriching Cosmos asset galleries and metadata...")
+            enrich_cosmos_catalog(cancel_event=cancel_event, progress=progress)
+        except Exception as e:
+            _log(f"Cosmos auto-enrichment non-fatal error: {e}")
+
     if count == 0:
         _log(f"HARVEST DIAGNOSTIC for {provider}: {len(all_json_urls)} JSON responses seen:")
         for u in all_json_urls[:40]:
@@ -1801,9 +1808,79 @@ def count_unenriched(db_path: str = DB_PATH) -> int:
     return n
 
 
+def _enrich_cosmos_one(asset, client=None) -> bool:
+    slug = (asset.get("store_url") or "").split("/")[-1].strip()
+    if not slug:
+        slug = str(asset.get("package_id") or "").strip()
+    if not slug:
+        mark_enriched(asset["id"])
+        return True
+
+    url = f"https://api.cosmos.leartesstudios.com/products/{slug}"
+    close_client = False
+    if client is None:
+        client = httpx.Client(timeout=12.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (Quartermaster cosmos-enrich)"})
+        close_client = True
+
+    try:
+        r = client.get(url)
+        if r.status_code != 200:
+            mark_enriched(asset["id"])
+            return True
+        data = r.json()
+        if not isinstance(data, dict):
+            mark_enriched(asset["id"])
+            return True
+    except Exception as e:
+        _log(f"warn: cosmos enrich {asset.get('title')}: {e}")
+        return False
+    finally:
+        if close_client:
+            client.close()
+
+    cover_img = ""
+    cover_obj = data.get("cover_image")
+    if isinstance(cover_obj, dict) and cover_obj.get("url"):
+        cover_img = cover_obj["url"]
+    elif isinstance(cover_obj, str) and cover_obj:
+        cover_img = cover_obj
+
+    gallery = []
+    details = data.get("details") or {}
+    if isinstance(details, dict):
+        for _platform, pdata in details.items():
+            if isinstance(pdata, dict) and "images" in pdata:
+                for img in pdata["images"]:
+                    if isinstance(img, dict) and img.get("url"):
+                        u = img["url"]
+                        if u not in gallery and u != cover_img:
+                            gallery.append(u)
+
+    raw_tags = data.get("tags") or []
+    tags = [str(t).strip().lower() for t in raw_tags if str(t).strip()]
+
+    desc = data.get("description") or data.get("subtitle") or ""
+    if desc:
+        desc = re.sub(r"<[^>]+>", " ", str(desc))
+        desc = re.sub(r"\s+", " ", desc).strip()
+
+    mark_enriched(
+        asset["id"],
+        image_url=cover_img or asset.get("image_url") or "",
+        gallery_images=gallery,
+        tags=tags or None,
+        summary=(desc or "")[:800],
+    )
+    return True
+
+
 def _enrich_one(asset):
     """Enrich a single asset with a dedicated thread-safe HTTP request. Returns True when marked done."""
-    if asset.get("source") in ("gumroad", "cosmos", "fab"):
+    if asset.get("source") == "cosmos":
+        with httpx.Client(timeout=12.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (Quartermaster cosmos-enrich)"}) as client:
+            return _enrich_cosmos_one(asset, client)
+
+    if asset.get("source") in ("gumroad", "fab"):
         mark_enriched(asset["id"])
         return True
 
@@ -2316,6 +2393,51 @@ def enrich_quixel_specs(limit: Optional[int] = None, cancel_event=None, progress
     }
 
 
+def enrich_cosmos_catalog(limit: Optional[int] = None, cancel_event=None, progress=None, db_path=DB_PATH) -> int:
+    """Fast enrichment for Leartes Cosmos: pulls full multi-image screenshot galleries, tags and descriptions."""
+    conn = get_connection(db_path)
+    rows = conn.execute(
+        "SELECT id, title, store_url, package_id, image_url, gallery_images FROM assets "
+        "WHERE source = 'cosmos' AND (gallery_images IS NULL OR gallery_images = '' OR gallery_images = '[]' "
+        "OR json_array_length(gallery_images) <= 1)"
+    ).fetchall()
+    conn.close()
+    if not rows:
+        _log("Cosmos gallery enrichment: all Cosmos assets already have full galleries.")
+        if progress:
+            progress(0, 0, "Cosmos galleries: all assets already enriched.")
+        return 0
+
+    assets = [dict(r) for r in rows]
+    if limit:
+        assets = assets[:limit]
+
+    total = len(assets)
+    _log(f"Starting Cosmos gallery enrichment for {total} assets...")
+    if progress:
+        progress(0, total, f"Cosmos galleries: 0/{total} (0%)")
+
+    enriched_count = 0
+    with httpx.Client(timeout=12.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (Quartermaster cosmos-enrich)"}) as client:
+        for idx, asset in enumerate(assets):
+            if cancel_event is not None and cancel_event.is_set():
+                _log("Cosmos gallery enrichment cancelled by user.")
+                break
+            try:
+                ok = _enrich_cosmos_one(asset, client)
+                if ok:
+                    enriched_count += 1
+            except Exception as e:
+                _log(f"Cosmos gallery error on {asset.get('title')}: {e}")
+
+            if progress and ((idx + 1) % 5 == 0 or (idx + 1) == total):
+                pct = int((idx + 1) / total * 100)
+                progress(idx + 1, total, f"Cosmos galleries: {idx + 1}/{total} ({pct}%)")
+
+    _log(f"Cosmos gallery enrichment done: {enriched_count}/{total} assets enriched.")
+    return enriched_count
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "login" and len(sys.argv) > 2:
@@ -2327,15 +2449,22 @@ if __name__ == "__main__":
     elif cmd in ("enrich-quixel", "enrich-specs", "quixel-specs"):
         n = int(sys.argv[2]) if len(sys.argv) > 2 else None
         enrich_quixel_specs(n)
-    elif cmd == "enrich":
+    elif cmd in ("enrich-cosmos", "cosmos-gallery", "cosmos-galleries"):
         n = int(sys.argv[2]) if len(sys.argv) > 2 else None
-        enrich_assets(n)
+        enrich_cosmos_catalog(n)
+    elif cmd == "enrich":
+        if len(sys.argv) > 2 and sys.argv[2] == "cosmos":
+            enrich_cosmos_catalog()
+        else:
+            n = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else None
+            enrich_assets(n)
     elif cmd == "fab-deep-media":
         run_fab_deep_media()
     else:
-        print("Usage:\n  python -m src.store_client login <unity|fab>\n"
-              "  python -m src.store_client fetch <unity|fab>\n"
+        print("Usage:\n  python -m src.store_client login <unity|fab|gumroad|cosmos>\n"
+              "  python -m src.store_client fetch <unity|fab|gumroad|cosmos>\n"
               "  python -m src.store_client sync-quixel\n"
               "  python -m src.store_client enrich-quixel [limit]\n"
+              "  python -m src.store_client enrich-cosmos [limit]\n"
               "  python -m src.store_client enrich [limit]\n"
               "  python -m src.store_client fab-deep-media [limit]")

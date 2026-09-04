@@ -371,7 +371,7 @@ def get_unenriched(limit: int = 50, db_path: str = DB_PATH) -> List[Dict[str, An
     return rows
 
 def mark_enriched(asset_id: str, image_url: str = "", gallery_images=None, video_links=None,
-                  summary: str = "", usage_notes: str = "", db_path: str = DB_PATH):
+                  summary: str = "", usage_notes: str = "", tags=None, db_path: str = DB_PATH):
     conn = get_connection(db_path)
     cur = conn.cursor()
     sets, params = ["enriched = 1", "enriched_at = CURRENT_TIMESTAMP"], []
@@ -385,6 +385,8 @@ def mark_enriched(asset_id: str, image_url: str = "", gallery_images=None, video
         sets.append("summary = ?"); params.append(summary)
     if usage_notes:
         sets.append("usage_notes = ?"); params.append(usage_notes)
+    if tags is not None:
+        sets.append("tags = ?"); params.append(json.dumps(tags))
     params.append(asset_id)
     cur.execute(f"UPDATE assets SET {', '.join(sets)} WHERE id = ?", params)
 
