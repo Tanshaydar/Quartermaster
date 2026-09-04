@@ -57,6 +57,21 @@ function imgSrc(url) {
   return url ? `/api/image?url=${encodeURIComponent(url)}` : null;
 }
 
+function formatSource(s) {
+  const m = { unity: 'Unity', fab: 'Fab', quixel: 'Quixel', gumroad: 'Gumroad', cosmos: 'Cosmos' };
+  return m[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
+}
+
+function formatSourceFull(s) {
+  const m = { unity: 'Unity Asset Store', fab: 'Fab / Unreal', quixel: 'Quixel Megascans', gumroad: 'Gumroad', cosmos: 'Leartes Cosmos' };
+  return m[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
+}
+
+function formatDefaultEngine(s) {
+  const m = { unity: 'UnityPackage', fab: 'Unreal Engine', quixel: 'Megascans / Multi-Engine', gumroad: 'Direct Archive / Multi-Engine', cosmos: 'Cosmos / Unreal Engine' };
+  return m[s] || 'Multi-Engine';
+}
+
 // Render Asset Card
 function createAssetCard(item) {
   const card = document.createElement('div');
@@ -71,7 +86,7 @@ function createAssetCard(item) {
       ${src ? `<img src="${src}" alt="${esc(item.title)}" loading="lazy">`
             : `<div class="card-media-placeholder">📦</div>`}
       <div class="media-top-badges">
-        <span class="source-tag ${esc(item.source)}">${item.source === 'unity' ? 'Unity' : 'Fab'}</span>
+        <span class="source-tag ${esc(item.source)}">${formatSource(item.source)}</span>
         <span class="status-tag ${isLocal ? 'local' : 'cloud'}">
           ${isLocal ? '⚡ Local' : '☁ Cloud'}
         </span>
@@ -266,7 +281,7 @@ async function openDetailModal(assetId) {
   // Badges
   const badgesBox = $('#modal-badges');
   badgesBox.innerHTML = `
-    <span class="source-tag ${esc(full.source)}">${full.source === 'unity' ? 'Unity Asset Store' : 'Fab / Unreal'}</span>
+    <span class="source-tag ${esc(full.source)}">${formatSourceFull(full.source)}</span>
     <span class="category-badge">${esc(full.category)}</span>
     ${(full.render_pipelines || []).map(p => `<span class="pipeline-badge">${esc(p)}</span>`).join('')}
   `;
@@ -333,7 +348,7 @@ async function openDetailModal(assetId) {
   $('#modal-specs-grid').innerHTML = `
     <dt>Asset ID</dt><dd>${esc(full.id)}</dd>
     <dt>Package ID</dt><dd>${esc(full.package_id || 'N/A')}</dd>
-    <dt>Engine Formats</dt><dd>${esc((full.formats || []).join(', ') || (full.source === 'unity' ? 'UnityPackage' : 'Unreal Engine'))}</dd>
+    <dt>Engine Formats</dt><dd>${esc((full.formats || []).join(', ') || formatDefaultEngine(full.source))}</dd>
     <dt>Local Path</dt><dd>${esc(full.local_path || 'Not downloaded to local cache')}</dd>
   `;
 
@@ -341,7 +356,7 @@ async function openDetailModal(assetId) {
   const aiCtx = [
     `### Asset: ${full.title}`,
     `- **Publisher:** ${full.publisher || 'Unknown'}`,
-    `- **Source:** ${full.source === 'unity' ? 'Unity Asset Store' : 'Fab (Unreal Engine)'}`,
+    `- **Source:** ${formatSourceFull(full.source)}`,
     `- **Category:** ${full.category}`,
     full.render_pipelines?.length && `- **Render Pipelines:** ${full.render_pipelines.join(', ')}`,
     full.local_path ? `- **Local Status:** Downloaded on Disk (${full.local_path})` : `- **Local Status:** Cloud Library`,

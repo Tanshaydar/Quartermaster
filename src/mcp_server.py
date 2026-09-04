@@ -39,7 +39,7 @@ def _slim(item: dict) -> dict:
         "title": item["title"],
         "publisher": item.get("publisher"),
         "source": item.get("source"),
-        "ownership": "vault_owned" if item.get("source") in ("unity", "fab") else "catalog_grant",
+        "ownership": "vault_owned" if item.get("source") in ("unity", "fab", "gumroad", "cosmos") else "catalog_grant",
         "category": item.get("category"),
         "version": item.get("version"),
         "pipelines": item.get("render_pipelines") or item.get("formats"),
@@ -69,7 +69,7 @@ def search_owned_assets(query: str, engine: str = "all", pipeline: str = "all",
     """Search the user's asset vault (owned Unity/Fab packages and synced Quixel Megascans catalog).
     Hybrid: keyword (BM25) fused with local semantic embeddings.
     Results include a 'match' field and 'ownership' field ('vault_owned' vs 'catalog_grant').
-    engine: all|unity|fab|quixel. pipeline: all|HDRP|URP|Built-in.
+    engine: all|unity|fab|quixel|gumroad|cosmos. pipeline: all|HDRP|URP|Built-in.
     local_only: only assets already downloaded to disk."""
     if query.strip():
         merged = semantic.hybrid_search(query, limit=max(limit * 2, 50))

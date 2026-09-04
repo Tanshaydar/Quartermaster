@@ -64,6 +64,8 @@ LOGIN_URLS = {
     # cookie, severed further by Edge's default third-party cookie blocking).
     "unity": "https://id.unity.com/en/login?redirect_url=https%3A%2F%2Fassetstore.unity.com%2F",
     "fab": "https://www.epicgames.com/id/login",
+    "gumroad": "https://app.gumroad.com/login",
+    "cosmos": "https://cosmos.leartesstudios.com/login",
 }
 
 LIBRARY_URLS = {
@@ -71,6 +73,8 @@ LIBRARY_URLS = {
     # /account/downloads redirects here; this is the owned-packages page.
     "unity": ["https://assetstore.unity.com/account/assets"],
     "fab": ["https://www.fab.com/library"],
+    "gumroad": ["https://app.gumroad.com/library"],
+    "cosmos": ["https://cosmos.leartesstudios.com/profile/my-assets"],
 }
 
 _LOGIN_MARKERS = ("login", "sign-in", "signin", "id/")
@@ -81,6 +85,8 @@ _LOGIN_MARKERS = ("login", "sign-in", "signin", "id/")
 _PROVIDER_HOSTS = {
     "unity": ("unity.com", "unity3d.com"),
     "fab": ("fab.com", "epicgames.com"),
+    "gumroad": ("gumroad.com", "gumroadcdn.com"),
+    "cosmos": ("leartesstudios.com",),
 }
 
 
@@ -382,19 +388,36 @@ def _extract_store_url(item: dict, provider: str) -> str:
             if u.startswith("http"):
                 return u
             if u.startswith("/"):
-                return f"https://assetstore.unity.com{u}" if provider == "unity" else f"https://www.fab.com{u}"
+                if provider == "unity":
+                    return f"https://assetstore.unity.com{u}"
+                elif provider == "fab":
+                    return f"https://www.fab.com{u}"
+                elif provider == "gumroad":
+                    return f"https://app.gumroad.com{u}"
+                elif provider == "cosmos":
+                    return f"https://cosmos.leartesstudios.com{u}"
+                return f"https://www.fab.com{u}"
             return u
-    slug = item.get("slug") or item.get("packageSlug") or item.get("listingSlug")
+    slug = item.get("slug") or item.get("packageSlug") or item.get("listingSlug") or item.get("permalink")
     if slug and isinstance(slug, str):
         if provider == "unity":
             return f"https://assetstore.unity.com/packages/{slug.strip('/')}"
-        return f"https://www.fab.com/listings/{slug.strip('/')}"
+        elif provider == "fab":
+            return f"https://www.fab.com/listings/{slug.strip('/')}"
+        elif provider == "gumroad":
+            return f"https://app.gumroad.com/library?item={slug.strip('/')}"
+        elif provider == "cosmos":
+            return f"https://cosmos.leartesstudios.com/product/{slug.strip('/')}"
     pkg_id = item.get("id") or item.get("listingId") or item.get("packageId")
     if pkg_id:
         if provider == "unity" and str(pkg_id).isdigit():
             return f"https://assetstore.unity.com/packages/slug/{pkg_id}"
         elif provider == "fab":
             return f"https://www.fab.com/listings/{pkg_id}"
+        elif provider == "gumroad":
+            return f"https://app.gumroad.com/library?item={pkg_id}"
+        elif provider == "cosmos":
+            return f"https://cosmos.leartesstudios.com/product/{pkg_id}"
     return ""
 
 
@@ -426,7 +449,7 @@ def _extract_media_images(item: dict) -> tuple:
                         gallery.append(best_thumb)
 
     # 2. Direct string fields
-    for k in ("thumbnailUrl", "thumbnail", "image", "imageUrl", "heroUrl", "coverUrl", "coverImage", "mainImage", "primaryImage", "mediaUrl"):
+    for k in ("cover_image", "coverImage", "coverUrl", "cover_url", "heroUrl", "previewUrl", "preview_url", "mainImage", "primaryImage", "image", "imageUrl", "thumbnailUrl", "thumbnail", "thumbnail_url", "mediaUrl"):
         v = item.get(k)
         if isinstance(v, str) and v.startswith("http"):
             if not cover:
@@ -481,7 +504,7 @@ def _extract_media_images(item: dict) -> tuple:
 
 
 def _extract_publisher(item: dict) -> str:
-    for k in ("sellerName", "publisher", "publisherLabel", "publisherName", "developer", "author", "user", "studio"):
+    for k in ("sellerName", "publisher", "publisherLabel", "publisherName", "developer", "author", "creator", "user", "studio"):
         p = _extract_string(item.get(k), "name", "label", "sellerName", "username", "displayName")
         if p:
             return p[:120]
@@ -684,6 +707,178 @@ def harvest_fab_library(page, known_titles: Optional[set] = None) -> List[Dict[s
     if not collected and pages == 0:
         _log("  fab harvest produced nothing — see [fab diag] above for payload shape")
     return collected
+
+
+_GUMROAD_FETCH_JS = """
+(() => {
+    try {
+        const nextEl = document.getElementById('__NEXT_DATA__');
+        if (nextEl) {
+            const nextData = JSON.parse(nextEl.textContent || '{}');
+            const purchases = nextData.props?.pageProps?.purchases 
+                || nextData.props?.pageProps?.initialState?.purchases
+                || nextData.props?.pageProps?.data?.purchases || [];
+            if (Array.isArray(purchases) && purchases.length > 0) {
+                return purchases.map(p => ({
+                    id: String(p.id || p.permalink || p.product_id || ''),
+                    name: String(p.product?.name || p.name || p.product_name || ''),
+                    publisher: String(p.creator?.name || p.seller?.name || p.creator_name || p.product?.creator?.name || ''),
+                    description: String(p.product?.description || p.description || ''),
+                    cover_image: String(p.product?.preview_url || p.product?.thumbnail_url || p.thumbnail_url || p.preview_url || ''),
+                    url: p.permalink ? ('https://app.gumroad.com/library?item=' + p.permalink) : String(p.url || ''),
+                    createdAt: String(p.created_at || p.purchase_date || ''),
+                    tags: p.product?.tags || [],
+                }));
+            }
+        }
+    } catch (e) {}
+
+    try {
+        const st = window.initial_state || window.__INITIAL_STATE__ || window.gumroad;
+        const purchases = st?.purchases || st?.library?.purchases || [];
+        if (Array.isArray(purchases) && purchases.length > 0) {
+            return purchases.map(p => ({
+                id: String(p.id || p.permalink || p.product_id || ''),
+                name: String(p.product?.name || p.name || p.product_name || ''),
+                publisher: String(p.creator?.name || p.seller?.name || p.creator_name || ''),
+                description: String(p.product?.description || p.description || ''),
+                cover_image: String(p.product?.preview_url || p.product?.thumbnail_url || p.thumbnail_url || ''),
+                url: p.permalink ? ('https://app.gumroad.com/library?item=' + p.permalink) : String(p.url || ''),
+                createdAt: String(p.created_at || p.purchase_date || ''),
+            }));
+        }
+    } catch (e) {}
+
+    const items = [];
+    try {
+        const cards = document.querySelectorAll('.library-item, [data-component="LibraryItem"], article, .product-card, a[href*="/library?item="]');
+        for (const card of cards) {
+            const titleEl = card.querySelector('h3, h4, .product-title, .title, [class*="title"], [class*="Title"]') || card;
+            const title = (titleEl.textContent || '').trim();
+            if (!title || title.length > 180) continue;
+
+            const linkEl = card.tagName === 'A' ? card : card.querySelector('a[href*="/library"], a[href*="/d/"], a[href*="/l/"], a');
+            const href = linkEl ? linkEl.getAttribute('href') : '';
+            const fullUrl = href ? (href.startsWith('http') ? href : ('https://app.gumroad.com' + href)) : '';
+
+            const authorEl = card.querySelector('.seller-name, .creator-name, [class*="seller"], [class*="creator"], [class*="author"]');
+            const author = authorEl ? authorEl.textContent.trim() : '';
+
+            const imgEl = card.querySelector('img');
+            const cover = imgEl ? (imgEl.getAttribute('src') || '') : '';
+
+            const descEl = card.querySelector('p, .description, [class*="description"]');
+            const desc = descEl ? descEl.textContent.trim() : '';
+
+            let uid = card.getAttribute('data-product-id') || card.getAttribute('data-id') || '';
+            if (!uid && href) {
+                const match = href.match(/[?&]item=([^&]+)/) || href.match(/\\/l\\/([^/?#]+)/) || href.match(/\\/d\\/([^/?#]+)/);
+                if (match) uid = match[1];
+            }
+            if (!uid) uid = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+            items.push({
+                id: uid,
+                name: title,
+                publisher: author,
+                description: desc,
+                cover_image: cover,
+                url: fullUrl,
+            });
+        }
+    } catch (e) {}
+    return items;
+})()
+"""
+
+_COSMOS_FETCH_JS = """
+(() => {
+    try {
+        const nextEl = document.getElementById('__NEXT_DATA__');
+        if (nextEl) {
+            const nextData = JSON.parse(nextEl.textContent || '{}');
+            const assets = nextData.props?.pageProps?.assets 
+                || nextData.props?.pageProps?.library 
+                || nextData.props?.pageProps?.myAssets
+                || nextData.props?.pageProps?.data?.items || [];
+            if (Array.isArray(assets) && assets.length > 0) {
+                return assets.map(a => ({
+                    id: String(a.id || a.slug || a._id || ''),
+                    name: String(a.title || a.name || ''),
+                    publisher: String(a.creator || a.publisher || a.seller || 'Leartes Studios'),
+                    description: String(a.description || ''),
+                    cover_image: String(a.coverImage || a.thumbnail || a.image || a.cover_url || ''),
+                    gallery_images: a.gallery || a.images || [],
+                    url: a.slug ? ('https://cosmos.leartesstudios.com/product/' + a.slug) : String(a.url || ''),
+                    category: typeof a.category === 'object' ? a.category?.name : a.category,
+                    technicalSpecs: typeof a.specs === 'object' ? JSON.stringify(a.specs) : (a.specs || ''),
+                }));
+            }
+        }
+    } catch (e) {}
+
+    const items = [];
+    try {
+        const cards = document.querySelectorAll('.asset-card, [class*="AssetCard"], [class*="product-card"], [class*="assetCard"], .card');
+        for (const card of cards) {
+            const titleEl = card.querySelector('h3, h4, [class*="title"], [class*="Title"], .name');
+            if (!titleEl) continue;
+            const title = (titleEl.textContent || '').trim();
+            if (!title || title.length > 180) continue;
+
+            const linkEl = card.querySelector('a[href*="/product"], a[href*="/asset"], a');
+            const href = linkEl ? linkEl.getAttribute('href') : '';
+            const fullUrl = href ? (href.startsWith('http') ? href : ('https://cosmos.leartesstudios.com' + href)) : '';
+
+            const imgEl = card.querySelector('img');
+            const cover = imgEl ? (imgEl.getAttribute('src') || '') : '';
+
+            const catEl = card.querySelector('[class*="category"], [class*="badge"], [class*="tag"]');
+            const cat = catEl ? catEl.textContent.trim() : '';
+
+            let uid = '';
+            if (href) {
+                const match = href.match(/\\/(?:product|asset)s?\\/([^/?#]+)/);
+                if (match) uid = match[1];
+            }
+            if (!uid) uid = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+            items.push({
+                id: uid,
+                name: title,
+                publisher: 'Leartes Studios',
+                cover_image: cover,
+                url: fullUrl,
+                category: cat,
+            });
+        }
+    } catch (e) {}
+    return items;
+})()
+"""
+
+def harvest_gumroad_library(page) -> List[Dict[str, Any]]:
+    """Extract purchased assets from Gumroad library via state inspection or DOM cards."""
+    try:
+        raw = page.evaluate(_GUMROAD_FETCH_JS)
+        if isinstance(raw, list):
+            _log(f"  gumroad harvest extracted {len(raw)} items")
+            return [x for x in raw if isinstance(x, dict) and (x.get("name") or x.get("title"))]
+    except Exception as e:
+        _log(f"  gumroad harvest failed: {e}")
+    return []
+
+
+def harvest_cosmos_library(page) -> List[Dict[str, Any]]:
+    """Extract acquired assets from Cosmos by Leartes Studios."""
+    try:
+        raw = page.evaluate(_COSMOS_FETCH_JS)
+        if isinstance(raw, list):
+            _log(f"  cosmos harvest extracted {len(raw)} items")
+            return [x for x in raw if isinstance(x, dict) and (x.get("name") or x.get("title"))]
+    except Exception as e:
+        _log(f"  cosmos harvest failed: {e}")
+    return []
 
 
 def _balanced_json_array(html: str, from_pos: int):
@@ -1273,9 +1468,26 @@ def fetch_library(provider: str, cancel_event=None) -> int:
                 fab_items = harvest_fab_library(page)
                 harvested.extend(fab_items)
                 _log(f"  fab native harvest returned {len(fab_items)} items")
-
             except Exception as e:
                 _log(f"  fab native harvest failed: {e}")
+
+        # ---- Gumroad native harvest
+        if provider == "gumroad" and not landed_on_login:
+            try:
+                gumroad_items = harvest_gumroad_library(page)
+                harvested.extend(gumroad_items)
+                _log(f"  gumroad native harvest returned {len(gumroad_items)} items")
+            except Exception as e:
+                _log(f"  gumroad native harvest failed: {e}")
+
+        # ---- Cosmos native harvest
+        if provider == "cosmos" and not landed_on_login:
+            try:
+                cosmos_items = harvest_cosmos_library(page)
+                harvested.extend(cosmos_items)
+                _log(f"  cosmos native harvest returned {len(cosmos_items)} items")
+            except Exception as e:
+                _log(f"  cosmos native harvest failed: {e}")
 
         time.sleep(2)   # let final cookie writes flush before closing
     finally:
@@ -1801,7 +2013,10 @@ def enrich_quixel_specs(limit: Optional[int] = None, cancel_event=None, progress
     cur.execute("""
         SELECT id, package_id, title, summary, usage_notes, tags, formats
         FROM assets
-        WHERE source = 'quixel' AND (usage_notes IS NULL OR usage_notes NOT LIKE '%Texel density%')
+        WHERE source = 'quixel' AND (
+            usage_notes IS NULL
+            OR (usage_notes NOT LIKE '%Texel density%' AND usage_notes NOT LIKE '%Maps:%' AND usage_notes NOT LIKE '%Scan area:%')
+        )
         ORDER BY rowid ASC
     """)
     rows = cur.fetchall()

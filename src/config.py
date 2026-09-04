@@ -63,6 +63,10 @@ ALLOWED_IMAGE_DOMAINS = (
     ".sketchfab.com", "sketchfab.com",
     ".ytimg.com", "ytimg.com",
     ".youtube.com", "youtube.com",
+    ".gumroad.com", "gumroad.com",
+    ".gumroadcdn.com", "gumroadcdn.com",
+    ".leartesstudios.com", "leartesstudios.com",
+    "cosmos.leartesstudios.com",
 )
 
 MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 15MB cap

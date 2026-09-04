@@ -496,6 +496,9 @@ body {
 }
 .source-tag.unity { background: rgba(124, 156, 71, 0.85); color: #fff; }
 .source-tag.fab { background: rgba(33, 150, 243, 0.85); color: #fff; }
+.source-tag.quixel { background: rgba(227, 179, 65, 0.85); color: #111; }
+.source-tag.gumroad { background: rgba(255, 144, 232, 0.85); color: #111; }
+.source-tag.cosmos { background: rgba(162, 155, 254, 0.85); color: #111; }
 
 .status-tag {
   font-size: 10px;

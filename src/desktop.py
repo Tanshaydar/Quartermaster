@@ -53,6 +53,32 @@ BORDER = "#2d333b"
 TEXT = "#e6edf3"
 MUTED = "#8b949e"
 
+def _source_icon(source: str) -> str:
+    s = (source or "").lower()
+    if s == "unity":
+        return "📦"
+    elif s in ("fab", "quixel"):
+        return "🌿"
+    elif s == "gumroad":
+        return "🎨"
+    elif s == "cosmos":
+        return "🪐"
+    return "📦"
+
+def _format_engine_name(source: str) -> str:
+    s = (source or "").lower()
+    if s == "unity":
+        return "Unity Asset Store"
+    elif s == "fab":
+        return "Fab (Unreal)"
+    elif s == "quixel":
+        return "Quixel Megascans"
+    elif s == "gumroad":
+        return "Gumroad"
+    elif s == "cosmos":
+        return "Leartes Cosmos"
+    return str(source).title()
+
 STYLE = f"""
 QMainWindow, QDialog {{ background: {BG}; color: {TEXT}; }}
 QWidget {{ font-family: 'Segoe UI'; font-size: 13px; }}
@@ -668,7 +694,7 @@ class AssetDelegate(QStyledItemDelegate):
             p.drawRoundedRect(tr, 6, 6)
         else:
             p.setPen(QColor(MUTED))
-            p.drawText(tr, Qt.AlignmentFlag.AlignCenter, "📦" if item.get("source") == "unity" else "🌿")
+            p.drawText(tr, Qt.AlignmentFlag.AlignCenter, _source_icon(item.get("source", "")))
             if url:
                 get_thumb_manager().request_thumbnail(url, 64, 48, self._schedule_update)
 
@@ -756,7 +782,7 @@ class AssetDelegate(QStyledItemDelegate):
             p.restore()
         else:
             p.setPen(QColor(MUTED))
-            p.drawText(tr, Qt.AlignmentFlag.AlignCenter, "📦" if item.get("source") == "unity" else "🌿")
+            p.drawText(tr, Qt.AlignmentFlag.AlignCenter, _source_icon(item.get("source", "")))
             if url:
                 get_thumb_manager().request_thumbnail(url, tr.width(), 120, self._schedule_update)
 
@@ -848,6 +874,10 @@ class AssetCard(QWidget):
             eng = badge("Fab", "#388bfd")
         elif item.get("source") == "quixel":
             eng = badge("Quixel", "#e3b341")
+        elif item.get("source") == "gumroad":
+            eng = badge("Gumroad", "#ff90e8")
+        elif item.get("source") == "cosmos":
+            eng = badge("Cosmos", "#a29bfe")
         else:
             eng = badge(str(item.get("source", "")).title(), "#c7c7c7")
         row1.addWidget(eng)
@@ -951,6 +981,10 @@ class AssetGridCard(QWidget):
             eng = badge("Fab", "#388bfd")
         elif item.get("source") == "quixel":
             eng = badge("Quixel", "#e3b341")
+        elif item.get("source") == "gumroad":
+            eng = badge("Gumroad", "#ff90e8")
+        elif item.get("source") == "cosmos":
+            eng = badge("Cosmos", "#a29bfe")
         else:
             eng = badge(str(item.get("source", "")).title(), "#c7c7c7")
         meta.addWidget(eng)
@@ -1019,7 +1053,7 @@ class QuickLookDialog(QDialog):
         title.setWordWrap(True)
         lay.addWidget(title)
 
-        eng = "Unity Asset Store" if item.get("source") == "unity" else ("Fab (Unreal)" if item.get("source") == "fab" else "Quixel Megascans")
+        eng = _format_engine_name(item.get("source", ""))
         sub = f"{item.get('publisher') or '—'} · {eng} · {item.get('category', '')}"
         if item.get("size_str"):
             sub += f" · {item['size_str']}"
@@ -1184,7 +1218,36 @@ class SyncDialog(QDialog):
         f_lay.addLayout(f_btns)
         lay.addWidget(f_box)
 
-        # 3. AI & Indexing Section
+        # 3. Creator Marketplaces Section (Gumroad & Cosmos)
+        c_box = QGroupBox("🎨 Creator Marketplaces (Gumroad && Cosmos)")
+        c_lay = QVBoxLayout(c_box)
+        self.c_status = QLabel("Checking status…")
+        self.c_status.setStyleSheet(f"color: {MUTED}; font-size: 12px;")
+        c_btns = QHBoxLayout()
+        b_g_login = QPushButton("🔐 Sign in Gumroad")
+        b_g_login.clicked.connect(lambda: self._run_op(
+            lambda ev: store_client.interactive_login("gumroad", cancel_event=ev),
+            "Gumroad login",
+            pre_status="Complete Gumroad login in browser, then close window when done."
+        ))
+        b_g_fetch = QPushButton("⟳ Fetch Gumroad")
+        b_g_fetch.clicked.connect(lambda: (self.accept(), self.main_win._fetch_op("gumroad")))
+        b_cos_login = QPushButton("🔐 Sign in Cosmos")
+        b_cos_login.clicked.connect(lambda: self._run_op(
+            lambda ev: store_client.interactive_login("cosmos", cancel_event=ev),
+            "Cosmos login",
+            pre_status="Complete Cosmos login in browser, then close window when done."
+        ))
+        b_cos_fetch = QPushButton("⟳ Fetch Cosmos")
+        b_cos_fetch.clicked.connect(lambda: (self.accept(), self.main_win._fetch_op("cosmos")))
+        for b in (b_g_login, b_g_fetch, b_cos_login, b_cos_fetch):
+            c_btns.addWidget(b)
+        c_btns.addStretch()
+        c_lay.addWidget(self.c_status)
+        c_lay.addLayout(c_btns)
+        lay.addWidget(c_box)
+
+        # 4. AI & Indexing Section
         ai_box = QGroupBox("👁 Local Storage && AI Indexing")
         ai_lay = QVBoxLayout(ai_box)
         self.ai_status = QLabel("Checking status…")
@@ -1244,12 +1307,17 @@ class SyncDialog(QDialog):
             u_owned = by_src.get("unity", 0)
             f_owned = by_src.get("fab", 0)
             q_catalog = by_src.get("quixel", 0)
+            g_owned = by_src.get("gumroad", 0)
+            c_owned = by_src.get("cosmos", 0)
             pending = store_client.count_unenriched()
             fab_pending = store_client.fab_deep_media_pending()
             sem_count = semantic.index_size()
             enrich_info = "✅ Media enriched" if (pending == 0 and fab_pending == 0) else f"⚡ {pending + fab_pending} pending media"
             self.u_status.setText(f"{u_owned} owned packages in vault · Session: {'Saved' if store_client.has_saved_session('unity') else 'Not saved'}")
             self.f_status.setText(f"{f_owned} owned Fab · {q_catalog} Quixel catalog entries · Session: {'Saved' if store_client.has_saved_session('fab') else 'Not saved'}")
+            g_sess = "Saved" if store_client.has_saved_session("gumroad") else "Not saved"
+            c_sess = "Saved" if store_client.has_saved_session("cosmos") else "Not saved"
+            self.c_status.setText(f"{g_owned} Gumroad (Session: {g_sess}) · {c_owned} Cosmos (Session: {c_sess})")
             self.ai_status.setText(f"{total} assets in SQLite · {enrich_info} · 🧠 {sem_count}/{total} BGE · Hybrid search ready")
         except Exception:
             pass
@@ -1389,7 +1457,7 @@ class DetailPanel(QScrollArea):
         title.setWordWrap(True)
         self.lay.addWidget(title)
 
-        eng = "Unity Asset Store" if item["source"] == "unity" else ("Fab (Unreal)" if item["source"] == "fab" else "Quixel Megascans")
+        eng = _format_engine_name(item.get("source", ""))
         sub = f"{item.get('publisher') or '—'} · {eng}"
         if item.get("version"):
             sub += f" · v{item['version']}"
@@ -1707,12 +1775,16 @@ class MainWindow(QMainWindow):
         self.chip_unity = QPushButton("Unity")
         self.chip_fab = QPushButton("Fab")
         self.chip_quixel = QPushButton("Quixel")
+        self.chip_gumroad = QPushButton("Gumroad")
+        self.chip_cosmos = QPushButton("Cosmos")
 
         chips = [
             (self.chip_all, None),
             (self.chip_unity, "unity"),
             (self.chip_fab, "fab"),
             (self.chip_quixel, "quixel"),
+            (self.chip_gumroad, "gumroad"),
+            (self.chip_cosmos, "cosmos"),
         ]
 
         for chip, eng_val in chips:

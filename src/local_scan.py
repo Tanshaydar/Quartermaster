@@ -169,7 +169,13 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
         listings_db = os.path.join(vault_dir, "listings_v1.db")
         if os.path.exists(listings_db):
             try:
-                lconn = sqlite3.connect(listings_db)
+                # Fab owns this database and its launcher may have it open. Attach
+                # read-only so we can never take a write lock, checkpoint its WAL,
+                # or leave -wal/-shm sidecars behind in another app's data dir.
+                lconn = sqlite3.connect(
+                    "file:" + listings_db.replace("\\", "/").replace("?", "%3f").replace("#", "%23")
+                    + "?mode=ro",
+                    uri=True)
                 lcur = lconn.cursor()
                 lcur.execute("SELECT listing_uid, title, description FROM catalog WHERE description != ''")
                 for luid, ltitle, ldesc in lcur.fetchall():
