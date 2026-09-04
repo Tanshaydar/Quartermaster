@@ -399,7 +399,7 @@ def get_stats(db_path: str = DB_PATH) -> Dict[str, Any]:
 
     conn.close()
     return {"total": total, "categories": categories,
-            "sources": sources, "downloaded_locally": downloaded}
+            "sources": sources, "by_source": sources, "downloaded_locally": downloaded}
 
 
 def reclassify_all_assets(db_path: str = DB_PATH) -> int:

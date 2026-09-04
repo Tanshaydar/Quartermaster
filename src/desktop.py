@@ -1337,7 +1337,7 @@ class SyncDialog(QDialog):
         try:
             stats = get_stats()
             total = stats.get("total", 0)
-            by_src = stats.get("by_source", {})
+            by_src = stats.get("sources") or stats.get("by_source") or {}
             u_owned = by_src.get("unity", 0)
             f_owned = by_src.get("fab", 0)
             q_catalog = by_src.get("quixel", 0)
