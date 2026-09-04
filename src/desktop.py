@@ -426,6 +426,7 @@ class AssetCard(QWidget):
 
     def __init__(self, item: dict):
         super().__init__()
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.asset = item
         self.image_url = (item.get("image_url") or "").strip()
         main_lay = QHBoxLayout(self)
@@ -525,6 +526,7 @@ class AssetGridCard(QWidget):
 
     def __init__(self, item: dict):
         super().__init__()
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.asset = item
         self.image_url = (item.get("image_url") or "").strip()
         self.setFixedSize(196, 216)
@@ -916,13 +918,12 @@ class DetailPanel(QScrollArea):
             return
         while lay.count():
             it = lay.takeAt(0)
-            if it.widget():
-                w = it.widget()
-                w.setParent(None)
+            w = it.widget()
+            if w is not None:
+                w.hide()
                 w.deleteLater()
-            elif it.layout():
+            elif it.layout() is not None:
                 self.clear_layout(it.layout())
-                it.layout().deleteLater()
 
     def show_placeholder(self):
         self.clear_layout(self.lay)
@@ -999,7 +1000,7 @@ class DetailPanel(QScrollArea):
         if local and os.path.exists(local):
             rev_btn = QPushButton("⚡ Reveal in Explorer")
             rev_btn.setStyleSheet(f"background:#1f3b2b; color:{GREEN}; border:1px solid #238636; font-weight:600;")
-            rev_btn.clicked.connect(lambda: self._reveal_local(local))
+            rev_btn.clicked.connect(lambda checked=False, p=local: self._reveal_local(p))
             act_bar.addWidget(rev_btn)
 
         if (item.get("local_path") or "").lower().endswith(".unitypackage"):
@@ -1009,7 +1010,7 @@ class DetailPanel(QScrollArea):
 
         if item.get("store_url"):
             store_btn = QPushButton("↗ Open Store")
-            store_btn.clicked.connect(lambda: webbrowser.open(item["store_url"]))
+            store_btn.clicked.connect(lambda checked=False, u=item["store_url"]: self._open_store(u))
             act_bar.addWidget(store_btn)
 
         copy_btn = QPushButton("📋 Copy Context")
@@ -1144,6 +1145,10 @@ class DetailPanel(QScrollArea):
                 btn.setIconSize(QSize(68, 46))
 
     def _reveal_local(self, path: str):
+        now = time.time()
+        if now - getattr(self, "_last_open_time", 0.0) < 1.0:
+            return
+        self._last_open_time = now
         target_dir = os.path.dirname(path) if os.path.isfile(path) else path
         if sys.platform == "win32":
             os.startfile(target_dir)
@@ -1153,6 +1158,14 @@ class DetailPanel(QScrollArea):
         else:
             import subprocess
             subprocess.Popen(["xdg-open", target_dir])
+
+    def _open_store(self, url: str):
+        now = time.time()
+        if now - getattr(self, "_last_open_time", 0.0) < 1.0:
+            return
+        self._last_open_time = now
+        if url:
+            webbrowser.open(url)
 
     def _unpack_to_project(self):
         from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -1514,6 +1527,7 @@ class MainWindow(QMainWindow):
                 for item in next_items:
                     li = QListWidgetItem(self.list)
                     li.setData(Qt.ItemDataRole.UserRole, item)
+                    li.setToolTip(item.get("local_path") or item.get("title", ""))
                     if self.view_mode == "grid":
                         card = AssetGridCard(item)
                     else:
@@ -1544,7 +1558,11 @@ class MainWindow(QMainWindow):
         item = li.data(Qt.ItemDataRole.UserRole)
         if not item:
             return
-        full = get_asset_by_id(item["id"]) or item
+        if self.detail.current and self.detail.current.get("id") == item.get("id"):
+            return
+        full = item
+        if "summary" not in item and "gallery_images" not in item:
+            full = get_asset_by_id(item["id"]) or item
         self.detail.show_asset(full)
 
     def refresh_categories(self):
@@ -1735,7 +1753,9 @@ class MainWindow(QMainWindow):
                 if curr:
                     item = curr.data(Qt.ItemDataRole.UserRole)
                     if item:
-                        full = get_asset_by_id(item["id"]) or item
+                        full = item
+                        if "summary" not in item and "gallery_images" not in item:
+                            full = get_asset_by_id(item["id"]) or item
                         ql = QuickLookDialog(full, self)
                         ql.exec()
                         return True
@@ -1770,6 +1790,12 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(ev)
 
     def _on_double_click(self, li: QListWidgetItem):
+        if not li:
+            return
+        now = time.time()
+        if now - getattr(self, "_last_double_click_time", 0.0) < 1.0:
+            return  # Debounce to prevent multiple windows spawning from rapid clicks
+        self._last_double_click_time = now
         item = li.data(Qt.ItemDataRole.UserRole)
         if not item:
             return
