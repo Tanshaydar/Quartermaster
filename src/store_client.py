@@ -855,7 +855,72 @@ _GUMROAD_FETCH_JS = """
 """
 
 _COSMOS_FETCH_JS = """
-(() => {
+(async () => {
+    // 1. Direct authenticated API pagination using Bearer token from localStorage
+    try {
+        let token = localStorage.getItem('token');
+        if (token && token.startsWith('"') && token.endsWith('"')) {
+            try { token = JSON.parse(token); } catch (e) {}
+        }
+        const headers = { 'Accept': 'application/json' };
+        if (token) {
+            headers['Authorization'] = 'Bearer ' + token;
+        }
+        const firstRes = await fetch('https://api.cosmos.leartesstudios.com/inventory?page=1', { headers, credentials: 'include' });
+        if (firstRes.ok) {
+            const firstJson = await firstRes.json();
+            const lastPage = firstJson.meta?.last_page || 1;
+            const rawList = [...(firstJson.data || [])];
+
+            if (lastPage > 1) {
+                const promises = [];
+                for (let p = 2; p <= lastPage; p++) {
+                    promises.push(
+                        fetch('https://api.cosmos.leartesstudios.com/inventory?page=' + p, { headers, credentials: 'include' })
+                            .then(r => r.ok ? r.json() : {})
+                            .then(j => j.data || [])
+                            .catch(() => [])
+                    );
+                }
+                const pages = await Promise.all(promises);
+                for (const pg of pages) {
+                    rawList.push(...pg);
+                }
+            }
+
+            if (rawList.length > 0) {
+                return rawList.map(item => {
+                    const coverUrl = (typeof item.cover_image === 'object' && item.cover_image?.url)
+                        ? item.cover_image.url
+                        : (typeof item.cover_image === 'string' ? item.cover_image : '');
+                    const slug = item.slug || item.id || '';
+                    const storeUrl = slug ? ('https://cosmos.leartesstudios.com/product/' + slug) : '';
+                    let license = item.license || 'individual';
+                    let desc = item.subtitle || item.description || '';
+                    if (license) {
+                        desc = (desc ? (desc + ' · ') : '') + 'License: ' + license;
+                    }
+                    return {
+                        id: String(item.id || slug),
+                        slug: slug,
+                        title: String(item.title || item.name || ''),
+                        name: String(item.title || item.name || ''),
+                        publisher: 'Leartes Studios',
+                        description: desc,
+                        cover_image: coverUrl,
+                        url: storeUrl,
+                        category: String(item.type || 'Environments'),
+                        type: String(item.type || ''),
+                        license: String(license),
+                    };
+                });
+            }
+        }
+    } catch (err) {
+        console.error('Cosmos API harvest error:', err);
+    }
+
+    // 2. Next.js hydration payload fallback
     try {
         const nextEl = document.getElementById('__NEXT_DATA__');
         if (nextEl) {
@@ -873,15 +938,21 @@ _COSMOS_FETCH_JS = """
             if (Array.isArray(assets) && assets.length > 0) {
                 return assets.map(a => {
                     const item = a.product || a.asset || a;
+                    const coverUrl = (typeof item.cover_image === 'object' && item.cover_image?.url)
+                        ? item.cover_image.url
+                        : (item.cover_image || item.coverImage || item.thumbnail || item.image || item.cover_url || item.preview_url || '');
+                    const slug = item.slug || item.id || '';
                     return {
-                        id: String(item.id || item.slug || item._id || a.id || ''),
+                        id: String(item.id || slug || a.id || ''),
+                        slug: String(slug),
                         name: String(item.title || item.name || a.name || ''),
+                        title: String(item.title || item.name || a.name || ''),
                         publisher: String(item.creator || item.publisher || item.seller || 'Leartes Studios'),
-                        description: String(item.description || ''),
-                        cover_image: String(item.coverImage || item.thumbnail || item.image || item.cover_url || item.preview_url || ''),
+                        description: String(item.subtitle || item.description || ''),
+                        cover_image: String(coverUrl),
                         gallery_images: item.gallery || item.images || [],
-                        url: item.slug ? ('https://cosmos.leartesstudios.com/product/' + item.slug) : String(item.url || ''),
-                        category: typeof item.category === 'object' ? item.category?.name : item.category,
+                        url: slug ? ('https://cosmos.leartesstudios.com/product/' + slug) : String(item.url || ''),
+                        category: typeof item.category === 'object' ? item.category?.name : (item.type || item.category || 'Environments'),
                         technicalSpecs: typeof item.specs === 'object' ? JSON.stringify(item.specs) : (item.specs || ''),
                     };
                 });
@@ -889,6 +960,7 @@ _COSMOS_FETCH_JS = """
         }
     } catch (e) {}
 
+    // 3. DOM scraping fallback
     const items = [];
     try {
         const cards = document.querySelectorAll('.asset-card, [class*="AssetCard"], [class*="product-card"], [class*="assetCard"], .card, [class*="inventory"], [class*="Inventory"]');
@@ -921,7 +993,7 @@ _COSMOS_FETCH_JS = """
                 publisher: 'Leartes Studios',
                 cover_image: cover,
                 url: fullUrl,
-                category: cat,
+                category: cat || 'Environments',
             });
         }
     } catch (e) {}
@@ -1264,6 +1336,10 @@ def fetch_library(provider: str, cancel_event=None) -> int:
                         _log(f"  [unity diag] error: {e}")
 
             lists = _looks_like_asset_lists(body)
+            if not lists and "api.cosmos.leartesstudios.com/inventory" in url and isinstance(body, dict) and "data" in body:
+                raw_data = body.get("data")
+                if isinstance(raw_data, list):
+                    lists = [raw_data]
             if not lists and "graphql" in url:
                 # log structural keys only without dumping user identity/email/PII
                 keys_summary = ""
@@ -1286,7 +1362,8 @@ def fetch_library(provider: str, cancel_event=None) -> int:
                     # Must have at least a listing URL, store URL, publisher, keyImage, or substantial description
                     has_asset_markers = any(bool(x.get(k)) for k in (
                         "url", "listingUrl", "sellerName", "publisher", "keyImage",
-                        "thumbnail", "images", "description", "aiDescription", "assetType"
+                        "thumbnail", "images", "description", "aiDescription", "assetType",
+                        "slug", "cover_image", "coverImage", "subtitle", "license"
                     ))
                     if not has_asset_markers:
                         continue
@@ -1357,10 +1434,19 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             except Exception as e:
                 _log(f"  gumroad native harvest failed: {e}")
 
+        # Cosmos: fetches all inventory pages directly via API in seconds
+        if provider == "cosmos" and not landed_on_login:
+            try:
+                cosmos_items = harvest_cosmos_library(page)
+                harvested.extend(cosmos_items)
+                _log(f"  cosmos native harvest returned {len(cosmos_items)} items")
+            except Exception as e:
+                _log(f"  cosmos native harvest failed: {e}")
+
         # Scroll to bottom repeatedly until content stops growing: the page
         # lazy-loads more GraphQL batches as you reach the end. JS scrolling
         # works where synthetic wheel events rubber-band without scrolling.
-        if not (provider == "gumroad" and harvested):
+        if not ((provider in ("gumroad", "cosmos")) and harvested):
             stable_rounds = 0
             last_sig = None
             login_streak = 0
@@ -1564,8 +1650,8 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             except Exception as e:
                 _log(f"  gumroad native harvest failed: {e}")
 
-        # ---- Cosmos native harvest
-        if provider == "cosmos" and not landed_on_login:
+        # ---- Cosmos native harvest (fallback if early harvest didn't run)
+        if provider == "cosmos" and not landed_on_login and not harvested:
             try:
                 cosmos_items = harvest_cosmos_library(page)
                 harvested.extend(cosmos_items)
@@ -1637,12 +1723,13 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             if not cover_img and gallery_imgs:
                 cover_img = gallery_imgs[0]
         stable_id = _stable_id(provider, pkg_id, title)
+        is_already_enriched = bool(cover_img and provider in ("gumroad", "cosmos", "fab"))
         asset = {
             "id": stable_id,
             "source": provider,
             "package_id": pkg_id,
             "title": title,
-            "publisher": publisher,
+            "publisher": publisher or ("Leartes Studios" if provider == "cosmos" else ""),
             "version": str(item.get("versionName") or item.get("version") or item.get("packageVersion") or ""),
             "claimed_date": (item.get("createdAt") or item.get("acquiredAt") or "")[:10],
             "store_url": store_url,
@@ -1650,6 +1737,7 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             **cls,
             "gallery_images": gallery_imgs,
             "video_links": [],
+            "enriched": 1 if is_already_enriched else 0,
         }
         # prefer the store's real description over the heuristic one
         tech_specs = ""
@@ -1667,6 +1755,8 @@ def fetch_library(provider: str, cancel_event=None) -> int:
             asset["summary"] = rich[:800]
         if item.get("variants"):
             asset["usage_notes"] = f"Variant / License: {item['variants']}"
+        elif item.get("license"):
+            asset["usage_notes"] = f"License: {item['license']}"
         upsert_asset(asset)
         count += 1
 
@@ -1713,6 +1803,10 @@ def count_unenriched(db_path: str = DB_PATH) -> int:
 
 def _enrich_one(asset):
     """Enrich a single asset with a dedicated thread-safe HTTP request. Returns True when marked done."""
+    if asset.get("source") in ("gumroad", "cosmos", "fab"):
+        mark_enriched(asset["id"])
+        return True
+
     url = asset.get("store_url") or ""
     if not url.startswith("http"):
         pkg_id = str(asset.get("package_id") or "").strip()

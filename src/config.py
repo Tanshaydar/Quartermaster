@@ -66,7 +66,7 @@ ALLOWED_IMAGE_DOMAINS = (
     ".gumroad.com", "gumroad.com",
     ".gumroadcdn.com", "gumroadcdn.com",
     ".leartesstudios.com", "leartesstudios.com",
-    "cosmos.leartesstudios.com",
+    "cosmos.leartesstudios.com", "cdn.cosmos.leartesstudios.com",
 )
 
 MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 15MB cap
