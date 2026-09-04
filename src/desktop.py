@@ -765,7 +765,7 @@ class SyncDialog(QDialog):
             pre_status="Sign into Unity Asset Store in browser window, then close window when done."
         ))
         b_u_fetch = QPushButton("⟳ Fetch Library")
-        b_u_fetch.clicked.connect(lambda: self.main_win._fetch_op("unity"))
+        b_u_fetch.clicked.connect(lambda: (self.accept(), self.main_win._fetch_op("unity")))
         b_u_scan = QPushButton("⚡ Scan Cache")
         b_u_scan.clicked.connect(lambda: self._run_op(
             lambda ev: local_scan.scan_all(), "Unity cache scan"
@@ -790,7 +790,7 @@ class SyncDialog(QDialog):
             pre_status="Complete Epic login in browser, then close window when done."
         ))
         b_f_fetch = QPushButton("⟳ Fetch Fab")
-        b_f_fetch.clicked.connect(lambda: self.main_win._fetch_op("fab"))
+        b_f_fetch.clicked.connect(lambda: (self.accept(), self.main_win._fetch_op("fab")))
         b_q_sync = QPushButton("🌿 Sync Quixel")
         b_q_sync.clicked.connect(lambda: self._run_op(
             lambda ev, cb: store_client.sync_quixel_catalog(cancel_event=ev, progress=cb),
@@ -821,7 +821,7 @@ class SyncDialog(QDialog):
             lambda ev: local_scan.scan_all(), "Full disk scan"
         ))
         b_ai_enrich = QPushButton("🖼 Enrich Media")
-        b_ai_enrich.clicked.connect(lambda: self.main_win._start_enrich_sweep())
+        b_ai_enrich.clicked.connect(self._on_enrich_clicked)
         b_ai_vision = QPushButton("👁 Vision Pass (CLIP)")
         b_ai_vision.clicked.connect(lambda: self._run_op(
             lambda ev, cb: vision.build(cancel_event=ev, progress=cb), "Vision pass", with_progress=True
@@ -843,6 +843,21 @@ class SyncDialog(QDialog):
 
         self.refresh_info()
 
+    def _on_enrich_clicked(self):
+        pending = store_client.count_unenriched()
+        fab_pending = store_client.fab_deep_media_pending()
+        if pending == 0 and fab_pending == 0:
+            self.ai_status.setText("✅ Vault already fully enriched — media, galleries & metadata up to date.")
+            self.main_win.statusBar().showMessage("✅ Vault already fully enriched — all media and metadata are up to date.", 5000)
+            QMessageBox.information(
+                self,
+                "Enrichment Complete",
+                "Your vault is already fully enriched!\n\nAll media, screenshot galleries, and metadata are up to date."
+            )
+            return
+        self.accept()
+        self.main_win._start_enrich_sweep()
+
     def refresh_info(self):
         try:
             stats = get_stats()
@@ -851,9 +866,12 @@ class SyncDialog(QDialog):
             u_owned = by_src.get("unity", 0)
             f_owned = by_src.get("fab", 0)
             q_catalog = by_src.get("quixel", 0)
+            pending = store_client.count_unenriched()
+            fab_pending = store_client.fab_deep_media_pending()
+            enrich_info = "✅ Media fully enriched" if (pending == 0 and fab_pending == 0) else f"⚡ {pending + fab_pending} pending enrichment"
             self.u_status.setText(f"{u_owned} owned packages in vault · Session: {'Saved' if store_client.has_saved_session('unity') else 'Not saved'}")
             self.f_status.setText(f"{f_owned} owned Fab · {q_catalog} Quixel catalog entries · Session: {'Saved' if store_client.has_saved_session('fab') else 'Not saved'}")
-            self.ai_status.setText(f"{total} indexed assets in SQLite · 3-way hybrid search (FTS5 + BGE + CLIP) ready")
+            self.ai_status.setText(f"{total} indexed assets in SQLite · {enrich_info} · Hybrid search ready")
         except Exception:
             pass
 
@@ -1844,6 +1862,12 @@ class MainWindow(QMainWindow):
         fab_pending = self._fab_deep_pending()
         if pending == 0 and fab_pending == 0:
             self.sync_status.setText("Vault already fully enriched.")
+            self.statusBar().showMessage("✅ Vault already fully enriched — all media and metadata are up to date.", 5000)
+            QMessageBox.information(
+                self,
+                "Enrichment Complete",
+                "Your vault is already fully enriched!\n\nAll media, screenshot galleries, and metadata are up to date."
+            )
             return
 
         def auto_fab(msg, ok):
