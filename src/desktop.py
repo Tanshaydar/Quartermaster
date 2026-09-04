@@ -18,10 +18,11 @@ import sys
 import threading
 import time
 import webbrowser
-from typing import Any, Dict, List, Optional
+import weakref
+from typing import Any, Callable, Dict, List, Optional
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QEvent, QPoint, QRect, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QFormLayout, QFrame, QGridLayout, QGroupBox,
@@ -235,11 +236,14 @@ class ThumbnailManager(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cache: Dict[str, bytes] = {}
+        self._qimage_cache: Dict[str, QImage] = {}
         self._pix_cache: Dict[tuple, QPixmap] = {}
         self._in_flight: set = set()
         self._shutting_down: bool = False
+        self._targets: Dict[str, List[tuple]] = {}
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(6)
+        self.image_loaded.connect(self._on_image_ready)
         app = QApplication.instance()
         if app:
             app.aboutToQuit.connect(self.shutdown)
@@ -259,6 +263,15 @@ class ThumbnailManager(QObject):
         k = (url, w, h, mode.value)
         if k in self._pix_cache:
             return self._pix_cache[k]
+        if url in self._qimage_cache:
+            scaled = self._qimage_cache[url].scaled(w, h, mode, Qt.TransformationMode.SmoothTransformation)
+            pm = QPixmap.fromImage(scaled)
+            if len(self._pix_cache) > 800:
+                keys = list(self._pix_cache.keys())[:200]
+                for old_k in keys:
+                    del self._pix_cache[old_k]
+            self._pix_cache[k] = pm
+            return pm
         if url in self._cache:
             pm = QPixmap()
             if pm.loadFromData(self._cache[url]):
@@ -267,23 +280,60 @@ class ThumbnailManager(QObject):
                 return scaled
         return None
 
+    def request_thumbnail(self, url: str, w: int, h: int, callback: Callable[[QPixmap], None],
+                          mode: Optional[Qt.AspectRatioMode] = None):
+        if not url:
+            return
+        if mode is None:
+            mode = Qt.AspectRatioMode.KeepAspectRatioByExpanding
+        pm = self.get_pixmap(url, w, h, mode)
+        if pm:
+            callback(pm)
+            return
+        cb_ref = weakref.WeakMethod(callback) if hasattr(callback, "__self__") else callback
+        self._targets.setdefault(url, []).append((cb_ref, w, h, mode))
+        self.request(url)
+
     def request(self, url: str):
-        if self._shutting_down or not url or url in self._cache or url in self._in_flight:
+        if self._shutting_down or not url or url in self._cache or url in self._qimage_cache or url in self._in_flight:
             return
         self._in_flight.add(url)
         task = _ImageDownloadTask(url, self)
         self._pool.start(task)
 
-    def _notify(self, url: str, data: bytes):
+    def _notify(self, url: str, data: bytes, qimg: Optional[QImage] = None):
         if self._shutting_down:
             return
         try:
             self._in_flight.discard(url)
             if data:
+                if len(self._cache) > 500:
+                    keys = list(self._cache.keys())[:100]
+                    for old_k in keys:
+                        del self._cache[old_k]
                 self._cache[url] = data
-                self.image_loaded.emit(url, data)
+            if qimg and not qimg.isNull():
+                if len(self._qimage_cache) > 500:
+                    keys = list(self._qimage_cache.keys())[:100]
+                    for old_k in keys:
+                        del self._qimage_cache[old_k]
+                self._qimage_cache[url] = qimg
+            self.image_loaded.emit(url, data or b"")
         except (RuntimeError, Exception):
             pass
+
+    def _on_image_ready(self, url: str, _data: bytes):
+        cbs = self._targets.pop(url, [])
+        for cb_ref, w, h, mode in cbs:
+            cb = cb_ref() if isinstance(cb_ref, weakref.WeakMethod) else cb_ref
+            if cb is None:
+                continue
+            pm = self.get_pixmap(url, w, h, mode)
+            if pm:
+                try:
+                    cb(pm)
+                except (RuntimeError, Exception):
+                    pass
 
 
 class _ImageDownloadTask(QRunnable):
@@ -311,6 +361,7 @@ class _ImageDownloadTask(QRunnable):
         if getattr(self.manager, "_shutting_down", False):
             return
         data = None
+        qimg = None
         try:
             cfg = load_config()
             path = self.cached_path(cfg, self.url) if cfg["media_cache_enabled"] else None
@@ -329,11 +380,19 @@ class _ImageDownloadTask(QRunnable):
                         evict_image_cache(cfg["media_cache_dir"])
                         with open(path, "wb") as f:
                             f.write(data)
+            if data:
+                try:
+                    qimg = QImage.fromData(data)
+                    if qimg and not qimg.isNull():
+                        if qimg.width() > 512 or qimg.height() > 512:
+                            qimg = qimg.scaled(512, 512, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                except Exception:
+                    qimg = None
         except Exception:
             pass
         finally:
             try:
-                self.manager._notify(self.url, data or b"")
+                self.manager._notify(self.url, data or b"", qimg)
             except (RuntimeError, Exception):
                 pass
 
@@ -508,12 +567,18 @@ def _extract_scan_specs(item: dict) -> dict:
     return specs
 
 
+RE_SPEC_TEASER = re.compile(r"\(([^)]*(?:px/m|m)[^)]*)\)")
+CARD_SIZE_LIST = QSize(0, 60)
+CARD_SIZE_GRID = QSize(196, 216)
+
+
 class AssetCard(QWidget):
     """Compact list card: 64x48 rounded thumbnail + title / badges / specs teaser."""
 
     def __init__(self, item: dict):
         super().__init__()
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setFixedHeight(60)
         self.asset = item
         self.image_url = (item.get("image_url") or "").strip()
         main_lay = QHBoxLayout(self)
@@ -532,8 +597,7 @@ class AssetCard(QWidget):
                 self.thumb.setPixmap(pm)
             else:
                 self.thumb.setText("🖼")
-                mgr.image_loaded.connect(self._on_image_loaded)
-                mgr.request(self.image_url)
+                mgr.request_thumbnail(self.image_url, 64, 48, self._set_thumb_pixmap)
         else:
             self.thumb.setText("📦" if item.get("source") == "unity" else "🌿")
 
@@ -578,7 +642,7 @@ class AssetCard(QWidget):
 
         spec_text = ""
         summary = item.get("summary") or ""
-        m_spec = re.search(r"\(([^)]*(?:px/m|m)[^)]*)\)", summary)
+        m_spec = RE_SPEC_TEASER.search(summary)
         if m_spec:
             spec_text = m_spec.group(1)
         elif item.get("size_str"):
@@ -601,11 +665,8 @@ class AssetCard(QWidget):
         main_lay.addWidget(self.thumb)
         main_lay.addLayout(lay, 1)
 
-    def _on_image_loaded(self, url: str, data: bytes):
-        if url == self.image_url:
-            pm = get_thumb_manager().get_pixmap(self.image_url, 64, 48)
-            if pm:
-                self.thumb.setPixmap(pm)
+    def _set_thumb_pixmap(self, pm: QPixmap):
+        self.thumb.setPixmap(pm)
 
 
 class AssetGridCard(QWidget):
@@ -635,8 +696,7 @@ class AssetGridCard(QWidget):
                 self.thumb.setPixmap(pm)
             else:
                 self.thumb.setText("🖼")
-                mgr.image_loaded.connect(self._on_image_loaded)
-                mgr.request(self.image_url)
+                mgr.request_thumbnail(self.image_url, 196, 120, self._set_thumb_pixmap)
         else:
             self.thumb.setText("📦" if item.get("source") == "unity" else "🌿")
         lay.addWidget(self.thumb)
@@ -678,7 +738,7 @@ class AssetGridCard(QWidget):
             row3.addWidget(loc)
 
         summary = item.get("summary") or ""
-        m_spec = re.search(r"\(([^)]*(?:px/m|m)[^)]*)\)", summary)
+        m_spec = RE_SPEC_TEASER.search(summary)
         if m_spec:
             spec_lbl = QLabel(m_spec.group(1))
             spec_lbl.setStyleSheet(f"color:{MUTED}; font-size:10px;")
@@ -692,11 +752,8 @@ class AssetGridCard(QWidget):
             w.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
             w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
-    def _on_image_loaded(self, url: str, data: bytes):
-        if url == self.image_url:
-            pm = get_thumb_manager().get_pixmap(self.image_url, 196, 120)
-            if pm:
-                self.thumb.setPixmap(pm)
+    def _set_thumb_pixmap(self, pm: QPixmap):
+        self.thumb.setPixmap(pm)
 
 
 class QuickLookDialog(QDialog):
@@ -725,12 +782,11 @@ class QuickLookDialog(QDialog):
 
         mgr = get_thumb_manager()
         if self.img_url:
-            pm = mgr.get_pixmap(self.img_url, 720, 360)
+            pm = mgr.get_pixmap(self.img_url, 720, 360, Qt.AspectRatioMode.KeepAspectRatio)
             if pm:
                 self.img_label.setPixmap(pm)
             else:
-                mgr.image_loaded.connect(self._on_image_loaded)
-                mgr.request(self.img_url)
+                mgr.request_thumbnail(self.img_url, 720, 360, self._set_preview_pixmap, Qt.AspectRatioMode.KeepAspectRatio)
         else:
             self.img_label.setText("No preview image available")
 
@@ -780,11 +836,8 @@ class QuickLookDialog(QDialog):
         btns.addWidget(close_btn)
         lay.addLayout(btns)
 
-    def _on_image_loaded(self, url: str, data: bytes):
-        if url == self.img_url:
-            pm = get_thumb_manager().get_pixmap(self.img_url, 720, 360)
-            if pm:
-                self.img_label.setPixmap(pm)
+    def _set_preview_pixmap(self, pm: QPixmap):
+        self.img_label.setPixmap(pm)
 
     def _reveal_local(self, path: str):
         target_dir = os.path.dirname(path) if os.path.isfile(path) else path
@@ -1478,11 +1531,14 @@ class MainWindow(QMainWindow):
         split.setSpacing(0)
 
         self.list = QListWidget()
-        self.list.itemClicked.connect(self._on_select)
-        self.list.currentItemChanged.connect(lambda cur, _prev: self._on_select(cur) if cur else None)
+        self.list.itemClicked.connect(self._on_item_clicked)
+        self.list.currentItemChanged.connect(self._on_current_item_changed)
         self.list.itemDoubleClicked.connect(self._on_double_click)
         self.list.installEventFilter(self)
         self.list.setStyleSheet(f"QListWidget {{ border-right: 1px solid {BORDER}; }}")
+        self.list.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
+        self.list.setHorizontalScrollMode(QListView.ScrollMode.ScrollPerPixel)
+        self.list.setUniformItemSizes(True)
         self.list.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self._apply_view_mode()
         split.addWidget(self.list, 5)
@@ -1520,8 +1576,14 @@ class MainWindow(QMainWindow):
         self.search_timer.setInterval(250)
         self.search_timer.timeout.connect(self.do_search)
 
+        self._select_timer = QTimer(self)
+        self._select_timer.setSingleShot(True)
+        self._select_timer.setInterval(75)
+        self._select_timer.timeout.connect(self._do_deferred_select)
+        self._pending_select_item: Optional[QListWidgetItem] = None
+
         self._rendered_count = 0
-        self._batch_size = 100
+        self._batch_size = 40
         self._is_rendering = False
 
         self.refresh_categories()
@@ -1572,6 +1634,7 @@ class MainWindow(QMainWindow):
             self.list.setGridSize(QSize(208, 228))
             self.list.setSpacing(8)
             self.list.setWordWrap(True)
+            self.list.setUniformItemSizes(True)
         else:
             self.btn_view_list.setChecked(True)
             self.list.setViewMode(QListView.ViewMode.ListMode)
@@ -1579,6 +1642,7 @@ class MainWindow(QMainWindow):
             self.list.setGridSize(QSize())
             self.list.setSpacing(2)
             self.list.setWordWrap(False)
+            self.list.setUniformItemSizes(True)
 
     def _debounce_search(self):
         self.search_timer.start()
@@ -1628,9 +1692,10 @@ class MainWindow(QMainWindow):
                     li.setToolTip(item.get("local_path") or item.get("title", ""))
                     if self.view_mode == "grid":
                         card = AssetGridCard(item)
+                        li.setSizeHint(CARD_SIZE_GRID)
                     else:
                         card = AssetCard(item)
-                    li.setSizeHint(card.sizeHint())
+                        li.setSizeHint(CARD_SIZE_LIST)
                     self.list.setItemWidget(li, card)
             finally:
                 self.list.setUpdatesEnabled(True)
@@ -1647,8 +1712,22 @@ class MainWindow(QMainWindow):
         if getattr(self, "_is_rendering", False):
             return
         sb = self.list.verticalScrollBar()
-        if sb.maximum() - value < 150:
+        if sb.maximum() - value < 600:
             self._render_next_batch()
+
+    def _on_item_clicked(self, li: Optional[QListWidgetItem]):
+        self._select_timer.stop()
+        self._on_select(li)
+
+    def _on_current_item_changed(self, cur: Optional[QListWidgetItem], _prev):
+        if not cur:
+            return
+        self._pending_select_item = cur
+        self._select_timer.start(75)
+
+    def _do_deferred_select(self):
+        if self._pending_select_item:
+            self._on_select(self._pending_select_item)
 
     def _on_select(self, li: Optional[QListWidgetItem]):
         if not li:
