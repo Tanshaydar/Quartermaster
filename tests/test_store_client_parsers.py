@@ -128,7 +128,7 @@ class TestStoreClientParsers(unittest.TestCase):
     def test_login_and_library_urls(self):
         self.assertEqual(LOGIN_URLS["cosmos"], "https://cosmos.leartesstudios.com/signin")
         self.assertEqual(LOGIN_URLS["gumroad"], "https://gumroad.com/login")
-        self.assertIn("https://cosmos.leartesstudios.com/profile/my-assets", LIBRARY_URLS["cosmos"])
+        self.assertIn("https://cosmos.leartesstudios.com/inventory", LIBRARY_URLS["cosmos"])
         self.assertIn("https://gumroad.com/library", LIBRARY_URLS["gumroad"])
 
 

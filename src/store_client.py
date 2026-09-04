@@ -74,7 +74,7 @@ LIBRARY_URLS = {
     "unity": ["https://assetstore.unity.com/account/assets"],
     "fab": ["https://www.fab.com/library"],
     "gumroad": ["https://gumroad.com/library"],
-    "cosmos": ["https://cosmos.leartesstudios.com/profile/my-assets"],
+    "cosmos": ["https://cosmos.leartesstudios.com/inventory"],
 }
 
 _LOGIN_MARKERS = ("login", "sign-in", "signin", "id/")
@@ -860,36 +860,45 @@ _COSMOS_FETCH_JS = """
         const nextEl = document.getElementById('__NEXT_DATA__');
         if (nextEl) {
             const nextData = JSON.parse(nextEl.textContent || '{}');
-            const assets = nextData.props?.pageProps?.assets 
-                || nextData.props?.pageProps?.library 
-                || nextData.props?.pageProps?.myAssets
-                || nextData.props?.pageProps?.data?.items || [];
+            const pp = nextData.props?.pageProps || {};
+            const assets = pp.inventory
+                || pp.assets 
+                || pp.library 
+                || pp.myAssets
+                || pp.items
+                || pp.data?.inventory
+                || pp.data?.items
+                || pp.data?.assets
+                || pp.data || [];
             if (Array.isArray(assets) && assets.length > 0) {
-                return assets.map(a => ({
-                    id: String(a.id || a.slug || a._id || ''),
-                    name: String(a.title || a.name || ''),
-                    publisher: String(a.creator || a.publisher || a.seller || 'Leartes Studios'),
-                    description: String(a.description || ''),
-                    cover_image: String(a.coverImage || a.thumbnail || a.image || a.cover_url || ''),
-                    gallery_images: a.gallery || a.images || [],
-                    url: a.slug ? ('https://cosmos.leartesstudios.com/product/' + a.slug) : String(a.url || ''),
-                    category: typeof a.category === 'object' ? a.category?.name : a.category,
-                    technicalSpecs: typeof a.specs === 'object' ? JSON.stringify(a.specs) : (a.specs || ''),
-                }));
+                return assets.map(a => {
+                    const item = a.product || a.asset || a;
+                    return {
+                        id: String(item.id || item.slug || item._id || a.id || ''),
+                        name: String(item.title || item.name || a.name || ''),
+                        publisher: String(item.creator || item.publisher || item.seller || 'Leartes Studios'),
+                        description: String(item.description || ''),
+                        cover_image: String(item.coverImage || item.thumbnail || item.image || item.cover_url || item.preview_url || ''),
+                        gallery_images: item.gallery || item.images || [],
+                        url: item.slug ? ('https://cosmos.leartesstudios.com/product/' + item.slug) : String(item.url || ''),
+                        category: typeof item.category === 'object' ? item.category?.name : item.category,
+                        technicalSpecs: typeof item.specs === 'object' ? JSON.stringify(item.specs) : (item.specs || ''),
+                    };
+                });
             }
         }
     } catch (e) {}
 
     const items = [];
     try {
-        const cards = document.querySelectorAll('.asset-card, [class*="AssetCard"], [class*="product-card"], [class*="assetCard"], .card');
+        const cards = document.querySelectorAll('.asset-card, [class*="AssetCard"], [class*="product-card"], [class*="assetCard"], .card, [class*="inventory"], [class*="Inventory"]');
         for (const card of cards) {
-            const titleEl = card.querySelector('h3, h4, [class*="title"], [class*="Title"], .name');
+            const titleEl = card.querySelector('h3, h4, h5, [class*="title"], [class*="Title"], .name, [class*="name"]');
             if (!titleEl) continue;
             const title = (titleEl.textContent || '').trim();
             if (!title || title.length > 180) continue;
 
-            const linkEl = card.querySelector('a[href*="/product"], a[href*="/asset"], a');
+            const linkEl = card.querySelector('a[href*="/product"], a[href*="/asset"], a[href*="/inventory"], a');
             const href = linkEl ? linkEl.getAttribute('href') : '';
             const fullUrl = href ? (href.startsWith('http') ? href : ('https://cosmos.leartesstudios.com' + href)) : '';
 
@@ -901,7 +910,7 @@ _COSMOS_FETCH_JS = """
 
             let uid = '';
             if (href) {
-                const match = href.match(/\\/(?:product|asset)s?\\/([^/?#]+)/);
+                const match = href.match(/\\/(?:product|asset|inventory)s?\\/([^/?#]+)/);
                 if (match) uid = match[1];
             }
             if (!uid) uid = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
