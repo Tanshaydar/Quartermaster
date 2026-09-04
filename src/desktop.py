@@ -20,12 +20,12 @@ import time
 import webbrowser
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QEvent, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QAbstractNativeEventFilter, QObject, QEvent, QPoint, QRect, QRunnable, QSize, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QFormLayout, QFrame, QGridLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
+    QHBoxLayout, QLabel, QLayout, QLineEdit, QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
@@ -398,10 +398,91 @@ def badge(text: str, color: str) -> QLabel:
     return lbl
 
 
+class FlowLayout(QLayout):
+    """Clean wrapping layout for badges and cards without horizontal overflow blowout."""
+
+    def __init__(self, parent=None, margin=0, spacing=6):
+        super().__init__(parent)
+        self.setContentsMargins(margin, margin, margin, margin)
+        self.setSpacing(spacing)
+        self._items = []
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        if 0 <= index < len(self._items):
+            return self._items[index]
+        return None
+
+    def takeAt(self, index):
+        if 0 <= index < len(self._items):
+            return self._items.pop(index)
+        return None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._do_layout(QRect(0, 0, width, 0), apply_geom=False)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do_layout(rect, apply_geom=True)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        size += QSize(m.left() + m.right(), m.top() + m.bottom())
+        return size
+
+    def _do_layout(self, rect, apply_geom):
+        m = self.contentsMargins()
+        effective_rect = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
+        x = effective_rect.x()
+        y = effective_rect.y()
+        line_height = 0
+        space = self.spacing()
+
+        for item in self._items:
+            w = item.sizeHint().width()
+            h = item.sizeHint().height()
+            next_x = x + w + space
+            if next_x - space > effective_rect.right() and line_height > 0:
+                x = effective_rect.x()
+                y = y + line_height + space
+                next_x = x + w + space
+                line_height = 0
+            if apply_geom:
+                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
+            x = next_x
+            line_height = max(line_height, h)
+
+        return y + line_height - rect.y() + m.bottom()
+
+
+VALID_MAPS = {
+    "basecolor", "albedo", "diffuse", "normal", "roughness", "gloss", "specular",
+    "metallic", "metalness", "displacement", "height", "ao", "cavity", "opacity",
+    "alpha", "translucency", "transmission", "bump", "curvature", "fuzz", "mask", "thickness"
+}
+
+
 def _extract_scan_specs(item: dict) -> dict:
-    usage = item.get("usage_notes") or ""
-    summary = item.get("summary") or ""
-    text = f"{usage} {summary}"
+    usage = (item.get("usage_notes") or "").strip()
+    summary = (item.get("summary") or "").strip()
+    text = f"{usage}\n{summary}"
     specs = {}
     m_td = re.search(r"Texel\s*density:?\s*([0-9]+\s*px/m)", text, re.I)
     if m_td:
@@ -412,12 +493,18 @@ def _extract_scan_specs(item: dict) -> dict:
     m_ds = re.search(r"Displacement\s*scale:?\s*([0-9\.]+)", text, re.I)
     if m_ds:
         specs["displacement_scale"] = m_ds.group(1).strip()
-    m_maps = re.search(r"Maps:?\s*([^·\n\r]+)", text, re.I)
+    m_maps = re.search(r"Maps:?\s*([^\n\r·]+)", text, re.I)
     if m_maps:
         raw_m = re.sub(r"<[^>]+>", " ", m_maps.group(1))
         raw_m = re.sub(r"\([^)]*\)", " ", raw_m)
         tokens = [w.strip() for w in re.split(r"[\s,]+", raw_m) if w.strip()]
-        specs["maps"] = tokens
+        clean_maps = []
+        for t in tokens:
+            t_clean = re.sub(r"[^a-zA-Z0-9_\-]", "", t)
+            if t_clean.lower() in VALID_MAPS and t_clean.title() not in clean_maps:
+                clean_maps.append(t_clean.title())
+        if clean_maps:
+            specs["maps"] = clean_maps
     return specs
 
 
@@ -901,6 +988,7 @@ class DetailPanel(QScrollArea):
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.current: Optional[dict] = None
         self.hero_url: str = ""
         self._gallery_btns: Dict[str, QPushButton] = {}
@@ -954,6 +1042,7 @@ class DetailPanel(QScrollArea):
         self.hero_url = (item.get("image_url") or "").strip()
         self.hero_cover = QLabel("  loading cover…  " if self.hero_url else "No preview image available")
         self.hero_cover.setFixedHeight(230)
+        self.hero_cover.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.hero_cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hero_cover.setStyleSheet(f"background:{CARD}; border:1px solid {BORDER}; border-radius:8px; color:{MUTED}; font-size:13px;")
         self.lay.addWidget(self.hero_cover)
@@ -974,8 +1063,8 @@ class DetailPanel(QScrollArea):
             distinct_gallery = []
 
         if distinct_gallery:
-            grow = QHBoxLayout()
-            grow.setSpacing(6)
+            g_cont = QWidget()
+            g_flow = FlowLayout(g_cont, margin=0, spacing=6)
             for i, g in enumerate(distinct_gallery[:6]):
                 gl = QPushButton()
                 gl.setFixedSize(70, 48)
@@ -989,35 +1078,33 @@ class DetailPanel(QScrollArea):
                     gl.setIconSize(QSize(68, 46))
                 else:
                     get_thumb_manager().request(g)
-                grow.addWidget(gl)
-            grow.addStretch()
-            self.lay.addLayout(grow)
+                g_flow.addWidget(gl)
+            self.lay.addWidget(g_cont)
 
         # 3. Action Bar Buttons
-        act_bar = QHBoxLayout()
-        act_bar.setSpacing(8)
+        act_cont = QWidget()
+        act_flow = FlowLayout(act_cont, margin=0, spacing=8)
         local = item.get("local_path")
         if local and os.path.exists(local):
             rev_btn = QPushButton("⚡ Reveal in Explorer")
             rev_btn.setStyleSheet(f"background:#1f3b2b; color:{GREEN}; border:1px solid #238636; font-weight:600;")
             rev_btn.clicked.connect(lambda checked=False, p=local: self._reveal_local(p))
-            act_bar.addWidget(rev_btn)
+            act_flow.addWidget(rev_btn)
 
         if (item.get("local_path") or "").lower().endswith(".unitypackage"):
             unpack_btn = QPushButton("📥 Unpack to Unity…")
             unpack_btn.clicked.connect(self._unpack_to_project)
-            act_bar.addWidget(unpack_btn)
+            act_flow.addWidget(unpack_btn)
 
         if item.get("store_url"):
             store_btn = QPushButton("↗ Open Store")
             store_btn.clicked.connect(lambda checked=False, u=item["store_url"]: self._open_store(u))
-            act_bar.addWidget(store_btn)
+            act_flow.addWidget(store_btn)
 
         copy_btn = QPushButton("📋 Copy Context")
         copy_btn.clicked.connect(self._copy_context)
-        act_bar.addWidget(copy_btn)
-        act_bar.addStretch()
-        self.lay.addLayout(act_bar)
+        act_flow.addWidget(copy_btn)
+        self.lay.addWidget(act_cont)
 
         # 4. Header: Title & Meta Subtitle
         title = QLabel(f"<h2 style='margin:4px 0 0 0; color:{TEXT};'>{item['title']}</h2>")
@@ -1042,9 +1129,6 @@ class DetailPanel(QScrollArea):
             head_sp.setStyleSheet(f"color:{ACCENT}; font-size:11px; letter-spacing:1px; font-weight:700; margin-top:6px;")
             self.lay.addWidget(head_sp)
 
-            metric_box = QHBoxLayout()
-            metric_box.setSpacing(8)
-
             def make_metric(lbl_title: str, val: str):
                 c = QFrame()
                 c.setStyleSheet(f"background:{PANEL}; border:1px solid {BORDER}; border-radius:6px; padding:6px;")
@@ -1059,23 +1143,24 @@ class DetailPanel(QScrollArea):
                 cl.addWidget(v)
                 return c
 
-            if specs.get("scan_area"):
-                metric_box.addWidget(make_metric("Scan Area", specs["scan_area"]))
-            if specs.get("texel_density"):
-                metric_box.addWidget(make_metric("Texel Density", specs["texel_density"]))
-            if specs.get("displacement_scale"):
-                metric_box.addWidget(make_metric("Displacement Scale", specs["displacement_scale"]))
-            metric_box.addStretch()
-            self.lay.addLayout(metric_box)
+            if specs.get("scan_area") or specs.get("texel_density") or specs.get("displacement_scale"):
+                metric_cont = QWidget()
+                metric_flow = FlowLayout(metric_cont, margin=0, spacing=8)
+                if specs.get("scan_area"):
+                    metric_flow.addWidget(make_metric("Scan Area", specs["scan_area"]))
+                if specs.get("texel_density"):
+                    metric_flow.addWidget(make_metric("Texel Density", specs["texel_density"]))
+                if specs.get("displacement_scale"):
+                    metric_flow.addWidget(make_metric("Displacement Scale", specs["displacement_scale"]))
+                self.lay.addWidget(metric_cont)
 
             if specs.get("maps"):
-                maps_row = QHBoxLayout()
-                maps_row.setSpacing(6)
+                maps_cont = QWidget()
+                maps_flow = FlowLayout(maps_cont, margin=0, spacing=6)
                 for m in specs["maps"]:
                     mpill = badge(m, "#58a6ff" if m.lower() in ("displacement", "roughness", "normal") else "#8b949e")
-                    maps_row.addWidget(mpill)
-                maps_row.addStretch()
-                self.lay.addLayout(maps_row)
+                    maps_flow.addWidget(mpill)
+                self.lay.addWidget(maps_cont)
 
         # 6. Form Details (Category, Pipelines, Formats, License, Acquired, Local)
         form = QFormLayout()

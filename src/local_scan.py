@@ -42,6 +42,13 @@ def _norm(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (title or "").lower())
 
 
+VALID_MAPS = {
+    "basecolor", "albedo", "diffuse", "normal", "roughness", "gloss", "specular",
+    "metallic", "metalness", "displacement", "height", "ao", "cavity", "opacity",
+    "alpha", "translucency", "transmission", "bump", "curvature", "fuzz", "mask", "thickness"
+}
+
+
 def _parse_scan_specs_from_text(text: str) -> Dict[str, Any]:
     """Extract texel density, scan area / physical size, and map lists from listing HTML/markdown."""
     res = {}
@@ -58,7 +65,13 @@ def _parse_scan_specs_from_text(text: str) -> Dict[str, Any]:
         clean_m = re.sub(r"<[^>]+>", " ", m_maps.group(1))
         clean_m = re.sub(r"\([^)]*\)", " ", clean_m)
         tokens = [w.strip() for w in re.split(r"[\s,]+", clean_m) if w.strip()]
-        res["maps"] = tokens
+        clean_maps = []
+        for t in tokens:
+            t_clean = re.sub(r"[^a-zA-Z0-9_\-]", "", t)
+            if t_clean.lower() in VALID_MAPS and t_clean.title() not in clean_maps:
+                clean_maps.append(t_clean.title())
+        if clean_maps:
+            res["maps"] = clean_maps
     return res
 
 

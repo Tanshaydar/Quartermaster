@@ -138,6 +138,43 @@ class TestHelpersAndRules(unittest.TestCase):
         self.assertEqual(specs_density["texel_density"], "5873 px/m")
         self.assertNotIn("scan_area", specs_density)
 
+    def test_desktop_scan_specs_and_flow_layout(self):
+        from src.desktop import _extract_scan_specs, FlowLayout
+        from PySide6.QtWidgets import QApplication, QWidget, QLabel
+        from PySide6.QtCore import QRect
+
+        # Test noise filtering in maps extraction (e.g. Aloe Vera by Quixel Megascans)
+        item = {
+            "title": "Aloe Vera",
+            "summary": "Aloe Vera by Quixel Megascans",
+            "usage_notes": "Maps: Basecolor, Roughness, Specular, Bump, Gloss, Translucency, Displacement, AO, Normal, Opacity, Cavity",
+        }
+        specs = _extract_scan_specs(item)
+        self.assertEqual(len(specs["maps"]), 11)
+        self.assertIn("Basecolor", specs["maps"])
+        self.assertIn("Cavity", specs["maps"])
+        self.assertNotIn("Aloe", specs["maps"])
+        self.assertNotIn("Vera", specs["maps"])
+        self.assertNotIn("Quixel", specs["maps"])
+        self.assertNotIn("Megascans", specs["maps"])
+
+        # Test FlowLayout heightForWidth calculation
+        app = QApplication.instance() or QApplication([])
+        w = QWidget()
+        flow = FlowLayout(w, margin=0, spacing=4)
+        for m in specs["maps"]:
+            lbl = QLabel(m)
+            lbl.setFixedSize(60, 20)
+            flow.addWidget(lbl)
+
+        # At width 800, all 11 badges fit in one row (11 * 60 + 10 * 4 = 700 <= 800) -> height is 20
+        h_wide = flow.heightForWidth(800)
+        self.assertEqual(h_wide, 20)
+
+        # At width 150, badges must wrap across multiple lines -> height is greater
+        h_narrow = flow.heightForWidth(150)
+        self.assertGreater(h_narrow, 20)
+
 
 if __name__ == "__main__":
     unittest.main()
