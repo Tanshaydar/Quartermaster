@@ -5,7 +5,6 @@
 [![GitHub stars](https://img.shields.io/github/stars/Tanshaydar/Quartermaster?style=social)](https://github.com/Tanshaydar/Quartermaster/stargazers)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2011%20%7C%20cross--platform-lightgrey)]()
-
 [![MCP Ready](https://img.shields.io/badge/MCP-protocol%20ready-success)](https://modelcontextprotocol.io)
 [![Search](https://img.shields.io/badge/search-SQLite%20FTS5%20%2B%203--Way%20RRF-informational)](https://www.sqlite.org/fts5.html)
 [![Vectors](https://img.shields.io/badge/vectors-FastEmbed%20CPU%20(BGE%20%2B%20CLIP)-purple)](https://github.com/qdrant/fastembed)
