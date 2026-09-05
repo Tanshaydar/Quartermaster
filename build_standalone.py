@@ -160,6 +160,7 @@ for item in ["README.md", "LICENSE"]:
 # Package archive and calculate hash
 if IS_WIN:
     archive_path = os.path.join(DIST_DIR, f"Quartermaster-{PLATFORM_TAG}.zip")
+    mcp_archive_path = os.path.join(DIST_DIR, f"Quartermaster-mcp-{PLATFORM_TAG}.zip")
     if os.path.exists(archive_path):
         os.remove(archive_path)
     print(f"Creating release archive: {archive_path}...")
@@ -169,6 +170,7 @@ if IS_WIN:
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, APP_OUT_DIR)
                 zf.write(full_path, rel_path)
+    shutil.copy2(archive_path, mcp_archive_path)
 else:
     archive_path = os.path.join(DIST_DIR, f"Quartermaster-{PLATFORM_TAG}.tar.gz")
     if os.path.exists(archive_path):

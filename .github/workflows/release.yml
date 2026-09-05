@@ -38,6 +38,7 @@ jobs:
           if (-not (Test-Path dist/Quartermaster-windows-x64.zip)) {
             Compress-Archive -Path dist/Quartermaster/* -DestinationPath dist/Quartermaster-windows-x64.zip -Force
           }
+          Copy-Item dist/Quartermaster-windows-x64.zip dist/Quartermaster-mcp-windows-x64.zip -Force
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -45,6 +46,7 @@ jobs:
         with:
           files: |
             dist/Quartermaster-windows-x64.zip
+            dist/Quartermaster-mcp-windows-x64.zip
             editor_bridge/Quartermaster-Bridge.unitypackage
           draft: false
           prerelease: false
