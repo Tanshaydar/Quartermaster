@@ -918,7 +918,7 @@ class AssetCard(QWidget):
                 self.thumb.setText("🖼")
                 mgr.request_thumbnail(self.image_url, 64, 48, self._set_thumb_pixmap)
         else:
-            self.thumb.setText("📦" if item.get("source") == "unity" else "🌿")
+            self.thumb.setText(_source_icon(item.get("source")) or "📦")
 
         lay = QVBoxLayout()
         lay.setContentsMargins(0, 0, 0, 0)
@@ -1021,7 +1021,7 @@ class AssetGridCard(QWidget):
                 self.thumb.setText("🖼")
                 mgr.request_thumbnail(self.image_url, 196, 120, self._set_thumb_pixmap)
         else:
-            self.thumb.setText("📦" if item.get("source") == "unity" else "🌿")
+            self.thumb.setText(_source_icon(item.get("source")) or "📦")
         lay.addWidget(self.thumb)
 
         # Body
@@ -1715,9 +1715,26 @@ class DetailPanel(QScrollArea):
         a = self.current
         if not a:
             return
+        source_name = _format_engine_name(a.get("source", ""))
+        src = (a.get("source") or "").lower()
+        if src == "unity":
+            compat_str = "Unity"
+        elif src == "fab":
+            compat_str = "Unreal Engine"
+        elif src == "quixel":
+            compat_str = "Universal (FBX / PBR Textures — Unity, Unreal, Godot)"
+        elif src == "cosmos":
+            compat_str = "Unreal Engine & Unity"
+        elif src == "gumroad":
+            compat_str = "Unreal Engine" if "unreal" in (a.get("title", "") + a.get("usage_notes", "")).lower() else "Universal / Multi-engine"
+        else:
+            compat_str = "Universal"
+
         parts = [
-            f"Asset: {a['title']}", f"Publisher: {a.get('publisher', '')}",
-            f"Engine: {'Unity Asset Store' if a['source'] == 'unity' else 'Fab (Unreal)'}",
+            f"Asset: {a['title']}",
+            f"Source: {source_name}",
+            f"Compatibility: {compat_str}",
+            f"Publisher: {a.get('publisher', '')}",
             a.get("version") and f"Version: {a['version']}",
             f"Category: {a.get('category', '')}",
             a.get("render_pipelines") and f"Pipelines: {', '.join(a['render_pipelines'])}",

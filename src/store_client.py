@@ -2277,7 +2277,12 @@ def enrich_quixel_specs(limit: Optional[int] = None, cancel_event=None, progress
         FROM assets
         WHERE source = 'quixel' AND (
             usage_notes IS NULL
-            OR (usage_notes NOT LIKE '%Texel density%' AND usage_notes NOT LIKE '%Maps:%' AND usage_notes NOT LIKE '%Scan area:%')
+            OR (
+                usage_notes NOT LIKE '%Texel density%'
+                AND usage_notes NOT LIKE '%Maps:%'
+                AND usage_notes NOT LIKE '%Scan area:%'
+                AND usage_notes NOT LIKE '%Scan specs: None published%'
+            )
         )
         ORDER BY rowid ASC
     """)
@@ -2350,6 +2355,9 @@ def enrich_quixel_specs(limit: Optional[int] = None, cancel_event=None, progress
                         spec_note = " · ".join(notes_parts)
                         if "Texel density:" not in new_use:
                             new_use = f"{spec_note}\n{new_use}".strip() if new_use else spec_note
+                    else:
+                        if "Scan specs:" not in new_use:
+                            new_use = f"Scan specs: None published\n{new_use}".strip() if new_use else "Scan specs: None published"
 
                     new_sum = old_sum or ""
                     spec_details = []

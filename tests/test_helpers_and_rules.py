@@ -178,6 +178,42 @@ class TestHelpersAndRules(unittest.TestCase):
         h_narrow = flow.heightForWidth(150)
         self.assertGreater(h_narrow, 20)
 
+    def test_engine_compatibility_filtering(self):
+        from src.mcp_server import _matches_engine
+        
+        quixel_asset = {"source": "quixel", "title": "Mossy Rock Scan", "formats": ["Unreal Engine", "FBX", "Textures"]}
+        cosmos_asset = {"source": "cosmos", "title": "Medieval Italian Town", "formats": []}
+        unity_asset = {"source": "unity", "title": "Amplify Shader Editor", "formats": []}
+        fab_unreal_asset = {"source": "fab", "title": "Military Outpost UE5", "formats": []}
+        fab_unity_asset = {"source": "fab", "title": "Modular Hospital (Unity Edition)", "formats": ["Unity"]}
+        gumroad_ue_asset = {"source": "gumroad", "title": "Driveable Excavator (Unreal Engine)", "formats": []}
+        gumroad_generic_asset = {"source": "gumroad", "title": "Fantasy Dagger Pack", "formats": []}
+
+        # Unity project engine checks
+        self.assertTrue(_matches_engine(quixel_asset, "unity"), "Quixel scans must be included in Unity")
+        self.assertTrue(_matches_engine(cosmos_asset, "unity"), "Cosmos packs must be included in Unity")
+        self.assertTrue(_matches_engine(unity_asset, "unity"), "Unity assets must be included in Unity")
+        self.assertFalse(_matches_engine(fab_unreal_asset, "unity"), "Unreal-only Fab listing must not match Unity")
+        self.assertTrue(_matches_engine(fab_unity_asset, "unity"), "Unity-declared Fab listing must match Unity")
+        self.assertFalse(_matches_engine(gumroad_ue_asset, "unity"), "Unreal-only Gumroad pack must not match Unity")
+        self.assertTrue(_matches_engine(gumroad_generic_asset, "unity"), "Generic Gumroad models must match Unity")
+
+        # Unreal project engine checks
+        self.assertTrue(_matches_engine(quixel_asset, "unreal"), "Quixel scans must be included in Unreal")
+        self.assertTrue(_matches_engine(cosmos_asset, "unreal"), "Cosmos packs must be included in Unreal")
+        self.assertTrue(_matches_engine(fab_unreal_asset, "unreal"), "Fab assets must match Unreal")
+        self.assertFalse(_matches_engine(unity_asset, "unreal"), "Unity Asset Store package must not match Unreal")
+
+        # Backwards compatibility: source passed as engine
+        self.assertTrue(_matches_engine(quixel_asset, "quixel"))
+        self.assertFalse(_matches_engine(unity_asset, "quixel"))
+
+    def test_project_audit_gumroad_warning(self):
+        from src.project_audit import compatibility_warning
+        ue_pack = {"source": "gumroad", "title": "Military Boat (Unreal Engine)"}
+        warnings = compatibility_warning(ue_pack, {"engine": "unity", "version": "Unity 6"})
+        self.assertTrue(any("Unreal Engine" in w for w in warnings))
+
 
 if __name__ == "__main__":
     unittest.main()

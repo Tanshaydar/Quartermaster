@@ -121,13 +121,25 @@ def compatibility_warning(asset: Dict[str, Any], project_info: Dict[str, Any]) -
     if not asset or not project_info:
         return warnings
 
-    if asset.get("source") == "fab" and project_info.get("engine") == "unity":
-        warnings.append(
-            f"This is a Fab/Unreal listing but the target project is Unity "
-            f"({project_info.get('version')}). Expect full re-authoring: meshes "
-            f"(FBX ok), materials must be rebuilt, Nanite-specific LODs are useless.")
-    elif asset.get("source") == "unity" and project_info.get("engine") == "unreal":
-        warnings.append("This is a Unity Asset Store package; the target project is Unreal.")
+    src = (asset.get("source") or "").lower()
+    title = (asset.get("title") or "").lower()
+    p_engine = (project_info.get("engine") or "").lower()
+
+    if p_engine == "unity":
+        if src == "fab":
+            warnings.append(
+                f"This is a Fab/Unreal listing but the target project is Unity "
+                f"({project_info.get('version')}). Expect full re-authoring: meshes "
+                f"(FBX ok), materials must be rebuilt, Nanite-specific LODs are useless.")
+        elif src == "gumroad" and "unreal" in title and "unity" not in title:
+            warnings.append(
+                f"This Gumroad listing specifies Unreal Engine in its title, but the target project is Unity "
+                f"({project_info.get('version')}).")
+    elif p_engine == "unreal":
+        if src == "unity":
+            warnings.append("This is a Unity Asset Store package (.unitypackage); the target project is Unreal Engine.")
+        elif src == "gumroad" and "unity" in title and "unreal" not in title:
+            warnings.append("This Gumroad listing specifies Unity in its title, but the target project is Unreal Engine.")
 
     pipes = asset.get("render_pipelines") or []
     proj_pipe = project_info.get("pipeline")

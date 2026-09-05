@@ -27,6 +27,8 @@ Quartermaster indexes everything you own across the **Unity Asset Store**, **Fab
 you    →  "I want to build a dam — what do I have to work with?"
 
 agent  →  search_owned_assets(...)        finds the concrete meshes, water FX, terrain
+          └─ Nordic Coastal Cliff (Quixel) · 5785 px/m · 2.03 × 2.92 × 2.44 m
+             maps: Basecolor, Normal, Displacement, Cavity, AO, Roughness…
           validate_stack([...])           checks none of them fight each other
           import_asset_to_project(...)    unpacks into Assets/, demos stripped
 ```
@@ -48,7 +50,7 @@ Why *Quartermaster*? A quartermaster's job was never remembering what's in store
 | **Fab** (Epic) | Owned Unreal and Unity listings | Authenticated harvest |
 | **Quixel Megascans / Megaplants** | The catalog, with texel density, scan area and map lists | Public catalog sync |
 | **Gumroad** | Owned products | Authenticated harvest |
-| **Leartes Cosmos** | Owned and claimable Cosmos inventory | Authenticated harvest |
+| **Leartes Cosmos** | Owned and claimable Cosmos inventory, with deep screenshot galleries (18 on average, up to 71) | Authenticated harvest |
 
 Everything lands in one SQLite table behind one search surface, so a query crosses
 all of them at once. Nothing is engine-scoped: a Megascans surface and a Unity
@@ -111,7 +113,9 @@ python -m src.store_client enrich-quixel    # texel density, scan area, maps
 **Search that understands intent & vision.** This is the dam problem. 
 - **Exact keywords** via SQLite FTS5.
 - **Natural language intent** via local ONNX text embeddings (`BAAI/bge-small-en-v1.5`) — *"concrete structures for holding back water"* surfaces meshes and shaders whose listings never mention dams.
-- **Cross-modal visual understanding** via ONNX CLIP embeddings (`Qdrant/clip-ViT-B-32`) — searching *"gothic cathedral"* literally scores your screenshots and promo renders, finding assets even when their text descriptions are completely silent.
+- **Cross-modal visual understanding** via ONNX CLIP embeddings (`Qdrant/clip-ViT-B-32`) — searching *"gothic cathedral"* literally scores your screenshots and promo renders, finding assets even when their text descriptions are completely silent. A visual hit also hands back *which* screenshot matched, not just the cover art.
+- **Every result shows its working.** Each hit carries a `match` field — `keyword`, `semantic+vision`, `keyword+semantic+vision` — so you and your agent can see which signal fired. A pure-vision hit on a listing with useless marketing copy is a different kind of result than an exact title match, and it should be legible as one.
+- **Concept tags mined from screenshots.** The offline vision pass scores every gallery image against a visual vocabulary and writes the survivors back into the FTS index, so *"medieval village"* and *"dark horror atmosphere"* become keyword-searchable on assets whose descriptions never said either. The vocabulary is a JSON file you can replace — see [`docs/concepts.md`](docs/concepts.md).
 All three signals are fused with **3-way Reciprocal Rank Fusion (RRF)** on your CPU. No GPU, no vector database process, no cloud API — ONNX Runtime and a numpy matrix, in the same process as everything else.
 
 Measured on a ~7,500-asset vault: **~520 MB peak RAM** with both models resident, **~1.4 s for the first query** (loading BGE and CLIP), **~85 ms warm** after that. The models load lazily, so an agent that never searches never pays for them.
@@ -257,6 +261,13 @@ Both are plain JSON read at runtime, and both have a reference page under [`docs
 ## Other ways in
 
 - **Desktop app** (`run_desktop.bat`) — PySide6 spotlight search with tray icon; press `Win+Alt+V` anywhere in Windows. Runs alongside your agent without getting in its way — the database runs in WAL mode, so the GUI writing while your agent searches never blocks either of them.
+
+  It is more than the search bar, though that is the part you will use most:
+  - Hit **space** on any result for a full-size preview, the way Finder does it. Detail panes carry up to 24 gallery shots, decoded and cached in the background.
+  - Megascans rows show their **scan specs** inline — texel density, physical dimensions, PBR map list — so you can tell a 5785 px/m cliff from a 1 m tiling surface without opening the store page.
+  - **Reveal in Explorer**, **Unpack to Unity** (same sandbox and demo-stripping as the MCP tool), and **Copy Context**, which dumps an asset's title, publisher, pipelines, formats, specs and disk path as a plain-text block you can paste straight into a chat.
+  - Filter by source (Unity, Fab, Quixel, Gumroad, Cosmos), by pipeline (HDRP, URP, Built-in), or to what is already on disk.
+  - Logins, harvests and the Quixel sync all run from here with live progress and a running ETA, and every one of them is resumable.
 - **Web UI** (`run_ui.bat`) — dark-mode dashboard at `http://localhost:7890`.
 - **In Unity** — import `editor_bridge/Quartermaster-Bridge.unitypackage`, then `Window > Quartermaster`. Search and import without leaving the editor. Small aside: that bridge package is generated by `src/build_bridge.py`, which writes the same tar format `unpacker.py` reads. Dogfooding on purpose.
 

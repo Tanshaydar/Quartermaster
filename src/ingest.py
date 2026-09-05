@@ -379,6 +379,37 @@ def _row_from_fab(row: Dict[str, str]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _row_from_generic(row: Dict[str, str], source: str = "generic") -> Optional[Dict[str, Any]]:
+    title = (row.get("Title") or row.get("Name") or row.get("Asset Name") or "").strip()
+    if not title:
+        return None
+    pkg_id = (row.get("ID") or row.get("Package ID") or row.get("Listing ID") or row.get("Product ID") or "").strip()
+    store_url = (row.get("Store URL") or row.get("URL") or row.get("Link") or "").strip()
+    publisher = (row.get("Publisher") or row.get("Seller") or row.get("Creator") or row.get("Author") or "").strip()
+    cls = classify_asset(title, publisher)
+    return {
+        "id": _stable_id(source, pkg_id, title),
+        "source": source,
+        "package_id": pkg_id,
+        "product_id": "",
+        "title": title,
+        "publisher": publisher,
+        "publisher_id": "",
+        "version": (row.get("Version") or "").strip(),
+        "size_mb": 0.0,
+        "size_str": "",
+        "claimed_date": (row.get("Date") or row.get("Claimed Date") or row.get("Acquired Date") or "")[:10],
+        "store_url": store_url,
+        **cls,
+        "image_url": (row.get("Image") or row.get("Thumbnail") or "").strip(),
+        "gallery_images": [],
+        "video_links": [],
+        "formats": [],
+        "license": (row.get("License") or "").strip(),
+        "enriched": 0,
+    }
+
+
 def ingest_csv(path: str, force_source: Optional[str] = None) -> int:
     """Ingest a single CSV export. Returns number of assets ingested."""
     count = 0
@@ -391,7 +422,13 @@ def ingest_csv(path: str, force_source: Optional[str] = None) -> int:
             print(f"[skip] Unrecognized CSV format: {path}")
             return 0
 
-        parser = _row_from_unity if source == "unity" else _row_from_fab
+        if source == "unity":
+            parser = _row_from_unity
+        elif source in ("fab", "quixel"):
+            parser = _row_from_fab
+        else:
+            parser = lambda r: _row_from_generic(r, source=source)
+
         for row in reader:
             try:
                 asset = parser(row)

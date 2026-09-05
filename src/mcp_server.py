@@ -14,6 +14,7 @@ Tools:
   get_vault_stats()
 """
 import json
+from typing import Any, Dict, List, Optional
 
 try:
     from mcp.server.mcpserver import MCPServer as FastMCP      # mcp SDK >= 2.0
@@ -62,15 +63,66 @@ def _slim(item: dict) -> dict:
     return out
 
 
+def _matches_engine(r: Dict[str, Any], engine: str) -> bool:
+    if not engine or engine.lower() == "all":
+        return True
+    eng = engine.lower().strip()
+    src = (r.get("source") or "").lower().strip()
+    title = (r.get("title") or "").lower()
+    fmts = [str(f).lower() for f in (r.get("formats") or [])]
+    pipes = [str(p).lower() for p in (r.get("render_pipelines") or [])]
+
+    # Backwards-compatibility: if an agent passed a non-engine store name as engine (e.g. engine="quixel")
+    if eng in ("quixel", "cosmos", "gumroad"):
+        return src == eng
+
+    if eng in ("unity", "unity3d"):
+        if src == "unity":
+            return True
+        if src in ("quixel", "cosmos"):
+            return True  # Quixel (FBX/textures) and Cosmos (multi-platform) are fully Unity-ready
+        if src == "gumroad":
+            if "unreal" in title and "unity" not in title:
+                return False
+            return True
+        if src == "fab":
+            return any("unity" in f for f in fmts) or any("unity" in p for p in pipes) or "unity" in title
+        return True
+
+    if eng in ("unreal", "unreal engine", "ue", "ue5", "ue4"):
+        if src in ("fab", "quixel", "cosmos"):
+            return True
+        if src == "gumroad":
+            if "unity" in title and "unreal" not in title:
+                return False
+            return True
+        if src == "unity":
+            return False  # .unitypackage requires re-authoring
+        return True
+
+    if eng == "godot":
+        if src == "quixel":
+            return True
+        if any(f in ("fbx", "obj", "textures", "gltf") for f in fmts):
+            return True
+        return False
+
+    return True
+
+
 @mcp.tool()
-def search_owned_assets(query: str, engine: str = "all", pipeline: str = "all",
-                        category: str = "all", limit: int = 25,
+def search_owned_assets(query: str, engine: str = "all", source: str = "all",
+                        pipeline: str = "all", category: str = "all", limit: int = 25,
                         local_only: bool = False) -> str:
-    """Search the user's asset vault (owned Unity/Fab packages and synced Quixel Megascans catalog).
-    Hybrid: keyword (BM25) fused with local semantic embeddings.
-    Results include a 'match' field and 'ownership' field ('vault_owned' vs 'catalog_grant').
-    engine: all|unity|fab|quixel|gumroad|cosmos. pipeline: all|HDRP|URP|Built-in.
-    local_only: only assets already downloaded to disk."""
+    """Search the user's asset vault across Unity, Fab, Quixel Megascans, Gumroad, and Cosmos.
+    Hybrid: keyword (FTS5) fused with BGE text embeddings and CLIP visual vectors via 3-way RRF.
+    Results include 'match' attribution ('keyword+semantic+vision') and 'ownership' ('vault_owned' vs 'catalog_grant').
+
+    engine: target game engine compatibility (all|unity|unreal|godot). Engine-agnostic sources (Quixel FBX/textures, Cosmos) match both unity and unreal.
+    source: filter by marketplace provider (all|unity|fab|quixel|gumroad|cosmos).
+    pipeline: render pipeline (all|HDRP|URP|Built-in).
+    local_only: only assets already downloaded to disk.
+    limit: max results to return."""
     if query.strip():
         merged = semantic.hybrid_search(query, limit=max(limit * 2, 50))
         results = merged.get("results", [])
@@ -79,7 +131,9 @@ def search_owned_assets(query: str, engine: str = "all", pipeline: str = "all",
     else:
         results, mode = search_assets(limit=min(max(limit, 1), 100)), "keyword"
     if engine != "all":
-        results = [r for r in results if r.get("source") == engine]
+        results = [r for r in results if _matches_engine(r, engine)]
+    if source != "all":
+        results = [r for r in results if (r.get("source") or "").lower() == source.lower().strip()]
     if pipeline != "all":
         results = [r for r in results if pipeline in (r.get("render_pipelines") or [])]
     if category != "all":

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tanshaydar/quartermaster",
+  "description": "Indexes the game assets you already own across the Unity Asset Store, Fab, Quixel Megascans, Gumroad and Leartes Cosmos, and serves them to AI coding agents over MCP. Hybrid keyword + semantic + CLIP visual search, fully local, no telemetry.",
+  "version": "1.3.0",
+  "repository": {
+    "url": "https://github.com/Tanshaydar/Quartermaster",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/Tanshaydar/Quartermaster#readme",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/Tanshaydar/Quartermaster/releases/download/v1.3.0/Quartermaster-windows-x64.zip",
+      "version": "1.3.0",
+      "fileSha256": "REPLACE_WITH_SHA256_OF_RELEASE_ASSET",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
