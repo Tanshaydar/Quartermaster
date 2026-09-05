@@ -215,8 +215,7 @@ def upsert_asset(asset: Dict[str, Any], db_path: str = DB_PATH):
             WHEN excluded.gallery_images != '[]' AND excluded.gallery_images != '' THEN excluded.gallery_images
             ELSE assets.gallery_images
         END,
-        video_links=CASE WHEN assets.enriched = 1 AND excluded.enriched = 0 THEN assets.video_links ELSE (CASE WHEN excluded.video_links != '[]' THEN excluded.video_links ELSE assets.video_links END) END,
-        formats=excluded.formats,
+        formats=CASE WHEN excluded.formats != '[]' AND excluded.formats != '' THEN excluded.formats ELSE assets.formats END,
         license=excluded.license,
         enriched=MAX(assets.enriched, excluded.enriched),
         local_path=CASE WHEN excluded.local_path != '' THEN excluded.local_path ELSE assets.local_path END;

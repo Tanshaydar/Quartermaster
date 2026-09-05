@@ -1741,8 +1741,18 @@ def fetch_library(provider: str, cancel_event=None, progress=None) -> int:
         }
         # prefer the store's real description over the heuristic one
         tech_specs = ""
+        extracted_formats = []
         if isinstance(item.get("assetFormats"), list) and item["assetFormats"]:
+            for af in item["assetFormats"]:
+                if isinstance(af, dict):
+                    aft = af.get("assetFormatType")
+                    if isinstance(aft, dict) and aft.get("name"):
+                        extracted_formats.append(aft["name"])
+                    elif isinstance(af.get("name"), str):
+                        extracted_formats.append(af["name"])
             tech_specs = item["assetFormats"][0].get("technicalSpecs", {}).get("technicalDetails", "")
+        if extracted_formats:
+            asset["formats"] = extracted_formats
         rich = re.sub(r"<[^>]+>", " ", str(item.get("description")
                                           or item.get("aiDescription")
                                           or tech_specs or ""))
