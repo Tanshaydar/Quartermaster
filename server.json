@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.tanshaydar/quartermaster",
+  "name": "io.github.Tanshaydar/quartermaster",
   "description": "Local MCP asset intelligence across Unity, Fab, Megascans, Gumroad & Cosmos.",
   "version": "1.3.0",
   "repository": {
