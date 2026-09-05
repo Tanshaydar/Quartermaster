@@ -77,16 +77,12 @@ def _matches_engine(r: Dict[str, Any], engine: str) -> bool:
         return src == eng
 
     if eng in ("unity", "unity3d"):
-        if src == "unity":
-            return True
-        if src in ("quixel", "cosmos"):
-            return True  # Quixel (FBX/textures) and Cosmos (multi-platform) are fully Unity-ready
+        if src in ("unity", "quixel", "cosmos", "fab"):
+            return True  # Over-inclusion is recoverable: agent inspects source/tags, unlike silent exclusion
         if src == "gumroad":
             if "unreal" in title and "unity" not in title:
                 return False
             return True
-        if src == "fab":
-            return any("unity" in f for f in fmts) or any("unity" in p for p in pipes) or "unity" in title
         return True
 
     if eng in ("unreal", "unreal engine", "ue", "ue5", "ue4"):

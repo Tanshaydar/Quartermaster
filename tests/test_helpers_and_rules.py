@@ -193,7 +193,7 @@ class TestHelpersAndRules(unittest.TestCase):
         self.assertTrue(_matches_engine(quixel_asset, "unity"), "Quixel scans must be included in Unity")
         self.assertTrue(_matches_engine(cosmos_asset, "unity"), "Cosmos packs must be included in Unity")
         self.assertTrue(_matches_engine(unity_asset, "unity"), "Unity assets must be included in Unity")
-        self.assertFalse(_matches_engine(fab_unreal_asset, "unity"), "Unreal-only Fab listing must not match Unity")
+        self.assertTrue(_matches_engine(fab_unreal_asset, "unity"), "Fab listings must be accessible in Unity (over-inclusion is recoverable)")
         self.assertTrue(_matches_engine(fab_unity_asset, "unity"), "Unity-declared Fab listing must match Unity")
         self.assertFalse(_matches_engine(gumroad_ue_asset, "unity"), "Unreal-only Gumroad pack must not match Unity")
         self.assertTrue(_matches_engine(gumroad_generic_asset, "unity"), "Generic Gumroad models must match Unity")

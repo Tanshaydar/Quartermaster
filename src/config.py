@@ -48,7 +48,7 @@ AUTH_TOKEN_PATH = os.path.join(DATA_DIR, "data", ".auth_token")
 CRASH_LOG_PATH = os.path.join(DATA_DIR, "data", "crash.log")
 HARVEST_LOG_PATH = os.path.join(DATA_DIR, "data", "store_harvest.log")
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 
 VAULT_SOURCES = ("unity", "fab", "quixel", "gumroad", "cosmos")
 
