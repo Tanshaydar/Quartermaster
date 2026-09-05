@@ -1,18 +1,23 @@
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
+import zipfile
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(BASE_DIR, "dist")
 BUILD_DIR = os.path.join(BASE_DIR, "build")
 APP_OUT_DIR = os.path.join(DIST_DIR, "Quartermaster")
+IS_WIN = sys.platform.startswith("win")
+PLATFORM_TAG = "windows-x64" if IS_WIN else "linux-x64"
 
-print("=== Building Standalone Quartermaster Distribution ===")
+print(f"=== Building Standalone Quartermaster Distribution ({PLATFORM_TAG}) ===")
 
-# Clean previous build artifacts
-shutil.rmtree(DIST_DIR, ignore_errors=True)
-shutil.rmtree(BUILD_DIR, ignore_errors=True)
+# Clean previous build artifacts for Quartermaster only
+shutil.rmtree(APP_OUT_DIR, ignore_errors=True)
+shutil.rmtree(os.path.join(BUILD_DIR, "Quartermaster"), ignore_errors=True)
 os.makedirs(APP_OUT_DIR, exist_ok=True)
 
 # Auto-generate multi-binary spec file for GUI and MCP server
@@ -144,4 +149,37 @@ for item in ["README.md", "LICENSE"]:
     if os.path.exists(src_path):
         shutil.copy2(src_path, APP_OUT_DIR)
 
-print(f"\n=== Build SUCCESSFUL! Output location: {APP_OUT_DIR} ===")
+# Package archive and calculate hash
+if IS_WIN:
+    archive_path = os.path.join(DIST_DIR, f"Quartermaster-{PLATFORM_TAG}.zip")
+    if os.path.exists(archive_path):
+        os.remove(archive_path)
+    print(f"Creating release archive: {archive_path}...")
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, _, files in os.walk(APP_OUT_DIR):
+            for file in files:
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, APP_OUT_DIR)
+                zf.write(full_path, rel_path)
+else:
+    archive_path = os.path.join(DIST_DIR, f"Quartermaster-{PLATFORM_TAG}.tar.gz")
+    if os.path.exists(archive_path):
+        os.remove(archive_path)
+    print(f"Creating release archive: {archive_path}...")
+    with tarfile.open(archive_path, "w:gz") as tf:
+        for root, _, files in os.walk(APP_OUT_DIR):
+            for file in files:
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, APP_OUT_DIR)
+                tf.add(full_path, arcname=rel_path)
+
+h = hashlib.sha256()
+with open(archive_path, "rb") as f:
+    while chunk := f.read(65536):
+        h.update(chunk)
+sha256_hash = h.hexdigest()
+
+print(f"\n=== Build SUCCESSFUL! ===")
+print(f"Output folder: {APP_OUT_DIR}")
+print(f"Release archive: {archive_path}")
+print(f"SHA-256: {sha256_hash}")

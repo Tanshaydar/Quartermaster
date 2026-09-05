@@ -28,7 +28,8 @@ APPDATA = os.environ.get("APPDATA", "")
 
 def _server_entry() -> Dict[str, Any]:
     if getattr(sys, "frozen", False):
-        mcp_exe = os.path.join(os.path.dirname(sys.executable), "Quartermaster-mcp.exe")
+        exe_name = "Quartermaster-mcp.exe" if os.name == "nt" else "Quartermaster-mcp"
+        mcp_exe = os.path.join(os.path.dirname(sys.executable), exe_name)
         return {
             "command": mcp_exe,
             "args": [],
