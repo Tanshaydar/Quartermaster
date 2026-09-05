@@ -28,6 +28,14 @@ import os
 block_cipher = None
 BASE_DIR = r"{BASE_DIR}"
 
+COMMON_EXCLUDES = [
+    'torch', 'torchvision', 'torchaudio',
+    'cv2', 'scipy', 'sklearn', 'pandas',
+    'llvmlite', 'numba', 'matplotlib',
+    'transformers', 'IPython', 'jupyter',
+    'tensorboard', 'tkinter', 'unittest'
+]
+
 a_gui = Analysis(
     [os.path.join(BASE_DIR, 'run_app.py')],
     pathex=[os.path.join(BASE_DIR, 'src'), BASE_DIR],
@@ -46,7 +54,7 @@ a_gui = Analysis(
     hookspath=[],
     hooksconfig={{}},
     runtime_hooks=[],
-    excludes=[],
+    excludes=COMMON_EXCLUDES,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -66,7 +74,7 @@ a_mcp = Analysis(
     hookspath=[],
     hooksconfig={{}},
     runtime_hooks=[],
-    excludes=[],
+    excludes=COMMON_EXCLUDES,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
