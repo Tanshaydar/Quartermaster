@@ -35,7 +35,9 @@ jobs:
       - name: Create Release Archive
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/Quartermaster/* -DestinationPath dist/Quartermaster-windows-x64.zip
+          if (-not (Test-Path dist/Quartermaster-windows-x64.zip)) {
+            Compress-Archive -Path dist/Quartermaster/* -DestinationPath dist/Quartermaster-windows-x64.zip -Force
+          }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -82,7 +84,9 @@ jobs:
 
       - name: Create Linux Release Archive
         run: |
-          tar -czvf dist/Quartermaster-linux-x64.tar.gz -C dist Quartermaster
+          if [ ! -f dist/Quartermaster-linux-x64.tar.gz ]; then
+            tar -czvf dist/Quartermaster-linux-x64.tar.gz -C dist Quartermaster
+          fi
 
       - name: Upload Linux Release Asset
         uses: softprops/action-gh-release@v2
