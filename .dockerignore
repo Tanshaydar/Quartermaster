@@ -1,0 +1,13 @@
+.git
+profiles/
+dist/
+build/
+cache/
+data/
+__pycache__/
+*.pyc
+.venv
+venv
+scratch/
+tests/
+*.spec
