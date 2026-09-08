@@ -1,18 +1,12 @@
 # Quartermaster
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Tanshaydar/Quartermaster?include_prereleases&label=release)](https://github.com/Tanshaydar/Quartermaster/releases)
-[![GitHub stars](https://img.shields.io/github/stars/Tanshaydar/Quartermaster?style=social)](https://github.com/Tanshaydar/Quartermaster/stargazers)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![Platform](https://img.shields.io/badge/platform-Windows%2011%20%7C%20cross--platform-lightgrey)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Quartermaster MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Tanshaydar/Quartermaster/badges/score.svg)](https://glama.ai/mcp/servers/Tanshaydar/Quartermaster)
 [![MCP Ready](https://img.shields.io/badge/MCP-protocol%20ready-success)](https://modelcontextprotocol.io)
-[![Search](https://img.shields.io/badge/search-SQLite%20FTS5%20%2B%203--Way%20RRF-informational)](https://www.sqlite.org/fts5.html)
-[![Vectors](https://img.shields.io/badge/vectors-FastEmbed%20CPU%20(BGE%20%2B%20CLIP)-purple)](https://github.com/qdrant/fastembed)
-[![GUI](https://img.shields.io/badge/desktop-PySide6-green)](https://doc.qt.io/qtforpython/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)]()
 [![Telemetry](https://img.shields.io/badge/telemetry-none-success)]()
 [![Tests](https://github.com/Tanshaydar/Quartermaster/actions/workflows/tests.yml/badge.svg)](https://github.com/Tanshaydar/Quartermaster/actions/workflows/tests.yml)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)]()
-[![Inspired by](https://img.shields.io/badge/inspired%20by-a%20dam-4f8cff)](#this-project-started-because-i-wanted-to-prototype-a-dam)
 
 This project started because I wanted to prototype a dam.
 
