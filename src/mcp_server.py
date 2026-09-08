@@ -1,16 +1,20 @@
 """
-VaultMCP MCP server (Model Context Protocol over stdio).
+Quartermaster MCP server (Model Context Protocol over stdio).
 
-Register in an MCP client (Claude Desktop, Antigravity, pi, ...):
+Register in an MCP client (Claude Desktop, Antigravity, Cursor, ...):
   command: python
-  args:    ["-m", "src.mcp_server"]
-  cwd:     <VaultMCP project root>
+  args:    ["run_mcp.py"]
+  cwd:     <Quartermaster project root>
 
-Tools:
-  search_owned_assets(query, engine, pipeline, category, limit)
+Tools (9):
+  search_owned_assets(query, engine, source, pipeline, category, limit, local_only)
   get_asset_details(asset_id)
   list_asset_categories()
-  get_stack_recommendations(problem_description)
+  get_stack_recommendations(problem_description, limit_per_category)
+  audit_project(project_dir)
+  import_asset_to_project(asset_id, project_dir)
+  validate_stack(asset_ids)
+  list_stack_recipes()
   get_vault_stats()
 """
 import json
