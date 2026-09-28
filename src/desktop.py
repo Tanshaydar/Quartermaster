@@ -145,55 +145,42 @@ class SearchWorker(QThread):
         self.local_only = local_only
 
     def run(self):
-        local = "local" if self.local_only else None
+        # hybrid_search and search_assets take the same filters and apply them in SQL
+        filters = dict(source=self.eng, pipeline=self.pipe, category=self.cat,
+                       local="local" if self.local_only else None)
         try:
             if self.query:
-                merged = semantic.hybrid_search(self.query, limit=5000)
+                # Filtered before each signal keeps its top 50 hits, not after
+                merged = semantic.hybrid_search(self.query, limit=5000, **filters)
                 items = merged.get("results", [])
                 mode = merged.get("search_mode", "3-way-hybrid")
-                if self.local_only:
-                    # hybrid_search keeps only each signal's top 50 hits, so most local
-                    # matches never reach the filter below; add the local keyword hits it cut
+                if any(filters.values()):
+                    # A filtered view lists every match, like browse: append the keyword
+                    # hits past hybrid_search's per-signal cap after its ranked ones
                     seen = {it["id"] for it in items}
-                    items += [it for it in search_assets(query=self.query, local=local, limit=-1)
+                    items += [it for it in search_assets(query=self.query, limit=-1, **filters)
                               if it["id"] not in seen]
 
-                filtered = []
-                for item in items:
-                    if self.local_only and not item.get("local_path"):
-                        continue
-                    if self.eng and item.get("source") != self.eng:
-                        continue
-                    if self.cat and item.get("category") != self.cat:
-                        continue
-                    if self.pipe:
-                        pipes = item.get("render_pipelines") or item.get("formats") or []
-                        if not any(self.pipe.lower() in p.lower() for p in pipes):
-                            continue
-                    filtered.append(item)
-
                 if self.sort_mode == "title_asc":
-                    filtered.sort(key=lambda x: (x.get("title") or "").lower())
+                    items.sort(key=lambda x: (x.get("title") or "").lower())
                 elif self.sort_mode == "title_desc":
-                    filtered.sort(key=lambda x: (x.get("title") or "").lower(), reverse=True)
+                    items.sort(key=lambda x: (x.get("title") or "").lower(), reverse=True)
                 elif self.sort_mode == "claimed_desc":
-                    filtered.sort(key=lambda x: x.get("claimed_at") or "", reverse=True)
+                    items.sort(key=lambda x: x.get("claimed_at") or "", reverse=True)
                 elif self.sort_mode == "size_desc":
-                    filtered.sort(key=lambda x: x.get("size_bytes") or 0, reverse=True)
+                    items.sort(key=lambda x: x.get("size_bytes") or 0, reverse=True)
                 # "relevance" keeps hybrid_search RRF order
 
-                self.results_ready.emit(self.query_id, filtered, mode)
+                self.results_ready.emit(self.query_id, items, mode)
             else:
                 db_sort = self.sort_mode if self.sort_mode != "relevance" else "title_asc"
                 # Filter in SQL and fetch unbounded (-1): a LIMIT applied before filtering
                 # hides every match past the cap. The list view renders lazily in batches.
-                items = search_assets(query=None, source=self.eng, pipeline=self.pipe,
-                                      category=self.cat, local=local, sort_by=db_sort, limit=-1)
+                items = search_assets(query=None, sort_by=db_sort, limit=-1, **filters)
                 self.results_ready.emit(self.query_id, items, "browse")
         except Exception:
             db_sort = self.sort_mode if self.sort_mode != "relevance" else "title_asc"
-            items = search_assets(query=self.query or None, source=self.eng, pipeline=self.pipe,
-                                  category=self.cat, local=local, sort_by=db_sort, limit=-1)
+            items = search_assets(query=self.query or None, sort_by=db_sort, limit=-1, **filters)
             self.results_ready.emit(self.query_id, items, "keyword")
 
 

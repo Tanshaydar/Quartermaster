@@ -1,7 +1,7 @@
 import sqlite3
 import json
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Iterable, Optional, Set, Tuple
 
 try:
     from .config import DB_PATH
@@ -251,12 +251,57 @@ def upsert_asset(asset: Dict[str, Any], db_path: str = DB_PATH):
     conn.commit()
     conn.close()
 
+def _filter_sql(category: Optional[str] = None, pipeline: Optional[str] = None,
+                source: Optional[str] = None, local: Optional[str] = None,
+                ids: Optional[Iterable[str]] = None) -> Tuple[str, List[Any]]:
+    """AND clauses on assets `a` for the filters search_assets() and filter_asset_ids() share."""
+    sql, params = "", []
+    if category and category.lower() != "all":
+        sql += " AND a.category = ?"
+        params.append(category)
+
+    if pipeline and pipeline.lower() != "all":
+        # Assets that list no render pipelines (Fab listings) match on their formats instead
+        sql += (" AND (a.render_pipelines LIKE ? OR (COALESCE(a.render_pipelines, '') IN ('', '[]')"
+                " AND a.formats LIKE ?))")
+        params += [f"%{pipeline}%"] * 2
+
+    if source and source.lower() != "all":
+        sql += " AND a.source = ?"
+        params.append(source)
+
+    if local == "local":
+        sql += " AND a.local_path != ''"
+    elif local == "cloud":
+        sql += " AND a.local_path = ''"
+
+    if ids is not None:
+        sql += " AND a.id IN (SELECT value FROM json_each(?))"
+        params.append(json.dumps(list(ids)))
+    return sql, params
+
+
+def filter_asset_ids(category: Optional[str] = None, pipeline: Optional[str] = None,
+                     source: Optional[str] = None, local: Optional[str] = None,
+                     ids: Optional[Iterable[str]] = None, db_path: str = DB_PATH) -> Optional[Set[str]]:
+    """Ids of the assets that pass search_assets()' filters, or None when no filter is set."""
+    where, params = _filter_sql(category, pipeline, source, local, ids)
+    if not where:
+        return None
+    conn = get_connection(db_path)
+    try:
+        return {r[0] for r in conn.execute("SELECT a.id FROM assets a WHERE 1=1" + where, params)}
+    finally:
+        conn.close()
+
+
 def search_assets(
     query: Optional[str] = None,
     category: Optional[str] = None,
     pipeline: Optional[str] = None,
     source: Optional[str] = None,
     local: Optional[str] = None,   # 'local' | 'cloud' | None
+    ids: Optional[Iterable[str]] = None,   # only these asset ids
     sort_by: Optional[str] = "title_asc",
     limit: int = 100,
     offset: int = 0,
@@ -288,22 +333,9 @@ def search_assets(
         else:
             sql = "SELECT a.*, 0 as rank FROM assets a WHERE 1=1"
 
-        if category and category.lower() != "all":
-            sql += " AND a.category = ?"
-            params.append(category)
-
-        if pipeline and pipeline.lower() != "all":
-            sql += " AND a.render_pipelines LIKE ?"
-            params.append(f"%{pipeline}%")
-
-        if source and source.lower() != "all":
-            sql += " AND a.source = ?"
-            params.append(source)
-
-        if local == "local":
-            sql += " AND a.local_path != ''"
-        elif local == "cloud":
-            sql += " AND a.local_path = ''"
+        where, where_params = _filter_sql(category, pipeline, source, local, ids)
+        sql += where
+        params += where_params
 
         if query and query.strip():
             if sort_by == "title_desc":

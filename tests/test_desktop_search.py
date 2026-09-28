@@ -5,7 +5,8 @@ import unittest
 from functools import partial
 from unittest.mock import patch
 
-from src.db import init_db, search_assets
+from src.db import init_db, search_assets, upsert_asset
+from src.semantic import hybrid_search
 
 try:
     from src.desktop import SearchWorker
@@ -14,6 +15,8 @@ except (ImportError, OSError, RuntimeError) as e:
     SearchWorker, _QT_ERROR = None, e
 
 LOCAL_IDS = ["local_0", "local_1", "local_2"]
+DECOY_IDS = [f"decoy_{i:02d}" for i in range(60)]
+TARGET_IDS = ["fab_0", "unity_0", "unity_1"]
 
 
 @unittest.skipIf(_QT_ERROR is not None, f"Qt GUI runtime not available: {_QT_ERROR}")
@@ -77,15 +80,78 @@ class TestSearchWorkerLocalOnly(unittest.TestCase):
 
     def test_hybrid_local_only_adds_local_keyword_hits_past_its_cap(self):
         # hybrid_search keeps only each signal's top hits; here one local asset made the cut
-        capped = [{"id": f"cloud_{i}", "title": f"A Cloud Asset {i:04d}", "local_path": ""} for i in range(50)]
-        capped.insert(10, {"id": "local_1", "title": "Z Local Asset 1", "local_path": "/vault/local_1.unitypackage"})
+        capped = [{"id": "local_1", "title": "Z Local Asset 1", "local_path": "/vault/local_1.unitypackage"}]
         fake = {"results": capped, "search_mode": "3-way-hybrid"}
-        with patch("src.desktop.semantic.hybrid_search", return_value=fake):
+        with patch("src.desktop.semantic.hybrid_search", return_value=fake) as hybrid:
             items, mode = self._run(query="asset")
+        self.assertEqual(hybrid.call_args.kwargs["local"], "local")   # filtered before the cap
         self.assertEqual(mode, "3-way-hybrid")
         ids = [it["id"] for it in items]
         self.assertEqual(sorted(ids), LOCAL_IDS)   # the rest are appended, without duplicates
         self.assertEqual(ids[0], "local_1")        # hybrid-ranked hits keep their place
+
+
+@unittest.skipIf(_QT_ERROR is not None, f"Qt GUI runtime not available: {_QT_ERROR}")
+class TestSearchWorkerFilters(unittest.TestCase):
+    """With a query, the engine chip, category and pipeline filters ran in Python on the output of
+    hybrid_search(), which keeps only each signal's top 50 hits, so every match ranked past that
+    cap vanished (on the real vault, "wall" with the Fab chip listed 0 of its 51 Fab matches)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmpdir = tempfile.TemporaryDirectory()
+        cls.db_path = os.path.join(cls.tmpdir.name, "test_assets.db")
+        init_db(cls.db_path)
+        # 60 Quixel decoys say "rock" twice (title and tags), so BM25 ranks every one of them
+        # above the targets and they fill the keyword signal's top 50
+        for aid in DECOY_IDS:
+            upsert_asset({"id": aid, "source": "quixel", "title": f"Rock Decoy {aid[-2:]}", "tags": ["rock"],
+                          "category": "3D Environments & Props", "render_pipelines": ["HDRP"]},
+                         db_path=cls.db_path)
+        # A Fab listing has no render pipelines; its pipeline shows up in its formats
+        upsert_asset({"id": "fab_0", "source": "fab", "title": "Rock Target Fab 0", "category": "Terrain & Landscape",
+                      "render_pipelines": [], "formats": ["URP"]}, db_path=cls.db_path)
+        for i in range(2):
+            upsert_asset({"id": f"unity_{i}", "source": "unity", "title": f"Rock Target Unity {i}",
+                          "category": "Terrain & Landscape", "render_pipelines": ["URP"]}, db_path=cls.db_path)
+
+    @classmethod
+    def tearDownClass(cls):
+        import gc
+        gc.collect()
+        try:
+            cls.tmpdir.cleanup()
+        except Exception:
+            pass
+
+    def _run(self, query="rock", eng=None, pipe=None, cat=None):
+        """Run the worker synchronously against the temp vault and return the listed ids."""
+        emitted = []
+        worker = SearchWorker(1, query, eng, pipe, cat, "relevance")
+        worker.results_ready.connect(lambda query_id, items, mode: emitted.append(items))
+        with patch("src.desktop.search_assets", partial(search_assets, db_path=self.db_path)), \
+                patch("src.desktop.semantic.hybrid_search", partial(hybrid_search, db_path=self.db_path)):
+            worker.run()
+        self.assertEqual(len(emitted), 1)
+        return [it["id"] for it in emitted[0]]
+
+    def test_filters_list_matches_ranked_past_the_hybrid_cap(self):
+        cases = [(dict(eng="fab"), ["fab_0"]),
+                 (dict(eng="unity"), ["unity_0", "unity_1"]),
+                 (dict(cat="Terrain & Landscape"), TARGET_IDS),
+                 (dict(pipe="URP"), TARGET_IDS)]   # fab_0 through its formats
+        for query in ("rock", ""):   # search and browse agree on what each filter matches
+            for filters, expected in cases:
+                with self.subTest(query=query, **filters):
+                    self.assertEqual(sorted(self._run(query=query, **filters)), expected)
+
+    def test_filtered_search_lists_every_match_hybrid_ranked_first(self):
+        ranked = [it["id"] for it in hybrid_search("rock", limit=5000, source="quixel",
+                                                   db_path=self.db_path)["results"]]
+        self.assertEqual(len(ranked), 50)   # the keyword signal's cap
+        ids = self._run(eng="quixel")
+        self.assertEqual(sorted(ids), DECOY_IDS)            # all 60, each once
+        self.assertEqual(ids[:len(ranked)], ranked)         # hybrid order first, the rest after
 
 
 if __name__ == "__main__":

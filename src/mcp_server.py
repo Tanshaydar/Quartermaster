@@ -18,14 +18,14 @@ Tools (9):
   get_vault_stats()
 """
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 try:
     from mcp.server.mcpserver import MCPServer as FastMCP      # mcp SDK >= 2.0
 except ImportError:
     from mcp.server.fastmcp import FastMCP                     # mcp SDK 1.x
 
-from .db import init_db, search_assets, get_asset_by_id, get_stats, DB_PATH
+from .db import init_db, search_assets, get_asset_by_id, get_stats, get_connection, DB_PATH
 
 init_db()
 from .ingest import classify_asset
@@ -110,6 +110,23 @@ def _matches_engine(r: Dict[str, Any], engine: str) -> bool:
     return True
 
 
+def _engine_ids(engine: str) -> Optional[Set[str]]:
+    """Ids of every asset _matches_engine() accepts, or None when `engine` filters nothing."""
+    if not engine or engine.lower() == "all":
+        return None
+    conn = get_connection()
+    try:
+        rows = [dict(r) for r in conn.execute("SELECT id, source, title, formats FROM assets")]
+    finally:
+        conn.close()
+    for r in rows:
+        try:
+            r["formats"] = json.loads(r["formats"] or "[]")
+        except ValueError:
+            r["formats"] = []
+    return {r["id"] for r in rows if _matches_engine(r, engine)}
+
+
 @mcp.tool()
 def search_owned_assets(query: str, engine: str = "all", source: str = "all",
                         pipeline: str = "all", category: str = "all", limit: int = 25,
@@ -124,16 +141,21 @@ def search_owned_assets(query: str, engine: str = "all", source: str = "all",
     local_only: only assets already downloaded to disk.
     limit: max results to return."""
     note = None
+    # Narrow in SQL first; the Python filters below keep the final say (case-insensitive
+    # source, exact pipeline entry, cross-store engine compatibility)
+    filters = dict(category=category, pipeline=pipeline, source=source.lower().strip(),
+                   local="local" if local_only else None)
     if query.strip():
-        merged = semantic.hybrid_search(query, limit=max(limit * 2, 50))
+        # Filter inside hybrid_search, before each signal keeps its top hits: filtering its
+        # output instead would drop every match ranked past those caps.
+        merged = semantic.hybrid_search(query, limit=max(limit * 2, 50), ids=_engine_ids(engine), **filters)
         results = merged.get("results", [])
         mode = merged.get("search_mode") or merged.get("mode") or "keyword"
         note = merged.get("note")
     else:
         # Filter in SQL and fetch unbounded (-1): a LIMIT applied before the filters
         # below would drop every match that doesn't sort into the first N titles.
-        results, mode = search_assets(category=category, pipeline=pipeline, source=source.lower().strip(),
-                                      local="local" if local_only else None, limit=-1), "keyword"
+        results, mode = search_assets(limit=-1, **filters), "keyword"
     if engine != "all":
         results = [r for r in results if _matches_engine(r, engine)]
     if source != "all":

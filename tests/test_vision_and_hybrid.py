@@ -3,11 +3,12 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 import numpy as np
 
 from src.db import init_db, upsert_asset, get_connection
 from src.vision import _ensure_schema, invalidate_vision_cache
-from src.semantic import hybrid_search, invalidate_vector_cache
+from src.semantic import hybrid_search, invalidate_vector_cache, _ensure_table
 
 
 class TestVisionAndHybridSearch(unittest.TestCase):
@@ -130,6 +131,71 @@ class TestVisionAndHybridSearch(unittest.TestCase):
         self.assertEqual(len(hit_after), 1)
         self.assertEqual(hit_after[0][0], "asset_drift")
         conn.close()
+
+
+class TestHybridSearchFilters(unittest.TestCase):
+    """hybrid_search() filters must narrow the semantic and vision signals before each keeps its
+    top 50: ranking the whole vault first let unfiltered hits fill those spots, and callers that
+    filtered afterwards lost every match ranked past them."""
+
+    SHARED_COVER = "https://media.fab.com/shared.png"
+
+    def setUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.tmp_dir.name, "test_assets.db")
+        init_db(self.db_path)
+        query_vec = np.eye(8, dtype=np.float32)[0]
+        near = query_vec.tobytes()                                                      # cosine 1.0
+        far = (np.array([1, 1, 0, 0, 0, 0, 0, 0]) / np.sqrt(2)).astype(np.float32).tobytes()  # 0.71
+        # 60 Quixel decoys sit closer to the query than the 3 Fab targets in both vector indexes.
+        # No title shares a word with the query, so only the vector signals find anything.
+        assets = [(f"decoy_{i:02d}", "quixel", near) for i in range(60)]
+        assets += [(f"target_{i}", "fab", far) for i in range(3)]
+        conn = get_connection(self.db_path)
+        _ensure_schema(conn)
+        _ensure_table(conn)
+        for aid, source, vec in assets:
+            conn.execute("INSERT INTO assets (id, source, title) VALUES (?, ?, ?)", (aid, source, aid.replace("_", " ")))
+            conn.execute("INSERT INTO asset_vectors (asset_id, dim, vec) VALUES (?, 8, ?)", (aid, vec))
+            conn.execute("INSERT INTO image_vectors (id, asset_id, image_url, vector) VALUES (?, ?, ?, ?)",
+                         (f"img_{aid}", aid, f"https://media.fab.com/{aid}.png", vec))
+        # A cover shared by a decoy and a target: asset_id holds a ';'-joined list
+        conn.execute("INSERT INTO image_vectors (id, asset_id, image_url, vector) VALUES (?, ?, ?, ?)",
+                     ("img_shared", "decoy_00;target_2", self.SHARED_COVER, near))
+        conn.commit()
+        conn.close()
+        # Stub both query encoders: no model download, deterministic scores
+        for target in ("src.semantic._embed_query", "src.vision._embed_clip_query"):
+            patcher = patch(target, return_value=query_vec)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def tearDown(self):
+        invalidate_vision_cache()
+        invalidate_vector_cache()
+        import gc
+        gc.collect()
+        try:
+            self.tmp_dir.cleanup()
+        except Exception:
+            pass
+
+    def test_filter_applies_before_each_vector_signal_keeps_its_top_50(self):
+        unfiltered = [r["id"] for r in hybrid_search("xyzzy", limit=100, db_path=self.db_path)["results"]]
+        self.assertTrue(unfiltered)
+        self.assertFalse({"target_0", "target_1"} & set(unfiltered))   # the decoys fill both top 50s
+
+        res = hybrid_search("xyzzy", limit=100, db_path=self.db_path, source="fab")
+        self.assertEqual(sorted(r["id"] for r in res["results"]), ["target_0", "target_1", "target_2"])
+        self.assertTrue(all(r["match"] == "semantic+vision" for r in res["results"]))
+        # The shared cover still scores for the target on it, though its decoy is filtered out
+        shared = next(r for r in res["results"] if r["id"] == "target_2")
+        self.assertEqual(shared["best_visual_image"], self.SHARED_COVER)
+        self.assertAlmostEqual(shared["vis_score"], 1.0, places=3)
+
+    def test_ids_limit_every_signal(self):
+        res = hybrid_search("xyzzy", limit=100, db_path=self.db_path, ids={"target_1", "no_such_asset"})
+        self.assertEqual([r["id"] for r in res["results"]], ["target_1"])
 
 
 if __name__ == "__main__":

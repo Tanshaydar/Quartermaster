@@ -19,13 +19,13 @@ import json
 import os
 import struct
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 try:
-    from .db import get_connection, search_assets, DB_PATH
+    from .db import get_connection, search_assets, filter_asset_ids, DB_PATH
     from .config import load_config
 except ImportError:
-    from db import get_connection, search_assets, DB_PATH
+    from db import get_connection, search_assets, filter_asset_ids, DB_PATH
     from config import load_config
 
 DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"   # 384-dim, ~33MB quantized, CPU-fast
@@ -210,8 +210,9 @@ def _load_matrix(db_path: str = DB_PATH):
             conn.close()
 
 
-def semantic_search(query: str, k: int = 40, db_path: str = DB_PATH) -> List[Dict[str, Any]]:
-    """Top-k assets by cosine similarity to the natural-language query."""
+def semantic_search(query: str, k: int = 40, db_path: str = DB_PATH,
+                    ids: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
+    """Top-k assets by cosine similarity to the natural-language query (only among `ids`, if given)."""
     total_assets = 0
     conn = get_connection(db_path)
     total_assets = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
@@ -220,13 +221,16 @@ def semantic_search(query: str, k: int = 40, db_path: str = DB_PATH) -> List[Dic
     if index_size(db_path) == 0:
         return []
 
-    ids, mat, np_mod = _load_matrix(db_path)
-    if ids is None:
+    vec_ids, mat, np_mod = _load_matrix(db_path)
+    if vec_ids is None:
         return []
     qv = _embed_query(query)
     scores = mat @ qv
-    top = np_mod.argsort(-scores)[:k]
-    out = [{"id": ids[i], "score": float(scores[i])} for i in top]
+    rows = np_mod.arange(len(vec_ids))
+    if ids is not None:
+        rows = np_mod.flatnonzero([aid in ids for aid in vec_ids])
+    top = rows[np_mod.argsort(-scores[rows])[:k]]
+    out = [{"id": vec_ids[i], "score": float(scores[i])} for i in top]
     return out
 
 
@@ -239,12 +243,19 @@ def _embed_query(query: str):
     return qv
 
 
-def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[str, Any]:
+def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH,
+                  category: Optional[str] = None, pipeline: Optional[str] = None,
+                  source: Optional[str] = None, local: Optional[str] = None,
+                  ids: Optional[Set[str]] = None) -> Dict[str, Any]:
     """
     3-Way RRF-fused search: Keyword (FTS5) + Text Semantic (BGE) + Visual Search (CLIP).
     Returns items plus per-item match info so agents and UI can see WHY something hit.
+
+    category/pipeline/source/local/ids filter as in search_assets(). They apply before each
+    signal keeps its top 50 hits, so a filter can't hide matches ranked past that cap.
     """
-    kw = search_assets(query=query, limit=50, db_path=db_path)
+    filters = dict(category=category, pipeline=pipeline, source=source, local=local, ids=ids)
+    kw = search_assets(query=query, limit=50, db_path=db_path, **filters)
 
     conn = get_connection(db_path)
     _ensure_table(conn)
@@ -256,11 +267,14 @@ def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[s
         total_img_vectors = 0
     conn.close()
 
+    # Assets the vector signals may rank (None: all of them)
+    allowed = filter_asset_ids(db_path=db_path, **filters)
+
     # 1. Text Semantic Search (BGE)
     sem = []
     if total_text_vectors > 0:
         try:
-            sem = semantic_search(query, k=50, db_path=db_path)
+            sem = semantic_search(query, k=50, db_path=db_path, ids=allowed)
         except Exception:
             sem = []
 
@@ -276,7 +290,7 @@ def hybrid_search(query: str, limit: int = 25, db_path: str = DB_PATH) -> Dict[s
                 vision_search = None
         if vision_search is not None:
             try:
-                vis = vision_search(query, k=50, db_path=db_path)
+                vis = vision_search(query, k=50, db_path=db_path, ids=allowed)
             except Exception:
                 vis = []
 

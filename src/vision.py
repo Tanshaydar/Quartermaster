@@ -434,9 +434,10 @@ def _load_vision_matrix(db_path: str = DB_PATH):
             conn.close()
 
 
-def vision_search(query: str, k: int = 40, db_path: str = DB_PATH) -> list:
+def vision_search(query: str, k: int = 40, db_path: str = DB_PATH, ids=None) -> list:
     """Cross-modal text-to-image search: scores natural language query against
-    all screenshot vectors using CLIP, returning top-k assets with their best-matching screenshot."""
+    all screenshot vectors using CLIP, returning top-k assets with their best-matching screenshot.
+    With `ids` (a set of asset ids), only those assets are ranked."""
     urls, asset_map, mat = _load_vision_matrix(db_path)
     if urls is None or mat is None or not urls:
         return []
@@ -452,6 +453,8 @@ def vision_search(query: str, k: int = 40, db_path: str = DB_PATH) -> list:
             u = urls[idx]
             aids = asset_map.get(u, [])
             for aid in aids:
+                if ids is not None and aid not in ids:
+                    continue  # a shared image still scores for its other, allowed assets
                 if aid not in best_scores or s > best_scores[aid]:
                     best_scores[aid] = float(s)
                     best_images[aid] = u

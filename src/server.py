@@ -154,23 +154,12 @@ def api_assets(query: str = "", category: str = "all", pipeline: str = "all",
                limit: int = 60, offset: int = 0):
     if query.strip():
         try:
-            merged = semantic.hybrid_search(query.strip(), limit=max(limit * 3, 200))
-            items = merged.get("results", [])
-            filtered = []
-            for item in items:
-                if source != "all" and item.get("source") != source:
-                    continue
-                if category != "all" and item.get("category") != category:
-                    continue
-                if pipeline != "all":
-                    pipes = item.get("render_pipelines") or item.get("formats") or []
-                    if not any(pipeline.lower() in p.lower() for p in pipes):
-                        continue
-                if local != "all":
-                    is_local = bool(item.get("local_path"))
-                    if (local == "true" and not is_local) or (local == "false" and is_local):
-                        continue
-                filtered.append(item)
+            # Filter inside hybrid_search, before each signal keeps its top hits: filtering its
+            # output instead would drop every match ranked past those caps.
+            merged = semantic.hybrid_search(query.strip(), limit=max(limit * 3, 200), category=category,
+                                            pipeline=pipeline, source=source,
+                                            local=None if local == "all" else local)
+            filtered = merged.get("results", [])
 
             if sort_by == "title_asc":
                 filtered.sort(key=lambda x: (x.get("title") or "").lower())
