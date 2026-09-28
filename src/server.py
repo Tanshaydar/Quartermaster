@@ -166,9 +166,13 @@ def api_assets(query: str = "", category: str = "all", pipeline: str = "all",
             elif sort_by == "title_desc":
                 filtered.sort(key=lambda x: (x.get("title") or "").lower(), reverse=True)
             elif sort_by == "claimed_desc":
-                filtered.sort(key=lambda x: x.get("claimed_at") or "", reverse=True)
+                # Title pass first so the stable sort breaks ties by title: the same
+                # order search_assets() gives browse and the keyword fallback
+                filtered.sort(key=lambda x: (x.get("title") or "").lower())
+                filtered.sort(key=lambda x: x.get("claimed_date") or "", reverse=True)
             elif sort_by == "size_desc":
-                filtered.sort(key=lambda x: x.get("size_bytes") or 0, reverse=True)
+                filtered.sort(key=lambda x: (x.get("title") or "").lower())
+                filtered.sort(key=lambda x: x.get("size_mb") or 0, reverse=True)
             # sort_by == "relevance" keeps hybrid_search ranking
 
             paged = filtered[offset : offset + limit]

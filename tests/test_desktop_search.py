@@ -17,6 +17,10 @@ except (ImportError, OSError, RuntimeError) as e:
 LOCAL_IDS = ["local_0", "local_1", "local_2"]
 DECOY_IDS = [f"decoy_{i:02d}" for i in range(60)]
 TARGET_IDS = ["fab_0", "unity_0", "unity_1"]
+# (id, claimed_date, size_mb, query-term hits). More hits rank higher, so relevance order is the
+# reverse of title order, and each sort mode has one tie that only the title tie-break settles.
+SORT_ROWS = [("alpha", "2021-01-01", 5.0, 1), ("bravo", "2023-06-15", 1.0, 2),
+             ("charlie", "2023-06-15", 250.0, 3), ("delta", "", 5.0, 4)]
 
 
 @unittest.skipIf(_QT_ERROR is not None, f"Qt GUI runtime not available: {_QT_ERROR}")
@@ -152,6 +156,53 @@ class TestSearchWorkerFilters(unittest.TestCase):
         ids = self._run(eng="quixel")
         self.assertEqual(sorted(ids), DECOY_IDS)            # all 60, each once
         self.assertEqual(ids[:len(ranked)], ranked)         # hybrid order first, the rest after
+
+
+@unittest.skipIf(_QT_ERROR is not None, f"Qt GUI runtime not available: {_QT_ERROR}")
+class TestSearchWorkerQuerySort(unittest.TestCase):
+    """With a query, "Recently Acquired" and "Size (Largest)" sorted the hybrid results on
+    claimed_at / size_bytes, keys asset rows don't have, so both silently kept relevance order."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmpdir = tempfile.TemporaryDirectory()
+        cls.db_path = os.path.join(cls.tmpdir.name, "test_assets.db")
+        init_db(cls.db_path)
+        for aid, claimed, size_mb, hits in SORT_ROWS:
+            upsert_asset({"id": aid, "title": f"{aid.title()} Crate", "claimed_date": claimed,
+                          "size_mb": size_mb, "summary": " ".join(["crate"] * hits)}, db_path=cls.db_path)
+
+    @classmethod
+    def tearDownClass(cls):
+        import gc
+        gc.collect()
+        try:
+            cls.tmpdir.cleanup()
+        except Exception:
+            pass
+
+    def _run(self, query, sort_mode):
+        """Run the worker synchronously (no event loop) and return its single emission."""
+        emitted = []
+        worker = SearchWorker(1, query, None, None, None, sort_mode)
+        worker.results_ready.connect(lambda query_id, items, mode: emitted.append((items, mode)))
+        with patch("src.desktop.search_assets", partial(search_assets, db_path=self.db_path)), \
+                patch("src.desktop.semantic.hybrid_search", partial(hybrid_search, db_path=self.db_path)):
+            worker.run()
+        self.assertEqual(len(emitted), 1)
+        return emitted[0]
+
+    def test_query_results_follow_sort_mode(self):
+        expected = {
+            "relevance": ["delta", "charlie", "bravo", "alpha"],     # hybrid order, kept as is
+            "claimed_desc": ["bravo", "charlie", "alpha", "delta"],  # newest first, undated last
+            "size_desc": ["charlie", "alpha", "delta", "bravo"],     # largest first
+        }
+        for sort_mode, ids in expected.items():
+            with self.subTest(sort_mode=sort_mode):
+                items, mode = self._run("crate", sort_mode)
+                self.assertEqual(mode, "keyword-only")   # hybrid_search (no vectors), not the SQL fallback
+                self.assertEqual([it["id"] for it in items], ids)
 
 
 if __name__ == "__main__":

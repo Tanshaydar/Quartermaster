@@ -166,9 +166,13 @@ class SearchWorker(QThread):
                 elif self.sort_mode == "title_desc":
                     items.sort(key=lambda x: (x.get("title") or "").lower(), reverse=True)
                 elif self.sort_mode == "claimed_desc":
-                    items.sort(key=lambda x: x.get("claimed_at") or "", reverse=True)
+                    # Title pass first so the stable sort breaks ties by title: the same
+                    # order search_assets() gives browse and the keyword fallback
+                    items.sort(key=lambda x: (x.get("title") or "").lower())
+                    items.sort(key=lambda x: x.get("claimed_date") or "", reverse=True)
                 elif self.sort_mode == "size_desc":
-                    items.sort(key=lambda x: x.get("size_bytes") or 0, reverse=True)
+                    items.sort(key=lambda x: (x.get("title") or "").lower())
+                    items.sort(key=lambda x: x.get("size_mb") or 0, reverse=True)
                 # "relevance" keeps hybrid_search RRF order
 
                 self.results_ready.emit(self.query_id, items, mode)
