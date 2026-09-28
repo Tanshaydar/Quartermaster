@@ -20,6 +20,7 @@ Endpoints:
 import hashlib
 import os
 import threading
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, Cookie
@@ -36,9 +37,15 @@ except ImportError:
     from config import load_config, get_or_create_auth_token, evict_image_cache, __version__, WEB_DIR, is_safe_image_url, MAX_IMAGE_BYTES, VAULT_SOURCES
     import store_client, local_scan, unpacker, stack_rules, semantic
 
-init_db()
 
-app = FastAPI(title="Quartermaster", docs_url="/api/docs")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # On startup, not at import: importing this module (the tests do) must leave the vault alone
+    init_db()
+    yield
+
+
+app = FastAPI(title="Quartermaster", docs_url="/api/docs", lifespan=lifespan)
 
 # ----------------------------- CORS & Security -----------------------------
 ALLOWED_ORIGINS = [
