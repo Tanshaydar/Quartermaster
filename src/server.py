@@ -381,7 +381,8 @@ async def api_import(request: Request):
             if len(prefab_hits) >= 10:
                 break
         result["prefabs"] = prefab_hits
-        return result
+        # the Unity bridge only takes its success path on status == "ok" (as the MCP tool reports it)
+        return {"status": "ok", **result}
     except Exception as e:
         raise HTTPException(400, str(e))
 

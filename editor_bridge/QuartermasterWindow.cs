@@ -201,7 +201,7 @@ namespace Quartermaster
 
         private void DoImport(QuartermasterAsset asset)
         {
-            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string projectRoot = System.IO.Directory.GetParent(Application.dataPath).FullName;
             string body = "asset_id=" + WWW.EscapeURL(asset.id) +
                           "&project_dir=" + WWW.EscapeURL(projectRoot) +
                           "&strip_demos=" + (_stripDemos ? "true" : "false");
@@ -252,8 +252,9 @@ namespace Quartermaster
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.BeginHorizontal();
-            _engineFilter = EditorGUILayout.Popup(_engineFilter,
-                new[] { "all", "unity", "fab" }, GUILayout.Width(80));
+            var engines = new[] { "all", "unity", "fab" };
+            int engineIdx = Mathf.Max(0, Array.IndexOf(engines, _engineFilter));
+            _engineFilter = engines[EditorGUILayout.Popup(engineIdx, engines, GUILayout.Width(80))];
             var catList = new List<string> { "all" };
             catList.AddRange(_categories);
             int idx = Mathf.Max(0, catList.IndexOf(_categoryFilter));
