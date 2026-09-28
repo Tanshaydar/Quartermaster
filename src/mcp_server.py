@@ -123,13 +123,17 @@ def search_owned_assets(query: str, engine: str = "all", source: str = "all",
     pipeline: render pipeline (all|HDRP|URP|Built-in).
     local_only: only assets already downloaded to disk.
     limit: max results to return."""
+    note = None
     if query.strip():
         merged = semantic.hybrid_search(query, limit=max(limit * 2, 50))
         results = merged.get("results", [])
         mode = merged.get("search_mode") or merged.get("mode") or "keyword"
         note = merged.get("note")
     else:
-        results, mode = search_assets(limit=min(max(limit, 1), 100)), "keyword"
+        # Filter in SQL and fetch unbounded (-1): a LIMIT applied before the filters
+        # below would drop every match that doesn't sort into the first N titles.
+        results, mode = search_assets(category=category, pipeline=pipeline, source=source.lower().strip(),
+                                      local="local" if local_only else None, limit=-1), "keyword"
     if engine != "all":
         results = [r for r in results if _matches_engine(r, engine)]
     if source != "all":
