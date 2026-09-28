@@ -239,7 +239,7 @@ Claude Desktop reads `%APPDATA%/Claude/claude_desktop_config.json`, Cursor `~/.c
 | `validate_stack(asset_ids)` | Will these fight each other? Role conflicts, missing prerequisites. |
 | `list_stack_recipes()` | Curated production stacks resolved against *your* library. |
 | `audit_project(project_dir)` | Engine, version, render pipeline of a target project. |
-| `import_asset_to_project(asset_id, project_dir)` | Unpack a local package into `Assets/`. |
+| `import_asset_to_project(asset_id, project_dir)` | Unpack a local package into `Assets/` (bundled UPM packages into `Packages/`). |
 | `list_asset_categories()` | Category breakdown and counts. |
 | `get_vault_stats()` | Totals by source and category, local vs cloud. |
 
@@ -271,7 +271,7 @@ This thing holds store sessions and writes into your projects, so it takes the l
 
 - Every state-changing endpoint requires a token (generated on first run, stored in `data/.auth_token`, mirrored for the Unity bridge). Send it as `X-Quartermaster-Token` or `Authorization: Bearer`; the web UI gets a `SameSite=Strict` cookie automatically.
 - Cross-origin requests are rejected even with a valid token.
-- The unpacker sandbox collapses `..` segments, strips drive letters and control characters, relocates anything outside `Assets/` under `Assets/_Quartermaster_Imported/`, and asserts the final path lands inside the project — enforced by tests, not vibes (`python run_tests.py -v`).
+- The unpacker sandbox collapses `..` segments, strips drive letters and control characters, relocates anything outside `Assets/` under `Assets/_Quartermaster_Imported/` (except a well-formed embedded UPM package, which is confined to its own `Packages/<name>/` folder), and asserts the final path lands inside the project — enforced by tests, not vibes (`python run_tests.py -v`).
 - The image proxy is domain-allowlisted, blocks private ranges and metadata endpoints, re-validates every redirect hop, caps sizes, and prunes the oldest entries once the cache passes its file cap.
 
 Nothing phones home. Your library, embeddings, disk paths, and store sessions stay on this machine.

@@ -300,7 +300,9 @@ def import_asset_to_project(asset_id: str, project_dir: str) -> str:
     """Unpack a locally-downloaded Unity Asset Store package (.unitypackage)
     directly into a Unity project's Assets/ folder. Only works for assets
     tagged local=true (check with search first). project_dir must be the Unity
-    project root (the folder containing Assets/)."""
+    project root (the folder containing Assets/). A UPM package shipped inside
+    it (Packages/<name>/ with a package.json) is installed as an embedded
+    package in <project>/Packages/<name>/ and listed in embedded_packages."""
     try:
         result = unpacker.import_asset_to_project(asset_id, project_dir)
         return json.dumps({"status": "ok", **result}, ensure_ascii=False)
