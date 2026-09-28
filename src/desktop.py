@@ -145,11 +145,18 @@ class SearchWorker(QThread):
         self.local_only = local_only
 
     def run(self):
+        local = "local" if self.local_only else None
         try:
             if self.query:
                 merged = semantic.hybrid_search(self.query, limit=5000)
                 items = merged.get("results", [])
                 mode = merged.get("search_mode", "3-way-hybrid")
+                if self.local_only:
+                    # hybrid_search keeps only each signal's top 50 hits, so most local
+                    # matches never reach the filter below; add the local keyword hits it cut
+                    seen = {it["id"] for it in items}
+                    items += [it for it in search_assets(query=self.query, local=local, limit=-1)
+                              if it["id"] not in seen]
 
                 filtered = []
                 for item in items:
@@ -178,17 +185,15 @@ class SearchWorker(QThread):
                 self.results_ready.emit(self.query_id, filtered, mode)
             else:
                 db_sort = self.sort_mode if self.sort_mode != "relevance" else "title_asc"
+                # Filter in SQL and fetch unbounded (-1): a LIMIT applied before filtering
+                # hides every match past the cap. The list view renders lazily in batches.
                 items = search_assets(query=None, source=self.eng, pipeline=self.pipe,
-                                      category=self.cat, sort_by=db_sort, limit=5000)
-                if self.local_only:
-                    items = [it for it in items if it.get("local_path")]
+                                      category=self.cat, local=local, sort_by=db_sort, limit=-1)
                 self.results_ready.emit(self.query_id, items, "browse")
         except Exception:
             db_sort = self.sort_mode if self.sort_mode != "relevance" else "title_asc"
             items = search_assets(query=self.query or None, source=self.eng, pipeline=self.pipe,
-                                  category=self.cat, sort_by=db_sort, limit=5000)
-            if self.local_only:
-                items = [it for it in items if it.get("local_path")]
+                                  category=self.cat, local=local, sort_by=db_sort, limit=-1)
             self.results_ready.emit(self.query_id, items, "keyword")
 
 
