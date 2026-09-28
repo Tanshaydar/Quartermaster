@@ -123,6 +123,7 @@ async function loadAssets() {
     pipeline: state.selectedPipeline,
     source: state.selectedEngine,
     local: localFilter,
+    sort_by: state.sortBy, // the server sorts the whole vault before the 2000 cap
     limit: '2000'
   });
 

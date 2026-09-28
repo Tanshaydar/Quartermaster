@@ -299,6 +299,13 @@ def _parse_size_mb(size_str: str) -> float:
     return val
 
 
+def _format_size_mb(size_mb: float) -> str:
+    """Inverse of _parse_size_mb, in the Unity CSV export's style: '0.23 MB', '371.23 MB', '4.50 GB'."""
+    if size_mb >= 1024:
+        return f"{size_mb / 1024:.2f} GB"
+    return f"{size_mb:.2f} MB"
+
+
 def detect_source(headers: List[str]) -> str:
     h = {c.strip().lower() for c in headers}
     if "package id" in h or "product id" in h or "item id" in h:

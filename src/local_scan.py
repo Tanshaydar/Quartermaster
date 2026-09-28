@@ -26,11 +26,11 @@ from typing import Any, Dict, List, Optional
 try:
     from .db import get_connection, search_assets, DB_PATH, upsert_asset, _sync_fts
     from .config import load_config, VAULT_SOURCES
-    from .ingest import classify_asset
+    from .ingest import classify_asset, _format_size_mb
 except ImportError:
     from db import get_connection, search_assets, DB_PATH, upsert_asset, _sync_fts
     from config import load_config, VAULT_SOURCES
-    from ingest import classify_asset
+    from ingest import classify_asset, _format_size_mb
 
 EPIC_LAUNCHER_INI = os.path.join(
     os.environ.get("LOCALAPPDATA", ""), "EpicGamesLauncher", "Saved",
@@ -40,6 +40,40 @@ EPIC_LAUNCHER_INI = os.path.join(
 def _norm(title: str) -> str:
     """Normalize a title for fuzzy disk matching."""
     return re.sub(r"[^a-z0-9]+", "", (title or "").lower())
+
+
+def _disk_size_mb(path: str) -> float:
+    """MB a download takes on disk: the .unitypackage itself, or every file under a Fab vault folder."""
+    if not os.path.isdir(path):
+        try:
+            return round(os.path.getsize(path) / 1048576, 2)
+        except OSError:
+            return 0.0
+    total, pending = 0, [path]
+    while pending:
+        try:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return round(total / 1048576, 2)
+
+
+def _set_local(cur: sqlite3.Cursor, asset_id: str, path: str, size_mb: float):
+    """Mark an asset as downloaded to `path`. The measured size replaces any store size;
+    an empty download (0 MB) keeps it."""
+    if size_mb > 0:
+        cur.execute("UPDATE assets SET local_path = ?, size_mb = ?, size_str = ? WHERE id = ?",
+                    (path, size_mb, _format_size_mb(size_mb), asset_id))
+    else:
+        cur.execute("UPDATE assets SET local_path = ? WHERE id = ?", (path, asset_id))
 
 
 VALID_MAPS = {
@@ -210,6 +244,10 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
             })
             fab_count += 1
 
+    # Measure every download before the write transaction below starts, so walking
+    # large vault folders never holds the database lock
+    disk_mb = {p: _disk_size_mb(p) for p in [*unity_found.values(), *(f["path"] for f in fab_found)]}
+
     # ---------------- match against DB ----------------
     conn = get_connection(db_path)
     cur = conn.cursor()
@@ -319,11 +357,12 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
                         base_sum = re.sub(r"\s*\((?:[^)]*px/m|[^)]*\d+x\d+\s*m)[^)]*\)$", "", new_sum)
                         new_sum = f"{base_sum} {spec_str}".strip() if base_sum else spec_str
 
+                _set_local(cur, aid, p, disk_mb[p])
                 cur.execute("""
-                    UPDATE assets 
-                    SET local_path = ?, usage_notes = ?, summary = ?, tags = ?, formats = ? 
+                    UPDATE assets
+                    SET usage_notes = ?, summary = ?, tags = ?, formats = ?
                     WHERE id = ?
-                """, (p, new_use, new_sum, json.dumps(curr_tags), json.dumps(curr_fmts), aid))
+                """, (new_use, new_sum, json.dumps(curr_tags), json.dumps(curr_fmts), aid))
                 _sync_fts(cur, aid)
                 matched += 1
                 if key in disk_db_norms:
@@ -331,7 +370,7 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
                     cur.execute("DELETE FROM assets WHERE id = ?", (stub_id,))
         elif key in disk_db_norms:
             stub_id, _ = disk_db_norms[key]
-            cur.execute("UPDATE assets SET local_path = ? WHERE id = ?", (p, stub_id))
+            _set_local(cur, stub_id, p, disk_mb[p])
             matched += 1
         else:
             to_adopt.append((key, p, item["title"], "fab", ""))
@@ -340,14 +379,14 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
     for key, p in unity_found.items():
         if key in real_db_norms:
             aid, _ = real_db_norms[key]
-            cur.execute("UPDATE assets SET local_path = ? WHERE id = ?", (p, aid))
+            _set_local(cur, aid, p, disk_mb[p])
             matched += 1
             if key in disk_db_norms:
                 stub_id, _ = disk_db_norms[key]
                 cur.execute("DELETE FROM assets WHERE id = ?", (stub_id,))
         elif key in disk_db_norms:
             stub_id, _ = disk_db_norms[key]
-            cur.execute("UPDATE assets SET local_path = ? WHERE id = ?", (p, stub_id))
+            _set_local(cur, stub_id, p, disk_mb[p])
             matched += 1
         else:
             title = os.path.splitext(os.path.basename(p))[0]
@@ -362,9 +401,11 @@ def scan_all(db_path: str = DB_PATH) -> Dict[str, Any]:
         import hashlib
         key_hash = hashlib.sha1(key.lower().strip().encode("utf-8")).hexdigest()[:16]
         new_id = f"{source}_disk_{key_hash}"
+        size_mb = disk_mb[p]
         upsert_asset({
             "id": new_id, "source": source, "package_id": "", "title": title,
             "publisher": publisher, "local_path": p,
+            "size_mb": size_mb, "size_str": _format_size_mb(size_mb) if size_mb > 0 else "",
             "store_url": "", "image_url": "",
             "gallery_images": [], "video_links": [],
             **cls,

@@ -2,6 +2,7 @@ import os
 import unittest
 import tempfile
 from src.db import init_db, upsert_asset, mark_enriched, get_connection, search_assets
+from src.ingest import _row_from_unity
 
 
 class TestDbPreservation(unittest.TestCase):
@@ -70,6 +71,73 @@ class TestDbPreservation(unittest.TestCase):
         ver = conn.execute("PRAGMA user_version").fetchone()[0]
         self.assertGreaterEqual(ver, 2)
         conn.close()
+
+
+class TestSizeAndDatePreservation(unittest.TestCase):
+    """Only the Unity CSV import carries sizes, and store syncs send none. upsert_asset() still
+    overwrote size_mb, size_str and claimed_date unconditionally, so each sync reset CSV sizes to 0
+    and blanked CSV dates (Unity's library payload has no acquisition date). On the real vault all
+    8,045 assets ended up at size 0, leaving "Size (Largest)" to sort by title alone."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.tmpdir.name, "test_assets.db")
+        init_db(self.db_path)
+
+    def tearDown(self):
+        import gc
+        gc.collect()
+        try:
+            self.tmpdir.cleanup()
+        except Exception:
+            pass
+
+    def _csv_import(self, pkg_id, title, size, date):
+        upsert_asset(_row_from_unity({"Package ID": pkg_id, "Asset Name": title, "Size": size,
+                                      "Claimed/Grant Date": date}), db_path=self.db_path)
+
+    def _store_sync(self, pkg_id, title):
+        # Shaped like fetch_library()'s record: no size keys, and Unity items carry no createdAt
+        upsert_asset({"id": f"unity_{pkg_id}", "source": "unity", "package_id": pkg_id, "title": title,
+                      "claimed_date": "", "store_url": f"https://assetstore.unity.com/packages/x-{pkg_id}"},
+                     db_path=self.db_path)
+
+    def _stored(self, asset_id):
+        conn = get_connection(self.db_path)
+        try:
+            return tuple(conn.execute("SELECT size_mb, size_str, claimed_date FROM assets WHERE id = ?",
+                                      (asset_id,)).fetchone())
+        finally:
+            conn.close()
+
+    def test_store_sync_keeps_csv_size_and_date(self):
+        self._csv_import("396300", "Canyons - StampIT!", "4.50 GB", "2026-08-21")
+        self._store_sync("396300", "Canyons - StampIT!")
+        self.assertEqual(self._stored("unity_396300"), (4608.0, "4.50 GB", "2026-08-21"))
+
+    def test_zero_or_null_values_keep_existing(self):
+        # sync_quixel_catalog() sends size_mb=0.0 and size_str="" outright; NULLs must not win either
+        self._csv_import("396300", "Canyons - StampIT!", "371.23 MB", "2026-08-21")
+        for blank in ({"size_mb": 0.0, "size_str": "", "claimed_date": ""},
+                      {"size_mb": None, "size_str": None, "claimed_date": None}):
+            with self.subTest(**blank):
+                upsert_asset({"id": "unity_396300", "source": "unity", "title": "Canyons - StampIT!", **blank},
+                             db_path=self.db_path)
+                self.assertEqual(self._stored("unity_396300"), (371.23, "371.23 MB", "2026-08-21"))
+
+    def test_new_size_and_date_replace_old(self):
+        self._csv_import("396300", "Canyons - StampIT!", "371.23 MB", "2026-08-21")
+        self._csv_import("396300", "Canyons - StampIT!", "1.02 GB", "2026-09-01")
+        self.assertEqual(self._stored("unity_396300"), (1044.48, "1.02 GB", "2026-09-01"))
+
+    def test_size_sort_survives_store_sync(self):
+        # Title order differs from size order, so a sort that fell back to the title tie-break fails
+        for pkg_id, title, size in (("1", "Alpha Rocks", "12.00 MB"), ("2", "Beta Cliffs", "4.50 GB"),
+                                    ("3", "Gamma Dunes", "371.23 MB")):
+            self._csv_import(pkg_id, title, size, "2026-08-21")
+            self._store_sync(pkg_id, title)
+        ids = [a["id"] for a in search_assets(sort_by="size_desc", db_path=self.db_path)]
+        self.assertEqual(ids, ["unity_2", "unity_3", "unity_1"])
 
 
 class TestImageVectorPrune(unittest.TestCase):
