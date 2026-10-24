@@ -1,9 +1,12 @@
+import contextlib
+import io
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from src.local_scan import _norm
 from src.store_client import classify_asset
-from src.stack_rules import validate_stack, list_recipes
+from src.stack_rules import validate_stack, list_recipes, load_rules
 from src.db import init_db, upsert_asset
 
 
@@ -90,6 +93,19 @@ class TestHelpersAndRules(unittest.TestCase):
         val_prereq_satisfied = validate_stack(["ms_trax", "ms_core"], db_path=self.db_path)
         self.assertEqual(val_prereq_satisfied["verdict"], "ok")
         self.assertEqual(len(val_prereq_satisfied["missing_prerequisites"]), 0)
+
+    def test_malformed_recipes_file_falls_back_to_no_rules(self):
+        # load_rules() warned through sys, which stack_rules never imported, so a typo in the
+        # hand-edited data/recipes.json failed validate_stack with "name 'sys' is not defined"
+        path = os.path.join(self.tmp_dir.name, "recipes.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"roles": {,}')
+        stderr = io.StringIO()
+        with patch("src.stack_rules.RECIPES_PATH", path), contextlib.redirect_stderr(stderr):
+            self.assertEqual(load_rules(), {"roles": {}, "recipes": []})
+            report = validate_stack(["mv_core", "gaia_pro"], db_path=self.db_path)
+        self.assertEqual(report["verdict"], "ok")   # no roles to conflict without the rules
+        self.assertIn("Failed to load recipes", stderr.getvalue())
 
     def test_update_checker_version_comparison(self):
         def is_newer(latest_tag: str, current_ver: str) -> bool:

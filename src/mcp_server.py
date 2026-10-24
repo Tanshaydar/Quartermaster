@@ -24,6 +24,7 @@ try:
     from mcp.server.mcpserver import MCPServer as FastMCP      # mcp SDK >= 2.0
 except ImportError:
     from mcp.server.fastmcp import FastMCP                     # mcp SDK 1.x
+from mcp.types import ToolAnnotations                          # mcp SDK >= 1.7
 
 from .db import init_db, search_assets, get_asset_by_id, get_stats, get_connection, DB_PATH
 from .ingest import classify_asset
@@ -125,7 +126,16 @@ def _engine_ids(engine: str) -> Optional[Set[str]]:
     return {r["id"] for r in rows if _matches_engine(r, engine)}
 
 
-@mcp.tool()
+# Clients decide which calls need the user's approval from these, and directories list each
+# tool's reach from them; a tool without them counts as read-only there. Every tool works on the
+# local vault or a local project, and only the import writes.
+READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+# Re-importing the same package writes the same files again, overwriting any already at those paths
+WRITES_PROJECT = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True,
+                                 openWorldHint=False)
+
+
+@mcp.tool(annotations=READ_ONLY)
 def search_owned_assets(query: str, engine: str = "all", source: str = "all",
                         pipeline: str = "all", category: str = "all", limit: int = 25,
                         local_only: bool = False) -> str:
@@ -174,7 +184,7 @@ def search_owned_assets(query: str, engine: str = "all", source: str = "all",
     return json.dumps(out, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def get_asset_details(asset_id: str) -> str:
     """Full details for one owned asset: summary, usage notes, gallery/video links, store URL."""
     item = get_asset_by_id(asset_id)
@@ -183,13 +193,13 @@ def get_asset_details(asset_id: str) -> str:
     return json.dumps(item, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def list_asset_categories() -> str:
     """List all categories and how many owned assets fall into each."""
     return json.dumps(get_stats(), ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def get_stack_recommendations(problem_description: str, limit_per_category: int = 5) -> str:
     """Given a game/feature description (e.g. 'third-person fantasy open world with
     magic combat and a village'), sweep the vault using 3-way hybrid search (FTS + BGE + CLIP)
@@ -279,7 +289,7 @@ def get_stack_recommendations(problem_description: str, limit_per_category: int 
     }, indent=2, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def audit_project(project_dir: str) -> str:
     """Detect the engine, version and render pipeline of a game project
     (Unity: from ProjectVersion.txt / manifest.json; Unreal: .uproject /
@@ -293,7 +303,7 @@ def audit_project(project_dir: str) -> str:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=WRITES_PROJECT)
 def import_asset_to_project(asset_id: str, project_dir: str) -> str:
     """Unpack a locally-downloaded Unity Asset Store package (.unitypackage)
     directly into a Unity project's Assets/ folder. Only works for assets
@@ -308,7 +318,7 @@ def import_asset_to_project(asset_id: str, project_dir: str) -> str:
         return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def validate_stack(asset_ids: list) -> str:
     """Lint a set of owned assets that are planned for one project/stack.
     Detects role conflicts (two weather systems, two vegetation renderers, …),
@@ -320,7 +330,7 @@ def validate_stack(asset_ids: list) -> str:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def list_stack_recipes() -> str:
     """Curated production stacks ('asset recipes') resolved against the user's
     OWN library. Each recipe lists which owned assets fill each slot."""
@@ -330,7 +340,7 @@ def list_stack_recipes() -> str:
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 def get_vault_stats() -> str:
     """Overall vault stats: total assets per engine, per category, and how many
     are already downloaded locally vs cloud-only."""
