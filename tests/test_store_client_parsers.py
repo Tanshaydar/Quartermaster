@@ -1,11 +1,33 @@
+import os
+import tempfile
 import unittest
-from src.store_client import _extract_store_url, _extract_media_images, _extract_publisher, LOGIN_URLS, LIBRARY_URLS
+from unittest.mock import patch
+from src import config
+from src.store_client import _extract_store_url, _extract_media_images, _extract_publisher, _quixel_category_name, harvest_fab_library, LOGIN_URLS, LIBRARY_URLS
 from src.config import ALLOWED_IMAGE_DOMAINS, VAULT_SOURCES
 from src.desktop import _source_icon, _format_engine_name
 from src.mcp_server import _slim
 
 
 class TestStoreClientParsers(unittest.TestCase):
+    def test_quixel_category_null_is_tolerated(self):
+        self.assertEqual(_quixel_category_name({"category": None}), "")
+        self.assertEqual(_quixel_category_name({"category": {"slug": "terrain"}}), "terrain")
+
+    def test_fab_harvest_writes_sample_to_configured_data_dir(self):
+        class FakePage:
+            def evaluate(self, _script, _args):
+                return {"results": [{"uid": "asset-1", "name": "Test asset"}], "next": None}
+
+        with tempfile.TemporaryDirectory() as data_dir:
+            os.makedirs(os.path.join(data_dir, "data"))
+            with patch.object(config, "ROOT_DIR", data_dir), patch(
+                "src.store_client.ROOT_DIR", data_dir
+            ):
+                assets = harvest_fab_library(FakePage())
+            self.assertEqual(len(assets), 1)
+            self.assertTrue(os.path.isfile(os.path.join(data_dir, "data", "fab_library_sample.json")))
+
     def test_extract_store_url_gumroad(self):
         # Permalinks / slugs
         self.assertEqual(
