@@ -13,7 +13,7 @@
       "registryType": "mcpb",
       "identifier": "https://github.com/Tanshaydar/Quartermaster/releases/download/v1.5.0/Quartermaster-mcp-windows-x64.zip",
       "version": "1.5.0",
-      "fileSha256": "03b253e6a49278fea0b11c1b5234d0bd8b6c880a921fe9a7a89e2102bacf08b7",
+      "fileSha256": "a50983aae5c8d3dcaf9f34d5aa154253f98a502cbe3e1a3bb920d2c1e5ac7791",
       "transport": {
         "type": "stdio"
       }
