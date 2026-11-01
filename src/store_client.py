@@ -49,12 +49,12 @@ import httpx
 try:
     from .db import (get_unenriched, mark_enriched, upsert_asset, DB_PATH,
                      get_connection)
-    from .config import load_config, HARVEST_LOG_PATH
+    from .config import load_config, HARVEST_LOG_PATH, ROOT_DIR
     from .ingest import classify_asset, _stable_id
 except ImportError:
     from db import (get_unenriched, mark_enriched, upsert_asset, DB_PATH,
                     get_connection)
-    from config import load_config, HARVEST_LOG_PATH
+    from config import load_config, HARVEST_LOG_PATH, ROOT_DIR
     from ingest import classify_asset, _stable_id
 
 LOGIN_URLS = {
@@ -629,6 +629,11 @@ def _fab_flatten(item: Dict[str, Any]) -> Dict[str, Any]:
                 if subk not in out or not out[subk]:
                     out[subk] = subv
     return out
+
+
+def _quixel_category_name(raw: Dict[str, Any]) -> str:
+    category = raw.get("category") or {}
+    return category.get("name") or category.get("slug") or ""
 
 
 def harvest_fab_library(page, known_titles: Optional[set] = None) -> List[Dict[str, Any]]:
@@ -2173,7 +2178,7 @@ def sync_quixel_catalog(cancel_event=None, progress=None, db_path=DB_PATH) -> Di
 
                     # Extract tags and category for accurate classification
                     raw_tags = [t.get("name") for t in raw.get("tags", []) if isinstance(t, dict) and t.get("name")]
-                    cat_name = raw.get("category", {}).get("name") or raw.get("category", {}).get("slug") or ""
+                    cat_name = _quixel_category_name(raw)
                     if cat_name and cat_name not in raw_tags:
                         raw_tags.append(cat_name)
                     for default_tag in ("Quixel", "Megascans" if "Megascans" in seller else "Megaplants"):
