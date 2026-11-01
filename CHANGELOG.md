@@ -5,26 +5,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [1.5.0] - 2026-11-02
+
+### Added
+* **Proactive Agent Instructions**: The MCP server now sends `instructions` when a client connects, telling agents to search the vault before building an asset from scratch or recommending a purchase, and to run `audit_project` and `validate_stack` before importing ([`src/mcp_server.py`](src/mcp_server.py)).
+* **Quartermaster Agent Skill**: Added [`skills/quartermaster/SKILL.md`](skills/quartermaster/SKILL.md), the same workflow in the Agent Skills format, with setup steps for when the server isn't connected yet. Standalone release archives now include the `skills/` folder ([`build_standalone.py`](build_standalone.py)).
+
+### Changed
+* **MCP SDK Minimum**: `requirements.txt` now asks for `mcp>=1.7`, the first version whose `FastMCP.tool()` accepts annotations.
+* **PySide6 6.12.0 Excluded**: Python 3.10 test runs crashed at interpreter shutdown with PySide6 6.12.0 installed, so `requirements.txt` skips that version.
+
+### Fixed
+* **Fab & Unity Library Harvests**: Fab's native harvest and Unity's chunk harvest have failed with `name 'ROOT_DIR' is not defined` since `v0.9.1`. The error was caught and only written to the harvest log. The missing import is back ([`src/store_client.py`](src/store_client.py), [#2](https://github.com/Tanshaydar/Quartermaster/pull/2), thanks to [@EnterTG](https://github.com/EnterTG)).
+* **Null Quixel Categories**: The Quixel catalog sync now handles entries whose `category` is null ([#2](https://github.com/Tanshaydar/Quartermaster/pull/2)).
+* **Tool Annotations**: All nine MCP tools now declare what they do. Eight are marked read-only, and `import_asset_to_project` is marked as writing and destructive, because it overwrites files already at the paths it unpacks to ([`src/mcp_server.py`](src/mcp_server.py)).
+* **Malformed `recipes.json`**: A parse error in `data/recipes.json` raised `NameError` instead of warning and falling back to no rules, because `stack_rules` never imported `sys` ([`src/stack_rules.py`](src/stack_rules.py)).
+
+---
+
 ## [1.4.0] - 2026-09-29
 
 ### Added
-* **Embedded UPM Package Routing**: Packages shipping embedded Unity Package Manager trees (`Packages/<name>/package.json`) are now extracted directly to `<project>/Packages/<name>/` rather than being relocated under `Assets/_Quartermaster_Imported/` ([`src/unpacker.py`](file:///d:/Projects/PERSONAL/VaultMCP/src/unpacker.py)).
-* **Disk Size Measurement & Tracking**: Disk scanners record downloaded asset sizes on disk (`.unitypackage` file sizes, Fab vault folder sizes) into `size_mb` and `size_str`, preserved across subsequent store syncs ([`src/ingest.py`](file:///d:/Projects/PERSONAL/VaultMCP/src/ingest.py), [`src/db.py`](file:///d:/Projects/PERSONAL/VaultMCP/src/db.py)).
+* **Embedded UPM Package Routing**: Packages shipping embedded Unity Package Manager trees (`Packages/<name>/package.json`) are now extracted directly to `<project>/Packages/<name>/` rather than being relocated under `Assets/_Quartermaster_Imported/` ([`src/unpacker.py`](src/unpacker.py)).
+* **Disk Size Measurement & Tracking**: Disk scanners record downloaded asset sizes on disk (`.unitypackage` file sizes, Fab vault folder sizes) into `size_mb` and `size_str`, preserved across subsequent store syncs ([`src/ingest.py`](src/ingest.py), [`src/db.py`](src/db.py)).
 * **Containerization & Glama Deployment**: Added `Dockerfile`, `.dockerignore`, and maintainer metadata (`glama.json`) for containerized introspection and hosting on Glama.
-* **Automated MCP Registry Publishing**: Added GitHub Actions CI workflow using GitHub OIDC to automatically publish compliant server manifests to the official MCP registry ([`.github/workflows/publish-mcp.yml`](file:///d:/Projects/PERSONAL/VaultMCP/.github/workflows/publish-mcp.yml)).
-* **Deterministic Bridge Packaging**: [`src/build_bridge.py`](file:///d:/Projects/PERSONAL/VaultMCP/src/build_bridge.py) produces byte-identical `.unitypackage` builds with pinned/deterministic GUIDs and mtime-zero gzip headers.
+* **MCP Registry Publishing**: Added a GitHub Actions workflow that publishes the server manifest to the official MCP registry using GitHub OIDC, run by hand once the release digest is stamped into `server.json` ([`.github/workflows/publish-mcp.yml`](.github/workflows/publish-mcp.yml)).
+* **Deterministic Bridge Packaging**: [`src/build_bridge.py`](src/build_bridge.py) produces byte-identical `.unitypackage` builds with pinned/deterministic GUIDs and mtime-zero gzip headers.
 
 ### Fixed
-* **Pre-Filtered Hybrid Search**: Filters (category, pipeline, engine, source) are now pushed directly into SQL and vector candidate filtering before taking the top-50 slice. Previously, filtering in Python after slicing caused matching assets past the cap to disappear (e.g. `"wall"` + Fab returned 0 of 51) ([`src/db.py`](file:///d:/Projects/PERSONAL/VaultMCP/src/db.py), [`src/search.py`](file:///d:/Projects/PERSONAL/VaultMCP/src/search.py)).
+* **Pre-Filtered Hybrid Search**: Filters (category, pipeline, engine, source) are now pushed directly into SQL and vector candidate filtering before taking the top-50 slice. Previously, filtering in Python after slicing caused matching assets past the cap to disappear (e.g. `"wall"` + Fab returned 0 of 51) ([`src/db.py`](src/db.py), [`src/semantic.py`](src/semantic.py)).
 * **Search Sort Keys & Tie-breaking**: Corrected dictionary sort keys in hybrid search (`claimed_at` $\rightarrow$ `claimed_date`, `size_bytes` $\rightarrow$ `size_mb`) and added title tie-breaking to match SQL browse ordering. Previously, sorting by "Recently Acquired" or "Size" silently retained relevance order.
 * **Desktop Local-Only Truncation**: Pushed `local_only` filtering into SQL instead of slicing 5,000 rows in Python, preventing downloaded assets from vanishing from desktop browse views.
-* **Web UI Server-Side Sorting**: Web UI now passes `sort_by` to `/api/assets` so sorting applies across the full vault rather than only client-sorting the first 2,000 fetched rows ([`src/web/app.js`](file:///d:/Projects/PERSONAL/VaultMCP/src/web/app.js)).
-* **MCP Empty-Query Crash**: Fixed `UnboundLocalError` when calling [`search_owned_assets`](file:///d:/Projects/PERSONAL/VaultMCP/src/mcp_server.py) with empty/whitespace queries, and pushed filters to SQL so empty searches are not artificially capped at 100 items.
-* **Store Sync Data Preservation**: [`upsert_asset()`](file:///d:/Projects/PERSONAL/VaultMCP/src/db.py) now preserves non-zero `size_mb`, `size_str`, and `claimed_date` values so subsequent store syncs don't wipe out sizes and acquisition dates.
-* **Unity Bridge Compilation**: Fixed compile errors on Unity 2022.3 and Unity 6 in [`QuartermasterWindow.cs`](file:///d:/Projects/PERSONAL/VaultMCP/editor_bridge/QuartermasterWindow.cs) (`System.IO.Directory` qualification, popup index mismatch).
+* **Web UI Server-Side Sorting**: Web UI now passes `sort_by` to `/api/assets` so sorting applies across the full vault rather than only client-sorting the first 2,000 fetched rows ([`web/app.js`](web/app.js)).
+* **MCP Empty-Query Crash**: Fixed `UnboundLocalError` when calling [`search_owned_assets`](src/mcp_server.py) with empty/whitespace queries, and pushed filters to SQL so empty searches are not artificially capped at 100 items.
+* **Store Sync Data Preservation**: [`upsert_asset()`](src/db.py) now preserves non-zero `size_mb`, `size_str`, and `claimed_date` values so subsequent store syncs don't wipe out sizes and acquisition dates.
+* **Unity Bridge Compilation**: Fixed compile errors on Unity 2022.3 and Unity 6 in [`QuartermasterWindow.cs`](editor_bridge/QuartermasterWindow.cs) (`System.IO.Directory` qualification, popup index mismatch).
 * **Unity Bridge Import Acknowledgement**: Added `status: "ok"` to `/api/import` response so the Unity bridge recognizes successful imports and prompts to add prefabs to scene.
-* **Bridge Upgrade Conflicts (CS0101)**: Pinned `v1.0.0` GUIDs in [`src/build_bridge.py`](file:///d:/Projects/PERSONAL/VaultMCP/src/build_bridge.py) so re-importing updated bridge packages updates the existing script in-place instead of creating duplicate classes.
-* **Test Suite DB Isolation**: Moved `init_db()` calls out of module import scope in [`src/server.py`](file:///d:/Projects/PERSONAL/VaultMCP/src/server.py) and [`src/mcp_server.py`](file:///d:/Projects/PERSONAL/VaultMCP/src/mcp_server.py) into startup lifespans, preventing unit tests from mutating or pruning local dev vaults (`data/assets.db`).
+* **Bridge Upgrade Conflicts (CS0101)**: Pinned `v1.0.0` GUIDs in [`src/build_bridge.py`](src/build_bridge.py) so re-importing updated bridge packages updates the existing script in-place instead of creating duplicate classes.
+* **Test Suite DB Isolation**: Moved `init_db()` calls out of module import scope in [`src/server.py`](src/server.py) and [`src/mcp_server.py`](src/mcp_server.py) into startup lifespans, preventing unit tests from mutating or pruning local dev vaults (`data/assets.db`).
 
 ---
 
